@@ -576,9 +576,22 @@ class Projector {
   private nothingForExpression(
     expr: TypedExpression,
     span: Span,
-  ): import("../ir/projected.js").NothingStatement {
-    const parts = this.nothingParts(expr);
-    return { kind: "NothingStatement", parts, span };
+  ): import("../ir/projected.js").ExpressionStatement {
+    return {
+      kind: "ExpressionStatement",
+      expression: this.nothingExpression(expr),
+      span,
+    };
+  }
+
+  private nothingExpression(
+    expr: TypedExpression,
+  ): import("../ir/projected.js").NothingExpression {
+    return {
+      kind: "NothingExpression",
+      parts: this.nothingParts(expr),
+      span: expr.expr.span,
+    };
   }
 
   private nothingParts(expr: TypedExpression): ProjectedExpression[] {

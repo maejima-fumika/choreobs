@@ -56,9 +56,6 @@ class BlueScriptEmitter {
     switch (stmt.kind) {
       case "AbsentStatement":
         return;
-      case "NothingStatement":
-        this.line(`nothing(${stmt.parts.map((p) => this.emitExpr(p)).join(", ")});`);
-        return;
       case "LetStatement":
         this.line(
           `let ${stmt.name}: ${emitType(stmt.type)} = ${this.emitExpr(stmt.initializer)};`,
@@ -167,6 +164,8 @@ class BlueScriptEmitter {
         const args = expr.args.map((a) => this.emitExpr(a)).join(", ");
         return `${expr.callee}(${args})`;
       }
+      case "NothingExpression":
+        return `nothing(${expr.parts.map((p) => this.emitExpr(p)).join(", ")})`;
       case "ParenthesizedExpression":
         return `(${this.emitExpr(expr.expression)})`;
       case "ReceiveExpression":

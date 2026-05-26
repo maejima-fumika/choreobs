@@ -102,7 +102,10 @@ function foo@every(a: integer@alice, b: integer@bob): integer@alice {
     const bob = epp(source, "bob");
     assert.ok(
       bob.body.every(
-        (stmt) => stmt.kind === "AbsentStatement" || stmt.kind === "NothingStatement",
+        (stmt) =>
+          stmt.kind === "AbsentStatement" ||
+          (stmt.kind === "ExpressionStatement" &&
+            stmt.expression.kind === "NothingExpression"),
       ),
     );
     assert.equal(findStmt(bob.body, "LetStatement"), undefined);

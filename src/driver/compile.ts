@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parse, type ParseError } from "../parser/index.js";
 import { typeCheck, type TypeCheckError } from "../check/index.js";
 import { projectAll } from "../epp/index.js";
+import { cleanupAll } from "../cleanup/index.js";
 import { emit } from "../emit/index.js";
 import { loadConfig, defaultConfigPath } from "../config/index.js";
 import type { ChoreoBSConfig } from "../config/types.js";
@@ -66,10 +67,11 @@ export function compileSource(
   }
 
   const projected = projectAll(checked.typed, config.participants);
+  const cleaned = cleanupAll(projected);
   const stem = basename(cbsPath, extname(cbsPath));
   const outDir = dirname(cbsPath);
 
-  const outputs: CompileOutput[] = projected.map((program) => {
+  const outputs: CompileOutput[] = cleaned.map((program) => {
     const path = join(outDir, `${stem}_${program.participant}.bs`);
     const emitted = emit(program);
     return {

@@ -1267,7 +1267,9 @@ for (let i: integer@every = 0@every; i < 10@every; i = i + 1@every) {
 
 Expression statements are allowed.
 
-After EPP, expressions unrelated to the current node may be transformed into `nothing(...)`.
+After EPP, expressions unrelated to the current node may be transformed into `nothing(...)` or `null`.
+
+These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in Section 13.9.
 
 ***
 
@@ -1327,10 +1329,16 @@ function add(a: integer, b: integer): integer {
 let x: integer = add(1, 2);
 ```
 
-EPP at `bob`:
+EPP at `bob` before cleanup:
 
 ```ts
 nothing(null, null);
+```
+
+EPP at `bob` after cleanup:
+
+```ts
+// removed
 ```
 
 ### 10.3 Calling Functions from a Local Context
@@ -1568,7 +1576,9 @@ else:
 * It does not exist in the source language.
 * It is distinct from source-level `null`.
 * It is never emitted directly to final BlueScript output.
-* It is finalized into `null` or `nothing(...)` when necessary.
+* It is finalized into either `null` or a compiler-generated `nothing(...)` expression before or during the cleanup/code generation pipeline.
+
+The compiler may temporarily generate `null` and `nothing(...)` expressions to preserve AST shape after EPP. These artifacts are subject to the cleanup rules defined in Section 13.9.
 
 ### 12.5 Literal Projection
 
@@ -1621,13 +1631,17 @@ let b: integer = 2;
 let c: integer = a + b;
 ```
 
-EPP at `bob`:
+EPP at `bob` before cleanup:
 
 ```ts
 nothing(null, null);
 ```
 
-The implementation may remove such code as an optimization.
+EPP at `bob` after cleanup:
+
+```ts
+// removed
+```
 
 ### 12.8 Let Projection
 
@@ -1641,13 +1655,17 @@ EPP at `alice`:
 let x: integer = 1;
 ```
 
-EPP at `bob`:
+EPP at `bob` before cleanup:
 
 ```ts
 nothing(null);
 ```
 
-The implementation may remove such code as an optimization.
+EPP at `bob` after cleanup:
+
+```ts
+// removed
+```
 
 ### 12.9 Communication Projection
 
@@ -1678,7 +1696,7 @@ x = y;
 EPP to participant `P`:
 
 * If `x` is available at `P`, generate the assignment.
-* Otherwise, generate `nothing(...)` or remove it as an optimization.
+* Otherwise, generate `nothing(...)` or `null`, which may be removed by the cleanup pass.
 
 ### 12.11 Function Projection
 
@@ -1882,12 +1900,16 @@ An `@every` function is emitted for every node.
 
 ### 13.7 Absent Finalization
 
-After EPP, remaining `absent` values are finalized into one of:
+After EPP, remaining `absent` values must be finalized before final BlueScript output.
 
-* `null`;
-* `nothing(...)`.
+An `absent` value may be finalized into one of the following compiler-generated artifacts:
 
-Implementations may remove unnecessary `nothing(...)` calls as an optimization.
+* `null`
+* `nothing(...)`
+
+These artifacts are used only to keep the projected AST syntactically valid.
+
+The final BlueScript output should not contain unnecessary `null;` statements or unnecessary `nothing(...)` calls when they can be removed by the cleanup pass defined in Section 13.9.
 
 ### 13.8 Communication API
 
@@ -1916,15 +1938,163 @@ broadcastBoolean(tag: string, value: boolean): void;
 broadcastString(tag: string, value: string): void;
 ```
 
+### 13.9 Projected AST Cleanup
+
+After Endpoint Projection and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
+
+The purpose of this pass is to remove or simplify compiler-generated artifacts such as unnecessary `null` statements and `nothing(...)` calls.
+
+This cleanup pass must operate on the projected AST or projected IR. It must not be implemented as string-based post-processing over generated BlueScript code.
+
+#### 13.9.1 Cleanup Pipeline
+
+The cleanup pass consists of two stages:
+
+```text
+1. Expression simplification
+2. Statement cleanup
+```
+
+Expression simplification is applied before statement cleanup.
+
+#### 13.9.2 Expression Simplification
+
+The compiler recursively simplifies expressions in a bottom-up manner.
+
+The main rule is:
+
+```text
+nothing(null, ..., null) => null
+```
+
+This rule applies only when, after recursively simplifying all arguments, every argument of `nothing(...)` is exactly `null`.
+
+Examples:
+
+```ts
+nothing(null)
+```
+
+is simplified to:
+
+```ts
+null
+```
+
+```ts
+nothing(null, null)
+```
+
+is simplified to:
+
+```ts
+null
+```
+
+Nested `nothing(...)` expressions must be simplified recursively.
+
+Example:
+
+```ts
+nothing(nothing(null), null, null)
+```
+
+is simplified as follows:
+
+```ts
+nothing(nothing(null), null, null)
+=> nothing(null, null, null)
+=> null
+```
+
+#### 13.9.3 Simplification Inside Function Arguments
+
+Expression simplification must also be applied recursively inside ordinary function call arguments.
+
+Example:
+
+```ts
+foo(nothing(null), null)
+```
+
+is simplified to:
+
+```ts
+foo(null, null)
+```
+
+The function call itself must not be removed by this cleanup rule.
+
+#### 13.9.4 Statement Cleanup
+
+After expression simplification, the compiler removes expression statements consisting only of `null`.
+
+Example:
+
+```ts
+null;
+```
+
+is removed.
+
+Therefore:
+
+```ts
+nothing(nothing(null), null, null);
+```
+
+is cleaned as follows:
+
+```ts
+nothing(nothing(null), null, null);
+=> null;
+=> removed
+```
+
+#### 13.9.5 What This Cleanup Pass Must Not Remove
+
+This cleanup pass is intentionally conservative.
+
+It must not remove ordinary function calls.
+
+Example:
+
+```ts
+foo(null, null);
+```
+
+must remain as:
+
+```ts
+foo(null, null);
+```
+
+It must not remove communication operations such as:
+
+```ts
+sendInteger("bob", "top_0", x);
+receiveInteger("alice", "top_0");
+broadcastBoolean("top_1", c);
+```
+
+It must not remove assignments, loops, conditionals, or function declarations merely because they contain `null` values.
+
+This initial cleanup pass only performs the following transformations:
+
+* recursively simplify `nothing(...)` to `null` when all arguments simplify to `null`;
+* remove `null;` expression statements.
+
+More advanced dead-code elimination may be added in future versions.
+
 ***
 
 ## 14. Runtime Support Functions
 
 ### 14.1 `nothing`
 
-`nothing` is a helper function used to make projected code syntactically valid when some source expression has no runtime meaning for the current node.
+`nothing` is a compiler-generated helper expression used to make projected code syntactically valid when some source expression has no runtime meaning for the current node.
 
-Abstract specification:
+Conceptually:
 
 ```ts
 function nothing(...params: any[]): null {
@@ -1932,32 +2102,79 @@ function nothing(...params: any[]): null {
 }
 ```
 
-However, the BlueScript backend may choose a different implementation depending on BlueScript feature support.
+However, `nothing` should be treated primarily as a compiler-generated artifact, not as an ordinary user-defined function.
 
-For example, if rest parameters are not supported, the backend may generate fixed-arity helper functions:
+The cleanup pass in Section 13.9 may simplify `nothing(...)` to `null` when all arguments recursively simplify to `null`.
+
+Examples:
 
 ```ts
-function nothing0(): null {
-    return null;
-}
-
-function nothing1(a: null): null {
-    return null;
-}
-
-function nothing2(a: null, b: null): null {
-    return null;
-}
+nothing(null)
 ```
+
+is simplified to:
+
+```ts
+null
+```
+
+```ts
+nothing(nothing(null), null, null)
+```
+
+is simplified to:
+
+```ts
+null
+```
+
+If a `nothing(...)` expression appears as an expression statement and is simplified to `null`, the resulting `null;` statement is removed.
+
+Example:
+
+```ts
+nothing(null);
+```
+
+is simplified to:
+
+```ts
+null;
+```
+
+and then removed.
+
+If `nothing(...)` appears as an argument to another function call, only the `nothing(...)` expression is simplified.
+
+Example:
+
+```ts
+foo(nothing(null), null);
+```
+
+is simplified to:
+
+```ts
+foo(null, null);
+```
+
+The call to `foo` itself is not removed.
+
+The BlueScript backend may choose a concrete implementation of `nothing` depending on BlueScript feature support. For example, if rest parameters are not supported, the backend may generate fixed-arity helper functions. However, unnecessary `nothing(...)` calls should be removed or simplified before final code generation whenever possible.
 
 ### 14.2 Semantics
 
-`nothing` must satisfy:
+`nothing` must satisfy the following conceptual semantics:
 
 * it has no side effects;
-* it always returns `null`;
+* it always evaluates to `null`;
 * it performs no communication;
-* it may be removed by optimization.
+* it is compiler-generated;
+* it may be simplified by the cleanup pass.
+
+The compiler must distinguish compiler-generated `nothing(...)` artifacts from ordinary user-defined function calls.
+
+In ChoreoBS Core v0, the cleanup pass only simplifies `nothing(...)` when all of its arguments recursively simplify to `null`.
 
 ***
 
@@ -2002,7 +2219,7 @@ if (ok) {
 }
 ```
 
-EPP at `alice`:
+EPP at `alice` before cleanup:
 
 ```ts
 let localOk: boolean = true;
@@ -2013,6 +2230,18 @@ if (ok) {
     nothing(null);
 } else {
     nothing(null);
+}
+```
+
+EPP at `alice` after cleanup:
+
+```ts
+let localOk: boolean = true;
+broadcastBoolean("top_0", localOk);
+let ok: boolean = localOk;
+
+if (ok) {
+} else {
 }
 ```
 
@@ -2027,6 +2256,8 @@ if (ok) {
     let msg: string = "ng";
 }
 ```
+
+Note: ChoreoBS Core v0 cleanup does not remove empty `if` statements. Removing empty `if` statements is a future optimization.
 
 ***
 
@@ -2052,10 +2283,16 @@ function add(a: integer, b: integer): integer {
 let x: integer = add(1, 2);
 ```
 
-EPP at `bob`:
+EPP at `bob` before cleanup:
 
 ```ts
 nothing(null, null);
+```
+
+EPP at `bob` after cleanup:
+
+```ts
+// removed
 ```
 
 ***
@@ -2092,7 +2329,7 @@ let c: boolean = true;
 let x: integer = choose(c);
 ```
 
-EPP at `bob`:
+EPP at `bob` before cleanup:
 
 ```ts
 function choose(c: boolean): null {
@@ -2106,6 +2343,23 @@ function choose(c: boolean): null {
 let c: boolean = true;
 nothing(choose(c));
 ```
+
+EPP at `bob` after cleanup:
+
+```ts
+function choose(c: boolean): null {
+    if (c) {
+        return null;
+    } else {
+        return null;
+    }
+}
+
+let c: boolean = true;
+nothing(choose(c));
+```
+
+Note: `nothing(choose(c))` is not simplified because its argument is not exactly `null` after recursive simplification. This conservative behavior preserves possible function-call effects.
 
 ***
 
@@ -2185,6 +2439,86 @@ for (let i: integer = 0; i < 3; i = i + 1) {
     let y: integer = receiveInteger("alice", "top_0");
 }
 ```
+
+***
+
+### 15.7 Cleanup of `nothing(...)`
+
+Input after EPP:
+
+```ts
+nothing(null);
+```
+
+After expression simplification:
+
+```ts
+null;
+```
+
+After statement cleanup:
+
+```ts
+// removed
+```
+
+***
+
+Input after EPP:
+
+```ts
+nothing(nothing(null), null, null);
+```
+
+After recursive expression simplification:
+
+```ts
+nothing(null, null, null);
+```
+
+Then:
+
+```ts
+null;
+```
+
+After statement cleanup:
+
+```ts
+// removed
+```
+
+***
+
+Input after EPP:
+
+```ts
+foo(nothing(null), null);
+```
+
+After expression simplification:
+
+```ts
+foo(null, null);
+```
+
+The function call itself is preserved.
+
+***
+
+Input after EPP:
+
+```ts
+foo(null, null);
+```
+
+After cleanup:
+
+```ts
+foo(null, null);
+```
+
+Ordinary function calls are not removed by the v0 cleanup pass.
 
 ***
 
@@ -2441,5 +2775,17 @@ Future versions may add:
 * selection-based conditionals;
 * endpoint protocol verification.
 
-```
-```
+### 17.7 Future Cleanup Optimizations
+
+ChoreoBS Core v0 only performs a minimal cleanup pass for compiler-generated `nothing(...)` and `null;` artifacts.
+
+The following optimizations are not required in v0:
+
+* general dead-code elimination;
+* unused variable elimination;
+* unused function elimination;
+* constant folding;
+* removal of empty `if` statements;
+* removal of empty blocks;
+* removal of empty loops;
+* side-effect analysis for ordinary function calls.

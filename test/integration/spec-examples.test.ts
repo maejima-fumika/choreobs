@@ -65,9 +65,7 @@ if (ok) {
 broadcastBoolean("top_0", localOk);
 let ok: boolean = localOk;
 if (ok) {
-  nothing(null);
 } else {
-  nothing(null);
 }`,
     );
     assert.equal(
@@ -97,7 +95,7 @@ let x: integer@alice = add(1@alice, 2@alice);
 }
 let x: integer = add(1, 2);`,
     );
-    assert.equal(bs(result, "bob"), `nothing(null, null);`);
+    assert.equal(bs(result, "bob"), "");
   });
 
   it("§15.4 @every function", () => {

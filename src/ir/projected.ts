@@ -32,6 +32,7 @@ export type ProjectedExpression =
   | BinaryExpression
   | UnaryExpression
   | CallExpression
+  | NothingExpression
   | ParenthesizedExpression
   | ReceiveExpression;
 
@@ -102,6 +103,16 @@ export interface CallExpression {
   readonly span: Span;
 }
 
+/**
+ * Compiler-generated `nothing(...)` artifact (spec §12.4, §14.1).
+ * Distinct from {@link CallExpression} so user-defined functions named `nothing` are preserved.
+ */
+export interface NothingExpression {
+  readonly kind: "NothingExpression";
+  readonly parts: readonly ProjectedExpression[];
+  readonly span: Span;
+}
+
 export interface ParenthesizedExpression {
   readonly kind: "ParenthesizedExpression";
   readonly expression: ProjectedExpression;
@@ -119,7 +130,6 @@ export interface ReceiveExpression {
 
 export type ProjectedStatement =
   | AbsentStatement
-  | NothingStatement
   | LetStatement
   | AssignmentStatement
   | SendStatement
@@ -133,16 +143,6 @@ export type ProjectedStatement =
 /** Statement with no runtime meaning at this participant (spec §12.4). */
 export interface AbsentStatement {
   readonly kind: "AbsentStatement";
-  readonly span: Span;
-}
-
-/**
- * `nothing(...)` placeholder — operands finalize later (spec §12.4, §14).
- * `parts` holds projected subexpressions (often {@link AbsentExpression}).
- */
-export interface NothingStatement {
-  readonly kind: "NothingStatement";
-  readonly parts: readonly ProjectedExpression[];
   readonly span: Span;
 }
 

@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "node16",
+    "moduleResolution": "node16",
     "target": "es2022",
     "declaration": true,
     "composite": true,
@@ -9,6 +9,7 @@
     "strict": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
+    "types": ["node"],
     "rootDir": "${configDir}/src",
     "outDir": "${configDir}/dist"
   },
