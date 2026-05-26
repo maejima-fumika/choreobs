@@ -1,0 +1,962 @@
+import type { Span } from "../ast/span.js";
+import type { Program, TopLevelItem, TopLevelStatement } from "../ast/program.js";
+import type { FunctionDeclaration } from "../ast/declarations.js";
+import type {
+  Statement,
+  Block,
+  LetStatement,
+  LetReceiveStatement,
+  AssignmentStatement,
+  CommStatement,
+  IfStatement,
+  WhileStatement,
+  ForStatement,
+  ReturnStatement,
+  ExpressionStatement,
+  ForInit,
+  ForLetInit,
+  ForLetReceiveInit,
+  ForAssignmentInit,
+} from "../ast/statements.js";
+import type {
+  Expression,
+  BinaryExpression,
+  UnaryExpression,
+  LiteralExpression,
+  IdentifierExpression,
+  CallExpression,
+  ParenthesizedExpression,
+} from "../ast/expressions.js";
+import type { ExecutionContext } from "../ast/context.js";
+import type { Location } from "../ast/location.js";
+import type {
+  TypedProgram,
+  TypedTopLevelItem,
+  TypedTopLevelStatement,
+  TypedFunctionDeclaration,
+  TypedParameter,
+  TypedStatement,
+  TypedBlock,
+  TypedExpression,
+  TypedLetStatement,
+  TypedLetReceiveStatement,
+  TypedAssignmentStatement,
+  TypedCommStatement,
+  TypedIfStatement,
+  TypedWhileStatement,
+  TypedForStatement,
+  TypedForInit,
+  TypedForLetInit,
+  TypedForLetReceiveInit,
+  TypedForAssignmentInit,
+  TypedReturnStatement,
+  TypedExpressionStatement,
+  TypedBinaryExpression,
+  TypedUnaryExpression,
+  TypedLiteralExpression,
+  TypedIdentifierExpression,
+  TypedCallExpression,
+  TypedParenthesizedExpression,
+  LocatedType,
+  FunctionSymbol,
+} from "../ast/typed.js";
+import type { ChoreoBSConfig } from "../config/types.js";
+import { EVERY_CONTEXT } from "../ast/context.js";
+import {
+  available,
+  contextAsLocation,
+  formatLocatedType,
+  isSubtype,
+  locatedType,
+  locatedTypesCompatible,
+  locationsEqual,
+} from "../types/located.js";
+import {
+  LocationOmitError,
+  resolveLiteralType,
+  resolveTypeAnnotation,
+} from "../elaborate/resolve.js";
+import { CommTagGenerator, TOP_SCOPE } from "../comm/tags.js";
+import { typeCheckError, type TypeCheckError } from "./errors.js";
+
+export interface TypeCheckResult {
+  readonly typed: TypedProgram | null;
+  readonly errors: readonly TypeCheckError[];
+}
+
+export function typeCheck(
+  program: Program,
+  config: ChoreoBSConfig,
+): TypeCheckResult {
+  const checker = new TypeChecker(program, config);
+  return checker.check();
+}
+
+class TypeChecker {
+  private readonly errors: TypeCheckError[] = [];
+  private readonly functions = new Map<string, FunctionDeclaration>();
+  private readonly participants: Set<string>;
+  private readonly commTags = new CommTagGenerator();
+  private commScope = TOP_SCOPE;
+  private currentFunction: FunctionDeclaration | undefined;
+  private inTopLevel = false;
+  private readonly topLevelEnv = new Map<string, LocatedType>();
+  private envStack: Map<string, LocatedType>[] = [];
+
+  constructor(
+    private readonly program: Program,
+    config: ChoreoBSConfig,
+  ) {
+    this.participants = new Set(config.participants);
+    if (this.participants.has("every")) {
+      this.error(
+        "'every' must not appear in participants (spec §2.2)",
+        program.span,
+      );
+    }
+  }
+
+  check(): TypeCheckResult {
+    this.collectFunctions();
+    const items: TypedTopLevelItem[] = [];
+    for (const item of this.program.items) {
+      items.push(this.checkTopLevelItem(item));
+    }
+    const typed: TypedProgram = {
+      kind: "TypedProgram",
+      program: this.program,
+      items,
+    };
+    return {
+      typed: this.errors.length === 0 ? typed : null,
+      errors: this.errors,
+    };
+  }
+
+  private collectFunctions(): void {
+    for (const item of this.program.items) {
+      if (item.kind !== "FunctionDeclaration") {
+        continue;
+      }
+      const existing = this.functions.get(item.name);
+      if (existing !== undefined) {
+        this.error(
+          `duplicate function '${item.name}' (spec §6.2)`,
+          item.span,
+        );
+        continue;
+      }
+      this.functions.set(item.name, item);
+      this.validateLocation(item.at, item.span);
+    }
+  }
+
+  private checkTopLevelItem(item: TopLevelItem): TypedTopLevelItem {
+    if (item.kind === "FunctionDeclaration") {
+      return this.checkFunction(item, false);
+    }
+    return this.checkTopLevelStatement(item);
+  }
+
+  private checkTopLevelStatement(item: TopLevelStatement): TypedTopLevelStatement {
+    this.commScope = TOP_SCOPE;
+    this.currentFunction = undefined;
+    this.inTopLevel = true;
+    const statement = this.checkStatement(item.statement, EVERY_CONTEXT, false, false);
+    this.inTopLevel = false;
+    return {
+      item,
+      context: EVERY_CONTEXT,
+      statement,
+    };
+  }
+
+  private checkFunction(
+    decl: FunctionDeclaration,
+    nested: boolean,
+  ): TypedFunctionDeclaration {
+    if (!nested) {
+      this.commScope = decl.name;
+    }
+    this.currentFunction = decl;
+    const allowOmit = decl.context.kind === "local";
+    const returnType = this.resolveType(decl.returnType, decl.context, allowOmit);
+    const params: TypedParameter[] = [];
+    const env = new Map<string, LocatedType>();
+    for (const param of decl.params) {
+      const type = this.resolveType(param.type, decl.context, allowOmit);
+      if (env.has(param.name)) {
+        this.error(
+          `duplicate parameter '${param.name}' in the same scope`,
+          param.span,
+        );
+      } else {
+        env.set(param.name, type);
+      }
+      params.push({ param, type });
+    }
+    this.pushEnv(env);
+    const body = this.checkBlock(decl.body, decl.context, allowOmit, true);
+    this.popEnv();
+    this.currentFunction = undefined;
+    return {
+      decl,
+      context: decl.context,
+      returnType,
+      params,
+      body,
+    };
+  }
+
+  private checkBlock(
+    block: Block,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    inFunction: boolean,
+  ): TypedBlock {
+    this.pushEnv(new Map());
+    const statements: TypedStatement[] = [];
+    for (const stmt of block.statements) {
+      statements.push(this.checkStatement(stmt, ctx, allowOmit, inFunction));
+    }
+    this.popEnv();
+    return { context: ctx, block, statements };
+  }
+
+  private checkStatement(
+    stmt: Statement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    inFunction: boolean,
+  ): TypedStatement {
+    switch (stmt.kind) {
+      case "LetStatement":
+        return this.checkLet(stmt, ctx, allowOmit);
+      case "LetReceiveStatement":
+        this.assertCommAllowed(ctx, stmt.span);
+        return this.checkLetReceive(stmt, ctx, allowOmit);
+      case "AssignmentStatement":
+        return this.checkAssignment(stmt, ctx, allowOmit);
+      case "CommStatement":
+        this.assertCommAllowed(ctx, stmt.span);
+        return this.checkComm(stmt, ctx, allowOmit);
+      case "IfStatement":
+        return this.checkIf(stmt, ctx, allowOmit, inFunction);
+      case "WhileStatement":
+        return this.checkWhile(stmt, ctx, allowOmit, inFunction);
+      case "ForStatement":
+        return this.checkFor(stmt, ctx, allowOmit, inFunction);
+      case "ReturnStatement":
+        return this.checkReturn(stmt, ctx, allowOmit, inFunction);
+      case "ExpressionStatement":
+        return this.checkExpressionStatement(stmt, ctx, allowOmit);
+    }
+  }
+
+  private checkLet(
+    stmt: LetStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedLetStatement {
+    const choreoType = this.resolveType(stmt.type, ctx, allowOmit);
+    const initializer = this.checkExpression(stmt.initializer, ctx, allowOmit);
+    this.validateAssignmentLike(choreoType, initializer.choreoType, stmt.span);
+    this.defineLocal(stmt.name, choreoType, stmt.span);
+    return { stmt, choreoType, initializer };
+  }
+
+  private checkLetReceive(
+    stmt: LetReceiveStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedLetReceiveStatement {
+    const choreoType = this.resolveType(stmt.type, ctx, allowOmit);
+    const source = this.checkExpression(stmt.source, ctx, allowOmit);
+    this.validateCommunication(choreoType, source.choreoType, stmt.span);
+    const commTag = this.commTags.next(this.commScope);
+    this.defineLocal(stmt.name, choreoType, stmt.span);
+    return { stmt, choreoType, source, commTag };
+  }
+
+  private checkAssignment(
+    stmt: AssignmentStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedAssignmentStatement {
+    const targetType = this.lookupVariable(stmt.name, stmt.span);
+    const value = this.checkExpression(stmt.value, ctx, allowOmit);
+    this.validateAssignmentLike(targetType, value.choreoType, stmt.span);
+    return { stmt, targetType, value };
+  }
+
+  private checkComm(
+    stmt: CommStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedCommStatement {
+    const targetType = this.lookupVariable(stmt.name, stmt.span);
+    const source = this.checkExpression(stmt.source, ctx, allowOmit);
+    this.validateCommunication(targetType, source.choreoType, stmt.span);
+    const commTag = this.commTags.next(this.commScope);
+    return { stmt, targetType, source, commTag };
+  }
+
+  private checkIf(
+    stmt: IfStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    inFunction: boolean,
+  ): TypedIfStatement {
+    const condition = this.checkCondition(stmt.condition, ctx, allowOmit);
+    const then = this.checkBlock(stmt.then, ctx, allowOmit, inFunction);
+    const elseBlock = stmt.else
+      ? this.checkBlock(stmt.else, ctx, allowOmit, inFunction)
+      : undefined;
+    return { stmt, condition, then, else: elseBlock };
+  }
+
+  private checkWhile(
+    stmt: WhileStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    inFunction: boolean,
+  ): TypedWhileStatement {
+    const condition = this.checkCondition(stmt.condition, ctx, allowOmit);
+    const body = this.checkBlock(stmt.body, ctx, allowOmit, inFunction);
+    return { stmt, condition, body };
+  }
+
+  private checkFor(
+    stmt: ForStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    inFunction: boolean,
+  ): TypedForStatement {
+    this.pushEnv(new Map());
+    let init: TypedForInit | undefined;
+    if (stmt.init !== undefined) {
+      init = this.checkForInit(stmt.init, ctx, allowOmit);
+    }
+    const condition = stmt.condition
+      ? this.checkCondition(stmt.condition, ctx, allowOmit)
+      : undefined;
+    const update = stmt.update
+      ? this.checkForUpdate(stmt.update, ctx, allowOmit)
+      : undefined;
+    const body = this.checkBlock(stmt.body, ctx, allowOmit, inFunction);
+    this.popEnv();
+    return { stmt, init, condition, update, body };
+  }
+
+  private checkForInit(
+    init: ForInit,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedForInit {
+    switch (init.kind) {
+      case "ForLetInit":
+        return this.checkForLetInit(init, ctx, allowOmit);
+      case "ForLetReceiveInit":
+        return this.checkForLetReceiveInit(init, ctx, allowOmit);
+      case "ForAssignmentInit":
+        return this.checkForAssignmentInit(init, ctx, allowOmit);
+    }
+  }
+
+  private checkForLetInit(
+    init: ForLetInit,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedForLetInit {
+    const choreoType = this.resolveType(init.type, ctx, allowOmit);
+    const initializer = this.checkExpression(init.initializer, ctx, allowOmit);
+    this.validateAssignmentLike(choreoType, initializer.choreoType, init.span);
+    this.defineLocal(init.name, choreoType, init.span);
+    return { init, choreoType, initializer };
+  }
+
+  private checkForLetReceiveInit(
+    init: ForLetReceiveInit,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedForLetReceiveInit {
+    this.assertCommAllowed(ctx, init.span);
+    const choreoType = this.resolveType(init.type, ctx, allowOmit);
+    const source = this.checkExpression(init.source, ctx, allowOmit);
+    this.validateCommunication(choreoType, source.choreoType, init.span);
+    const commTag = this.commTags.next(this.commScope);
+    this.defineLocal(init.name, choreoType, init.span);
+    return { init, choreoType, source, commTag };
+  }
+
+  private checkForAssignmentInit(
+    init: ForAssignmentInit,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedForAssignmentInit {
+    const targetType = this.lookupVariable(init.name, init.span);
+    const value = this.checkExpression(init.value, ctx, allowOmit);
+    this.validateAssignmentLike(targetType, value.choreoType, init.span);
+    return { init, targetType, value };
+  }
+
+  private checkForUpdate(
+    init: ForAssignmentInit,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedForAssignmentInit {
+    return this.checkForAssignmentInit(init, ctx, allowOmit);
+  }
+
+  private checkReturn(
+    stmt: ReturnStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    inFunction: boolean,
+  ): TypedReturnStatement {
+    if (!inFunction || this.currentFunction === undefined) {
+      this.error("'return' outside function", stmt.span);
+      return { stmt };
+    }
+    const returnType = this.resolveType(
+      this.currentFunction.returnType,
+      this.currentFunction.context,
+      this.currentFunction.context.kind === "local",
+    );
+    if (stmt.value === undefined) {
+      if (returnType.base !== "unit") {
+        this.error(
+          `expected return value of type ${formatLocatedType(returnType)}`,
+          stmt.span,
+        );
+      }
+      return { stmt };
+    }
+    if (returnType.base === "unit") {
+      this.error(
+        "return with value not allowed for unit return type (spec §7.13)",
+        stmt.span,
+      );
+    }
+    const value = this.checkExpression(stmt.value, ctx, allowOmit);
+    if (!locatedTypesCompatible(value.choreoType, returnType)) {
+      this.error(
+        `return type ${formatLocatedType(value.choreoType)} is not compatible with ${formatLocatedType(returnType)}`,
+        stmt.span,
+      );
+    }
+    return { stmt, value };
+  }
+
+  private checkExpressionStatement(
+    stmt: ExpressionStatement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedExpressionStatement {
+    const expression = this.checkExpression(stmt.expression, ctx, allowOmit);
+    return { stmt, expression };
+  }
+
+  private checkCondition(
+    expr: Expression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedExpression {
+    const typed = this.checkExpression(expr, ctx, allowOmit);
+    if (typed.choreoType.base !== "boolean") {
+      this.error("condition must have type boolean", expr.span);
+      return typed;
+    }
+    const useLoc = contextAsLocation(ctx);
+    if (ctx.kind === "every") {
+      if (typed.choreoType.location.kind !== "every") {
+        this.error(
+          "condition must be boolean@every in @every context (spec §7.9)",
+          expr.span,
+        );
+      }
+    } else if (!available(typed.choreoType.location, useLoc)) {
+      this.error(
+        `condition boolean@${typed.choreoType.location.kind === "every" ? "every" : typed.choreoType.location.name} is not available in this context (spec §7.9)`,
+        expr.span,
+      );
+    }
+    return typed;
+  }
+
+  private checkExpression(
+    expr: Expression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedExpression {
+    switch (expr.kind) {
+      case "BinaryExpression":
+        return this.checkBinary(expr, ctx, allowOmit);
+      case "UnaryExpression":
+        return this.checkUnary(expr, ctx, allowOmit);
+      case "LiteralExpression":
+        return this.checkLiteral(expr, ctx, allowOmit);
+      case "IdentifierExpression":
+        return this.checkIdentifier(expr);
+      case "CallExpression":
+        return this.checkCall(expr, ctx, allowOmit);
+      case "ParenthesizedExpression":
+        return this.checkParen(expr, ctx, allowOmit);
+    }
+  }
+
+  private checkBinary(
+    expr: BinaryExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedBinaryExpression {
+    const left = this.checkExpression(expr.left, ctx, allowOmit);
+    const right = this.checkExpression(expr.right, ctx, allowOmit);
+    const useLoc = contextAsLocation(ctx);
+    const choreoType = this.binaryResultType(
+      expr.operator,
+      left.choreoType,
+      right.choreoType,
+      useLoc,
+      expr.span,
+    );
+    return { expr, choreoType, left, right };
+  }
+
+  private binaryResultType(
+    operator: BinaryExpression["operator"],
+    left: LocatedType,
+    right: LocatedType,
+    useLoc: Location,
+    span: Span,
+  ): LocatedType {
+    const arith = ["+", "-", "*", "/", "%"] as const;
+    const rel = ["<", "<=", ">", ">="] as const;
+    const eq = ["===", "!=="] as const;
+    const log = ["&&", "||"] as const;
+
+    if ((arith as readonly string[]).includes(operator)) {
+      if (operator === "+" && left.base === "string" && right.base === "string") {
+        return this.sameLocationBinary(left, right, "string", useLoc, span);
+      }
+      if (!this.isNumeric(left) || !this.isNumeric(right)) {
+        this.error(
+          `operator '${operator}' requires numeric operands`,
+          span,
+        );
+        return left;
+      }
+      const base: LocatedType["base"] =
+        left.base === "float" || right.base === "float" ? "float" : "integer";
+      return this.sameLocationBinary(left, right, base, useLoc, span);
+    }
+    if ((rel as readonly string[]).includes(operator)) {
+      if (!this.isNumeric(left) || !this.isNumeric(right)) {
+        this.error(`operator '${operator}' requires numeric operands`, span);
+      }
+      return this.sameLocationBinary(left, right, "boolean", useLoc, span);
+    }
+    if ((eq as readonly string[]).includes(operator)) {
+      if (left.base !== right.base) {
+        this.error(
+          `operator '${operator}' requires operands of the same base type`,
+          span,
+        );
+      }
+      return this.sameLocationBinary(left, right, "boolean", useLoc, span);
+    }
+    if ((log as readonly string[]).includes(operator)) {
+      if (left.base !== "boolean" || right.base !== "boolean") {
+        this.error(`operator '${operator}' requires boolean operands`, span);
+      }
+      return this.sameLocationBinary(left, right, "boolean", useLoc, span);
+    }
+    return left;
+  }
+
+  private checkUnary(
+    expr: UnaryExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedUnaryExpression {
+    const operand = this.checkExpression(expr.operand, ctx, allowOmit);
+    const useLoc = contextAsLocation(ctx);
+    if (expr.operator === "!") {
+      if (operand.choreoType.base !== "boolean") {
+        this.error("operator '!' requires boolean operand", expr.span);
+      }
+      this.requireAvailable(operand.choreoType.location, useLoc, expr.span);
+      return {
+        expr,
+        choreoType: locatedType("boolean", operand.choreoType.location),
+        operand,
+      };
+    }
+    if (!this.isNumeric(operand.choreoType)) {
+      this.error("unary '-' requires numeric operand", expr.span);
+    }
+    this.requireAvailable(operand.choreoType.location, useLoc, expr.span);
+    return { expr, choreoType: operand.choreoType, operand };
+  }
+
+  private checkLiteral(
+    expr: LiteralExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedLiteralExpression {
+    const choreoType = this.resolveLiteral(expr.literal, ctx, allowOmit);
+    return { expr, choreoType, literal: expr.literal };
+  }
+
+  private checkIdentifier(expr: IdentifierExpression): TypedIdentifierExpression {
+    const choreoType = this.lookupVariable(expr.name, expr.span);
+    return { expr, choreoType };
+  }
+
+  private checkCall(
+    expr: CallExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedCallExpression {
+    const decl = this.functions.get(expr.callee);
+    if (decl === undefined) {
+      this.error(`undefined function '${expr.callee}'`, expr.span);
+      return {
+        expr,
+        choreoType: locatedType("integer", contextAsLocation(ctx)),
+        callee: this.unknownFunction(expr.callee),
+        args: [],
+      };
+    }
+    this.validateCallTarget(decl, expr.span);
+    if (
+      decl.at.kind === "every" &&
+      this.currentFunction?.name === decl.name &&
+      this.currentFunction?.at.kind === "every"
+    ) {
+      this.error(
+        `recursive call to @every function '${decl.name}' is not supported (spec §10.4)`,
+        expr.span,
+      );
+    }
+    const symbol = this.functionSymbol(decl);
+    const calleeAllowOmit = decl.context.kind === "local";
+    const params = symbol.params;
+    if (expr.args.length !== params.length) {
+      this.error(
+        `function '${expr.callee}' expects ${params.length} argument(s), got ${expr.args.length}`,
+        expr.span,
+      );
+    }
+    const args: TypedExpression[] = [];
+    for (let i = 0; i < expr.args.length; i++) {
+      const arg = this.checkExpression(expr.args[i]!, ctx, calleeAllowOmit);
+      const param = params[i];
+      if (param !== undefined) {
+        this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
+      }
+      args.push(arg);
+    }
+    return {
+      expr,
+      choreoType: symbol.returnType,
+      callee: symbol,
+      args,
+    };
+  }
+
+  private checkParen(
+    expr: ParenthesizedExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedParenthesizedExpression {
+    const expression = this.checkExpression(expr.expression, ctx, allowOmit);
+    return {
+      expr,
+      choreoType: expression.choreoType,
+      expression,
+    };
+  }
+
+  private validateCallTarget(decl: FunctionDeclaration, span: Span): void {
+    const ctx = this.currentContext();
+    if (ctx === undefined) {
+      return;
+    }
+    if (ctx.kind === "every") {
+      return;
+    }
+    if (decl.at.kind === "every") {
+      this.error(
+        `cannot call @every function '${decl.name}' from local context (spec §7.12, §10.3)`,
+        span,
+      );
+      return;
+    }
+    if (decl.at.name !== ctx.participant) {
+      this.error(
+        `cannot call function '${decl.name}' at '${decl.at.name}' from '${ctx.participant}' (spec §7.12, §10.3)`,
+        span,
+      );
+    }
+  }
+
+  private validateCallArgument(
+    param: LocatedType,
+    arg: LocatedType,
+    span: Span,
+  ): void {
+    if (!isSubtype(arg.base, param.base)) {
+      this.error(
+        `argument type ${formatLocatedType(arg)} is not assignable to parameter type ${formatLocatedType(param)}`,
+        span,
+      );
+    }
+    if (!locationsEqual(arg.location, param.location)) {
+      this.error(
+        `argument location must be ${formatLocatedType(param)} but got ${formatLocatedType(arg)}`,
+        span,
+      );
+    }
+  }
+
+  private validateAssignmentLike(
+    target: LocatedType,
+    source: LocatedType,
+    span: Span,
+  ): void {
+    if (!isSubtype(source.base, target.base)) {
+      this.error(
+        `cannot assign ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
+        span,
+      );
+    }
+    if (!available(source.location, target.location)) {
+      this.error(
+        `invalid assignment across locations: use communication instead (spec §7.7, §16.7)`,
+        span,
+      );
+    }
+  }
+
+  private validateCommunication(
+    target: LocatedType,
+    source: LocatedType,
+    span: Span,
+  ): void {
+    if (!isSubtype(source.base, target.base)) {
+      this.error(
+        `communication type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
+        span,
+      );
+    }
+    if (source.location.kind === "every") {
+      this.error(
+        "cannot communicate from @every; use assignment instead (spec §11.4, §16.8)",
+        span,
+      );
+    }
+    if (locationsEqual(source.location, target.location)) {
+      this.error(
+        "communication source and destination must differ (spec §7.8)",
+        span,
+      );
+    }
+  }
+
+  private assertCommAllowed(ctx: ExecutionContext, span: Span): void {
+    if (ctx.kind === "local") {
+      this.error(
+        "communication is not allowed in local functions (spec §10.1)",
+        span,
+      );
+    }
+  }
+
+  private sameLocationBinary(
+    left: LocatedType,
+    right: LocatedType,
+    base: LocatedType["base"],
+    useLoc: Location,
+    span: Span,
+  ): LocatedType {
+    if (!locationsEqual(left.location, right.location)) {
+      this.error(
+        `binary operands must be at the same location`,
+        span,
+      );
+    }
+    this.requireAvailable(left.location, useLoc, span);
+    this.requireAvailable(right.location, useLoc, span);
+    return locatedType(base, left.location);
+  }
+
+  private requireAvailable(valueLoc: Location, useLoc: Location, span: Span): void {
+    if (!available(valueLoc, useLoc)) {
+      this.error(
+        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in this context (spec §7.6)`,
+        span,
+      );
+    }
+  }
+
+  private isNumeric(type: LocatedType): boolean {
+    return type.base === "integer" || type.base === "float";
+  }
+
+  private resolveType(
+    ann: import("../ast/syntax-types.js").TypeAnnotation,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): LocatedType {
+    try {
+      const resolved = resolveTypeAnnotation(ann, ctx, allowOmit);
+      this.validateLocation(resolved.location, ann.span);
+      return resolved;
+    } catch (e) {
+      if (e instanceof LocationOmitError) {
+        this.error(e.message, e.span);
+        return locatedType(ann.base, contextAsLocation(ctx));
+      }
+      throw e;
+    }
+  }
+
+  private resolveLiteral(
+    lit: import("../ast/literals.js").LocatedLiteral,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): LocatedType {
+    try {
+      const resolved = resolveLiteralType(lit, ctx, allowOmit);
+      this.validateLocation(resolved.location, lit.span);
+      return resolved;
+    } catch (e) {
+      if (e instanceof LocationOmitError) {
+        this.error(e.message, e.span);
+        return locatedType("integer", contextAsLocation(ctx));
+      }
+      throw e;
+    }
+  }
+
+  private validateLocation(loc: Location, span: Span): void {
+    if (loc.kind === "every") {
+      return;
+    }
+    if (!this.participants.has(loc.name)) {
+      this.error(
+        `unknown participant '${loc.name}' (spec §16.1)`,
+        span,
+      );
+    }
+  }
+
+  private defineLocal(name: string, type: LocatedType, span: Span): void {
+    const env = this.currentEnv();
+    if (env === undefined) {
+      this.error(`cannot define '${name}' outside a scope`, span);
+      return;
+    }
+    if (env.has(name)) {
+      this.error(`variable '${name}' is already defined in this scope (spec §6.1)`, span);
+      return;
+    }
+    env.set(name, type);
+  }
+
+  private lookupVariable(name: string, span: Span): LocatedType {
+    for (let i = this.envStack.length - 1; i >= 0; i--) {
+      const hit = this.envStack[i]!.get(name);
+      if (hit !== undefined) {
+        return hit;
+      }
+    }
+    if (this.currentFunction === undefined) {
+      const top = this.topLevelEnv.get(name);
+      if (top !== undefined) {
+        return top;
+      }
+    }
+    this.error(`undefined variable '${name}'`, span);
+    return locatedType("integer", { kind: "concrete", name: "_" });
+  }
+
+  private pushEnv(env: Map<string, LocatedType>): void {
+    this.envStack.push(env);
+  }
+
+  private popEnv(): void {
+    this.envStack.pop();
+  }
+
+  private currentEnv(): Map<string, LocatedType> | undefined {
+    if (this.envStack.length > 0) {
+      return this.envStack[this.envStack.length - 1];
+    }
+    if (this.currentFunction === undefined) {
+      return this.topLevelEnv;
+    }
+    return undefined;
+  }
+
+  private currentContext(): ExecutionContext | undefined {
+    if (this.currentFunction !== undefined) {
+      return this.currentFunction.context;
+    }
+    if (this.inTopLevel) {
+      return EVERY_CONTEXT;
+    }
+    return undefined;
+  }
+
+  private functionSymbol(decl: FunctionDeclaration): FunctionSymbol {
+    const allowOmit = decl.context.kind === "local";
+    const params = decl.params.map((p) =>
+      this.resolveType(p.type, decl.context, allowOmit),
+    );
+    const returnType = this.resolveType(decl.returnType, decl.context, allowOmit);
+    return {
+      name: decl.name,
+      at: decl.at,
+      context: decl.context,
+      params,
+      returnType,
+      decl,
+      isLocal: decl.at.kind === "concrete",
+      isEvery: decl.at.kind === "every",
+    };
+  }
+
+  private unknownFunction(name: string): FunctionSymbol {
+    const fallback = locatedType("integer", { kind: "concrete", name: "_" });
+    const stub: FunctionDeclaration = {
+      kind: "FunctionDeclaration",
+      name,
+      at: { kind: "concrete", name: "_" },
+      context: { kind: "local", participant: "_" },
+      params: [],
+      returnType: {
+        kind: "TypeAnnotation",
+        base: "integer",
+        span: { start: 0, end: 0 },
+      },
+      body: { kind: "Block", statements: [], span: { start: 0, end: 0 } },
+      span: { start: 0, end: 0 },
+    };
+    return {
+      name,
+      at: stub.at,
+      context: stub.context,
+      params: [],
+      returnType: fallback,
+      decl: stub,
+      isLocal: true,
+      isEvery: false,
+    };
+  }
+
+  private error(message: string, span: Span): void {
+    this.errors.push(typeCheckError(message, span));
+  }
+}

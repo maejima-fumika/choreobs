@@ -1,0 +1,24 @@
+{
+  "name": "choreobs",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "start:prod": "node dist/index.js",
+    "test": "node --import tsx --test $(find test -name '*.test.ts' | sort)",
+    "compile": "tsx src/cli/main.ts compile"
+  },
+  "bin": {
+    "choreobs": "./dist/cli/main.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
+  }
+}
