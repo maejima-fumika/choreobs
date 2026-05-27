@@ -1126,6 +1126,58 @@ Whether a function call is valid depends on the location of the function definit
 
 The inferred type of a function call expression is the declared or inferred return type of the called function.
 
+
+#### Function Argument Typing
+
+For a function call:
+
+```cbs
+f(arg1, ..., argN)
+```
+
+let the corresponding parameter types be:
+
+```text
+p1 : T1@L1, ..., pN : TN@LN
+```
+
+and let the argument expression types be:
+
+```text
+arg1 : S1@M1, ..., argN : SN@MN
+```
+
+Each argument is valid if:
+
+```text
+Si <: Ti
+available(Mi, Li)
+```
+
+The argument location does not need to be syntactically equal to the parameter location.
+
+In particular, a value of type `T@every` may be passed to a parameter of type `T@P`, where `P` is a concrete location, because:
+
+```text
+available(every, P) = true
+```
+
+Example:
+
+```cbs
+function add@alice(a: integer): integer {
+    return a;
+}
+
+add(10@every);
+```
+
+This is valid. The parameter `a` is treated inside the local function as `integer@alice`, not as `integer@every`.
+
+For calls to local functions, argument checking is performed at the call boundary using the general `available` relation. If an argument of type `T@every` is passed to a parameter of type `T@P`, the parameter is bound as a local value of type `T@P` inside the local function. This does not violate the Local Function Strict Location Rule, because the local function body only sees the parameter as `T@P`.
+
+The Local Function Strict Location Rule still applies to the local function declaration and body. Therefore, a local function parameter explicitly declared as `T@every` remains invalid.
+
 #### In an `@every` Context
 
 The following function calls are allowed:
@@ -3311,6 +3363,44 @@ function ok@bob(): integer {
     return x;
 }
 ```
+
+### 16.28 Invalid Function Argument Location
+
+A function argument must be compatible with the corresponding parameter type using base type subtyping and the general `available` relation.
+
+Allowed:
+
+```cbs
+function add@alice(a: integer): integer {
+    return a;
+}
+
+add(10@every);
+```
+
+This is valid because `available(every, alice) = true`.
+
+Disallowed:
+
+```cbs
+function add@alice(a: integer): integer {
+    return a;
+}
+
+add(10@bob);
+```
+
+This is invalid because `available(bob, alice) = false`.
+
+Disallowed:
+
+```cbs
+function bad@alice(x: integer@every): integer@alice {
+    return x;
+}
+```
+
+This remains invalid because local function parameters must not be located at `every`.
 
 ## 17. Non-goals and Future Extensions
 

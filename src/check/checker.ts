@@ -1221,9 +1221,9 @@ class TypeChecker {
         span,
       );
     }
-    if (!locationsEqual(arg.location, param.location)) {
+    if (!available(arg.location, param.location)) {
       this.error(
-        `argument location must be ${formatLocatedType(param)} but got ${formatLocatedType(arg)}`,
+        `argument location ${formatLocatedType(arg)} is not available at parameter location ${formatLocatedType(param)}`,
         span,
       );
     }

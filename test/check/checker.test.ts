@@ -313,4 +313,53 @@ function caller@alice(): integer {
       }
     }
   });
+
+  describe("call argument location availability", () => {
+    it("allows passing integer@every to integer@alice parameter", () => {
+      const { typed, errors } = checkSource(`
+function add@alice(a: integer) {
+  return a;
+}
+add(10@every);
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("allows integer@every argument to float@alice parameter", () => {
+      const { typed, errors } = checkSource(`
+function add@alice(a: float) {
+  return a;
+}
+add(10@every);
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("rejects argument at unavailable concrete location", () => {
+      const { typed, errors } = checkSource(`
+function add@alice(a: integer) {
+  return a;
+}
+add(10@bob);
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("not available at parameter location")),
+      );
+    });
+
+    it("still rejects local function parameter at @every", () => {
+      const { typed, errors } = checkSource(`
+function f@alice(x: integer@every) {
+  return x;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("parameter must be located at alice")),
+      );
+    });
+  });
 });
