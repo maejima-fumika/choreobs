@@ -152,6 +152,146 @@ function g@alice(n: integer) {
     assert.ok(recursiveErrors.length >= 2);
   });
 
+  describe("local function location discipline", () => {
+    it("accepts omitted-location parameters and body at bob", () => {
+      const { errors } = checkSource(`
+function add@bob(a: integer, b: integer) {
+  return a + b;
+}
+`);
+      assert.equal(errors.length, 0);
+    });
+
+    it("accepts explicit bob-located parameters and body", () => {
+      const { errors } = checkSource(`
+function add@bob(a: integer@bob, b: integer@bob) {
+  return a + b;
+}
+`);
+      assert.equal(errors.length, 0);
+    });
+
+    it("accepts omitted-location return type", () => {
+      const { errors } = checkSource(`
+function f@bob(): integer {
+  return 1;
+}
+`);
+      assert.equal(errors.length, 0);
+    });
+
+    it("accepts explicit bob-located return type", () => {
+      const { errors } = checkSource(`
+function f@bob(): integer@bob {
+  return 1@bob;
+}
+`);
+      assert.equal(errors.length, 0);
+    });
+
+    it("rejects parameter at a different concrete location", () => {
+      const { typed, errors } = checkSource(`
+function add@bob(a: integer@alice, b: integer@bob) {
+  return a;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("parameter must be located at bob")),
+      );
+    });
+
+    it("rejects parameter at @every", () => {
+      const { typed, errors } = checkSource(`
+function f@bob(x: integer@every) {
+  return x;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("parameter must be located at bob")),
+      );
+    });
+
+    it("rejects @every literal in body", () => {
+      const { typed, errors } = checkSource(`
+function f@bob() {
+  let x = 1@every;
+  return x;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("not available in local function at bob"),
+        ),
+      );
+    });
+
+    it("rejects literal at a different concrete location in body", () => {
+      const { typed, errors } = checkSource(`
+function f@bob() {
+  let x = 1@alice;
+  return x;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("not available in local function at bob"),
+        ),
+      );
+    });
+
+    it("rejects explicit return type at a different concrete location", () => {
+      const { typed, errors } = checkSource(`
+function f@bob(): integer@alice {
+  return 1@alice;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("return type must be located at bob")),
+      );
+    });
+
+    it("rejects explicit return type at @every", () => {
+      const { typed, errors } = checkSource(`
+function f@bob(): integer@every {
+  return 1@every;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("return type must be located at bob")),
+      );
+    });
+
+    it("rejects inferred return at @every", () => {
+      const { typed, errors } = checkSource(`
+function f@bob() {
+  return 1@every;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("return type must be located at bob")),
+      );
+    });
+
+    it("rejects inferred return at a different concrete location", () => {
+      const { typed, errors } = checkSource(`
+function f@bob() {
+  return 1@alice;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("return type must be located at bob")),
+      );
+    });
+  });
+
   it("uses inferred return type at call sites (spec §7.14.4)", () => {
     const { typed, errors } = checkSource(`
 function add@alice(a: integer, b: integer) {

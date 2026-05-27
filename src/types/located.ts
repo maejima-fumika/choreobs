@@ -43,6 +43,14 @@ export function available(valueLoc: Location, useLoc: Location): boolean {
   return false;
 }
 
+/** `localAvailable(L, P)` — values in `function@P` may only use location `P`. */
+export function localAvailable(
+  valueLoc: Location,
+  participant: string,
+): boolean {
+  return valueLoc.kind === "concrete" && valueLoc.name === participant;
+}
+
 /** Execution context as the `Luse` location for availability checks. */
 export function contextAsLocation(ctx: ExecutionContext): Location {
   if (ctx.kind === "every") {

@@ -883,6 +883,30 @@ integer@every is available at alice and bob
 integer@alice is not available in an every context
 ```
 
+#### Local Function Strict Availability
+
+Local functions use a stricter availability rule than the general `available` relation.
+
+For a local function declared at a concrete location `P`, only values located exactly at `P` may be used inside the function.
+
+Define `localAvailable(Lvalue, P)` as follows:
+
+```text
+localAvailable(P, P) = true
+localAvailable(every, P) = false
+localAvailable(Q, P) = false where Q is a concrete location and Q != P
+```
+
+Meaning:
+
+- A value of type `T@P` may be used inside `function f@P`.
+- A value of type `T@Q`, where `Q != P`, must not be used inside `function f@P`.
+- A value of type `T@every` must not be used inside any local function.
+
+This rule is intentionally stricter than `available(every, P) = true`. Although `T@every` values are generally available at concrete locations in choreographic contexts, Core v0 local functions are purely endpoint-local computations and do not accept, create, or use `@every` values.
+
+This strict rule applies only to local functions. It does not apply to `@every` choreographic functions.
+
 ### 7.7 Assignment Typing
 
 Assignment:
@@ -980,10 +1004,24 @@ if (c) {
 
 #### Local Context
 
-Inside `function@alice`, the condition may be either `boolean@alice` or `boolean@every`.
+Inside `function@alice`, the condition must be `boolean@alice`.
 
-```ts
+A condition of type `boolean@every` is not allowed inside a local function, because local functions use the stricter `localAvailable` relation.
+
+Allowed:
+
+```cbs
 function f@alice(c: boolean): unit {
+    if (c) {
+        return;
+    }
+}
+```
+
+Disallowed:
+
+```cbs
+function f@alice(c: boolean@every): unit {
     if (c) {
         return;
     }
@@ -995,7 +1033,7 @@ function f@alice(c: boolean): unit {
 The termination conditions of `while` and `for` follow the same rule as `if`.
 
 * In an `@every` context, the condition must be `boolean@every`.
-* In a local `@p` context, the condition may be `boolean@p` or `boolean@every`.
+* In a local `@p` context, the condition must be `boolean@p`. `boolean@every` is not allowed inside local functions.
 
 ### 7.11 Binary Operators
 
@@ -1348,6 +1386,99 @@ function add@alice(a: integer@alice, b: integer@alice): integer@alice {
 }
 ```
 
+### 8.1.1 Local Function Strict Location Rule
+
+For a local function declared at a concrete location `P`:
+
+```cbs
+function f@P(...) {
+    ...
+}
+```
+
+all parameters, return values, and expressions evaluated in the function body must be located at `P`.
+
+Rules:
+
+- Every parameter type must be located at `P` after location elaboration.
+- If a parameter type omits its location, it is elaborated to `@P`.
+- A parameter type explicitly located at another concrete location `Q`, where `Q != P`, is a compile-time error.
+- A parameter type explicitly located at `every` is a compile-time error.
+- The explicit or inferred return type of a local function must be located at `P`, except that `unit` with an omitted location is elaborated to `unit@P`.
+- A return type explicitly or implicitly located at another concrete location `Q`, where `Q != P`, is a compile-time error.
+- A return type explicitly or implicitly located at `every` is a compile-time error.
+- Every expression evaluated inside the local function body must have a type located at `P`.
+- Values located at `every` are not allowed inside local function bodies.
+- Values located at another concrete location are not allowed inside local function bodies.
+- Communication is not allowed inside local functions.
+
+Allowed:
+
+```cbs
+function add@bob(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+This is elaborated to:
+
+```cbs
+function add@bob(a: integer@bob, b: integer@bob): integer@bob {
+    return a + b;
+}
+```
+
+Also allowed:
+
+```cbs
+function add@bob(a: integer@bob, b: integer@bob): integer@bob {
+    return a + b;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(a: integer@alice, b: integer@bob): integer@bob {
+    return a;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(x: integer@every): integer@bob {
+    return x;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@every {
+    return 1@every;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@alice {
+    return 1@alice;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@bob {
+    let x = 1@every;
+    return x;
+}
+```
+
+This rule is intentionally stricter than ordinary location availability. In particular, `T@every` is not permitted in local function parameters, local function return types, or local function bodies.
+
 ### 8.2 `@every` Function Context
 
 Inside an `@every` function, location omission is not allowed.
@@ -1392,7 +1523,7 @@ Here `x` omits its type annotation, but the literal location is explicit, so `x`
 
 ### 8.4 `@every` Literals
 
-`@every` literals are allowed.
+`@every` literals are allowed in choreographic contexts.
 
 ```ts
 true@every
@@ -1401,7 +1532,7 @@ true@every
 null@every
 ```
 
-***
+`@every` literals are not allowed inside local function bodies, because local functions use the Local Function Strict Location Rule.
 
 ## 9. Statements and Expressions
 
@@ -3090,6 +3221,97 @@ Parameter types are not inferred in Core v0.
 
 ***
 
+### 16.25 Invalid Local Function Parameter Location
+
+A local function parameter must be located at the function's own concrete location after location elaboration.
+
+Disallowed:
+
+```cbs
+function bad@bob(a: integer@alice, b: integer@bob): integer@bob {
+    return a;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(x: integer@every): integer@bob {
+    return x;
+}
+```
+
+Allowed:
+
+```cbs
+function add@bob(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+This is elaborated to parameters located at `bob`.
+
+### 16.26 Invalid Local Function Return Location
+
+A local function return type must be located at the function's own concrete location after location elaboration.
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@alice {
+    return 1@alice;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@every {
+    return 1@every;
+}
+```
+
+Allowed:
+
+```cbs
+function ok@bob(): integer {
+    return 1;
+}
+```
+
+This is elaborated to `integer@bob`.
+
+### 16.27 Invalid Value Used Inside Local Function
+
+Inside a local function declared at concrete location `P`, every evaluated expression must be located at `P`.
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@bob {
+    let x: integer@alice = 1@alice;
+    return x;
+}
+```
+
+Disallowed:
+
+```cbs
+function bad@bob(): integer@bob {
+    let x: integer@every = 1@every;
+    return x;
+}
+```
+
+Allowed:
+
+```cbs
+function ok@bob(): integer {
+    let x: integer = 1;
+    return x;
+}
+```
+
 ## 17. Non-goals and Future Extensions
 
 The following features are not part of ChoreoBS Core v0.
@@ -3098,6 +3320,8 @@ The following features are not part of ChoreoBS Core v0.
 
 * location inference;
 * omitted locations in `@every` context;
+* use of `@every` values inside local functions;
+* local function parameters or return types located at `every`;
 * `any`;
 * `undefined`;
 * runtime location checks;

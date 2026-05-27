@@ -67,6 +67,7 @@ import {
   contextAsLocation,
   formatLocatedType,
   isSubtype,
+  localAvailable,
   locatedType,
   locatedTypesCompatible,
   locationsEqual,
@@ -210,6 +211,12 @@ class TypeChecker {
       }
       const allowOmit = decl.context.kind === "local";
       const returnType = this.resolveType(decl.returnType, decl.context, allowOmit);
+      this.validateLocalFunctionLocatedType(
+        decl,
+        returnType,
+        decl.returnType.span,
+        "return type",
+      );
       this.resolvedReturnTypes.set(decl.name, returnType);
     }
   }
@@ -257,10 +264,14 @@ class TypeChecker {
     const allowOmit = decl.context.kind === "local";
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
-      env.set(
-        param.name,
-        this.resolveType(param.type, decl.context, allowOmit),
+      const paramType = this.resolveType(param.type, decl.context, allowOmit);
+      this.validateLocalFunctionLocatedType(
+        decl,
+        paramType,
+        param.span,
+        "parameter",
       );
+      env.set(param.name, paramType);
     }
     this.currentFunction = decl;
     this.pushEnv(env);
@@ -287,6 +298,12 @@ class TypeChecker {
       this.error(inferred.message, decl.span);
       return false;
     }
+    this.validateLocalFunctionLocatedType(
+      decl,
+      inferred.value,
+      decl.span,
+      "return type",
+    );
     this.resolvedReturnTypes.set(decl.name, inferred.value);
     return true;
   }
@@ -617,6 +634,12 @@ class TypeChecker {
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
       const type = this.resolveType(param.type, decl.context, allowOmit);
+      this.validateLocalFunctionLocatedType(
+        decl,
+        type,
+        param.span,
+        "parameter",
+      );
       if (env.has(param.name)) {
         this.error(
           `duplicate parameter '${param.name}' in the same scope`,
@@ -696,6 +719,7 @@ class TypeChecker {
       stmt.type !== undefined
         ? this.resolveLetType(stmt.type, initializer, ctx, allowOmit, stmt.span)
         : initializer.choreoType;
+    this.requireExpressionAvailable(choreoType.location, ctx, stmt.span);
     this.defineLocal(stmt.name, choreoType, stmt.span);
     return { stmt, choreoType, initializer };
   }
@@ -708,6 +732,12 @@ class TypeChecker {
     span: Span,
   ): LocatedType {
     const choreoType = this.resolveType(ann, ctx, allowOmit);
+    this.validateLocalFunctionLocatedType(
+      this.currentFunction,
+      choreoType,
+      span,
+      "variable type",
+    );
     this.validateAssignmentLike(choreoType, initializer.choreoType, span);
     return choreoType;
   }
@@ -820,6 +850,7 @@ class TypeChecker {
       init.type !== undefined
         ? this.resolveLetType(init.type, initializer, ctx, allowOmit, init.span)
         : initializer.choreoType;
+    this.requireExpressionAvailable(choreoType.location, ctx, init.span);
     this.defineLocal(init.name, choreoType, init.span);
     return { init, choreoType, initializer };
   }
@@ -971,7 +1002,7 @@ class TypeChecker {
       case "LiteralExpression":
         return this.checkLiteral(expr, ctx, allowOmit);
       case "IdentifierExpression":
-        return this.checkIdentifier(expr);
+        return this.checkIdentifier(expr, ctx);
       case "CallExpression":
         return this.checkCall(expr, ctx, allowOmit);
       case "ParenthesizedExpression":
@@ -990,6 +1021,7 @@ class TypeChecker {
       expr.operator,
       left.choreoType,
       right.choreoType,
+      ctx,
       expr.span,
     );
     return { expr, choreoType, left, right };
@@ -999,6 +1031,7 @@ class TypeChecker {
     operator: BinaryExpression["operator"],
     left: LocatedType,
     right: LocatedType,
+    ctx: ExecutionContext,
     span: Span,
   ): LocatedType {
     const arith = ["+", "-", "*", "/", "%"] as const;
@@ -1008,7 +1041,7 @@ class TypeChecker {
 
     if ((arith as readonly string[]).includes(operator)) {
       if (operator === "+" && left.base === "string" && right.base === "string") {
-        return this.locationAwareBinary(left, right, "string", span);
+        return this.locationAwareBinary(left, right, "string", ctx, span);
       }
       if (!this.isNumeric(left) || !this.isNumeric(right)) {
         this.error(
@@ -1019,13 +1052,13 @@ class TypeChecker {
       }
       const base: LocatedType["base"] =
         left.base === "float" || right.base === "float" ? "float" : "integer";
-      return this.locationAwareBinary(left, right, base, span);
+      return this.locationAwareBinary(left, right, base, ctx, span);
     }
     if ((rel as readonly string[]).includes(operator)) {
       if (!this.isNumeric(left) || !this.isNumeric(right)) {
         this.error(`operator '${operator}' requires numeric operands`, span);
       }
-      return this.locationAwareBinary(left, right, "boolean", span);
+      return this.locationAwareBinary(left, right, "boolean", ctx, span);
     }
     if ((eq as readonly string[]).includes(operator)) {
       if (left.base !== right.base) {
@@ -1034,13 +1067,13 @@ class TypeChecker {
           span,
         );
       }
-      return this.locationAwareBinary(left, right, "boolean", span);
+      return this.locationAwareBinary(left, right, "boolean", ctx, span);
     }
     if ((log as readonly string[]).includes(operator)) {
       if (left.base !== "boolean" || right.base !== "boolean") {
         this.error(`operator '${operator}' requires boolean operands`, span);
       }
-      return this.locationAwareBinary(left, right, "boolean", span);
+      return this.locationAwareBinary(left, right, "boolean", ctx, span);
     }
     return left;
   }
@@ -1051,12 +1084,11 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedUnaryExpression {
     const operand = this.checkExpression(expr.operand, ctx, allowOmit);
-    const useLoc = contextAsLocation(ctx);
     if (expr.operator === "!") {
       if (operand.choreoType.base !== "boolean") {
         this.error("operator '!' requires boolean operand", expr.span);
       }
-      this.requireAvailable(operand.choreoType.location, useLoc, expr.span);
+      this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
       return {
         expr,
         choreoType: locatedType("boolean", operand.choreoType.location),
@@ -1066,7 +1098,7 @@ class TypeChecker {
     if (!this.isNumeric(operand.choreoType)) {
       this.error("unary '-' requires numeric operand", expr.span);
     }
-    this.requireAvailable(operand.choreoType.location, useLoc, expr.span);
+    this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
     return { expr, choreoType: operand.choreoType, operand };
   }
 
@@ -1076,11 +1108,16 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedLiteralExpression {
     const choreoType = this.resolveLiteral(expr.literal, ctx, allowOmit);
+    this.requireExpressionAvailable(choreoType.location, ctx, expr.span);
     return { expr, choreoType, literal: expr.literal };
   }
 
-  private checkIdentifier(expr: IdentifierExpression): TypedIdentifierExpression {
+  private checkIdentifier(
+    expr: IdentifierExpression,
+    ctx: ExecutionContext,
+  ): TypedIdentifierExpression {
     const choreoType = this.lookupVariable(expr.name, expr.span);
+    this.requireExpressionAvailable(choreoType.location, ctx, expr.span);
     return { expr, choreoType };
   }
 
@@ -1128,6 +1165,7 @@ class TypeChecker {
       }
       args.push(arg);
     }
+    this.requireExpressionAvailable(symbol.returnType.location, ctx, expr.span);
     return {
       expr,
       choreoType: symbol.returnType,
@@ -1248,19 +1286,42 @@ class TypeChecker {
     left: LocatedType,
     right: LocatedType,
     base: LocatedType["base"],
+    ctx: ExecutionContext,
     span: Span,
   ): LocatedType {
-    const evalLoc = this.resolveBinaryEvaluationLocation(left.location, right.location, span);
-    this.requireAvailable(left.location, evalLoc, span);
-    this.requireAvailable(right.location, evalLoc, span);
+    const evalLoc = this.resolveBinaryEvaluationLocation(
+      left.location,
+      right.location,
+      ctx,
+      span,
+    );
+    if (ctx.kind === "local") {
+      this.requireExpressionAvailable(left.location, ctx, span);
+      this.requireExpressionAvailable(right.location, ctx, span);
+    }
     return locatedType(base, evalLoc);
   }
 
   private resolveBinaryEvaluationLocation(
     left: Location,
     right: Location,
+    ctx: ExecutionContext,
     span: Span,
   ): Location {
+    if (ctx.kind === "local") {
+      const participant = ctx.participant;
+      if (
+        !localAvailable(left, participant) ||
+        !localAvailable(right, participant) ||
+        !locationsEqual(left, right)
+      ) {
+        this.error(
+          `binary operands must be located at ${participant} in local function`,
+          span,
+        );
+      }
+      return left;
+    }
     if (locationsEqual(left, right)) {
       return left;
     }
@@ -1278,6 +1339,40 @@ class TypeChecker {
     if (!available(valueLoc, useLoc)) {
       this.error(
         `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in this context (spec §7.6)`,
+        span,
+      );
+    }
+  }
+
+  private requireExpressionAvailable(
+    valueLoc: Location,
+    ctx: ExecutionContext,
+    span: Span,
+  ): void {
+    if (ctx.kind !== "local") {
+      return;
+    }
+    if (!localAvailable(valueLoc, ctx.participant)) {
+      this.error(
+        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in local function at ${ctx.participant}`,
+        span,
+      );
+    }
+  }
+
+  private validateLocalFunctionLocatedType(
+    decl: FunctionDeclaration | undefined,
+    type: LocatedType,
+    span: Span,
+    role: "parameter" | "return type" | "variable type",
+  ): void {
+    if (decl === undefined || decl.context.kind !== "local") {
+      return;
+    }
+    const participant = decl.context.participant;
+    if (!localAvailable(type.location, participant)) {
+      this.error(
+        `function '${decl.name}' ${role} must be located at ${participant}, got ${formatLocatedType(type)}`,
         span,
       );
     }
