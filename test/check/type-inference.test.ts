@@ -46,7 +46,12 @@ describe("type inference (spec §7.14)", () => {
     it("infers ordinary let from initializer (§7.14.1)", () => {
       const typed = expectTypeCheckSuccess(`let x = 1@alice;`);
       const item = typed.items[0];
-      if (item?.kind === "TopLevelStatement" && item.statement.kind === "LetStatement") {
+      if (
+        item &&
+        "statement" in item &&
+        "choreoType" in item.statement &&
+        item.statement.stmt.kind === "LetStatement"
+      ) {
         assert.equal(item.statement.choreoType.base, "integer");
         if (item.statement.choreoType.location.kind === "concrete") {
           assert.equal(item.statement.choreoType.location.name, "alice");
@@ -64,7 +69,16 @@ function f@alice(): unit {
 `);
       const fn = functionDecl(typed, 0);
       const [x, y] = fn.body.statements;
-      if (x?.kind === "LetStatement" && y?.kind === "LetStatement") {
+      if (
+        x &&
+        "stmt" in x &&
+        "choreoType" in x &&
+        x.stmt.kind === "LetStatement" &&
+        y &&
+        "stmt" in y &&
+        "choreoType" in y &&
+        y.stmt.kind === "LetStatement"
+      ) {
         assert.equal(x.choreoType.base, "integer");
         assert.equal(y.choreoType.base, "integer");
       }
@@ -80,7 +94,7 @@ function f@alice(): unit {
 `);
       const fn = functionDecl(typed, 0);
       const c = fn.body.statements[1];
-      if (c?.kind === "LetStatement") {
+      if (c && "stmt" in c && "choreoType" in c && c.stmt.kind === "LetStatement") {
         assert.equal(c.choreoType.base, "boolean");
         if (c.choreoType.location.kind === "concrete") {
           assert.equal(c.choreoType.location.name, "alice");
@@ -98,7 +112,12 @@ function f@alice(): integer {
       const fn = functionDecl(typed, 0);
       assert.equal(fn.returnType.base, "integer");
       const letStmt = fn.body.statements[0];
-      if (letStmt?.kind === "LetStatement") {
+      if (
+        letStmt &&
+        "stmt" in letStmt &&
+        "choreoType" in letStmt &&
+        letStmt.stmt.kind === "LetStatement"
+      ) {
         assert.equal(letStmt.choreoType.base, "integer");
         if (letStmt.choreoType.location.kind === "concrete") {
           assert.equal(letStmt.choreoType.location.name, "alice");
@@ -113,9 +132,19 @@ for (let i = 0@every; i < 3@every; i = i + 1@every) {
 }
 `);
       const item = typed.items[0];
-      if (item?.kind === "TopLevelStatement" && item.statement.kind === "ForStatement") {
+      if (
+        item &&
+        "statement" in item &&
+        "init" in item.statement &&
+        item.statement.stmt.kind === "ForStatement"
+      ) {
         const init = item.statement.init;
-        if (init?.kind === "ForLetInit") {
+        if (
+          init &&
+          "init" in init &&
+          "choreoType" in init &&
+          init.init.kind === "ForLetInit"
+        ) {
           assert.equal(init.choreoType.base, "integer");
           assert.equal(init.choreoType.location.kind, "every");
         }
@@ -174,6 +203,35 @@ function f@alice(c: boolean) {
 }
 `);
       assert.equal(functionDecl(typed, 0).returnType.base, "float");
+    });
+
+    it("infers return type for @every function binary at alice (§7.11, §7.14.4)", () => {
+      const typed = expectTypeCheckSuccess(`
+function add@every(a: integer@alice, b: integer@alice) {
+  return a + b;
+}
+`);
+      const fn = functionDecl(typed, 0);
+      assert.equal(fn.returnType.base, "integer");
+      if (fn.returnType.location.kind === "concrete") {
+        assert.equal(fn.returnType.location.name, "alice");
+      }
+    });
+
+    it("accepts explicit alice return type for @every binary (§7.11)", () => {
+      expectTypeCheckSuccess(`
+function add@every(a: integer@alice, b: integer@alice): integer@alice {
+  return a + b;
+}
+`);
+    });
+
+    it("keeps @every return of alice value valid (§12.11 regression)", () => {
+      expectTypeCheckSuccess(`
+function add@every(a: integer@alice, b: integer@alice) {
+  return a;
+}
+`);
     });
 
     it("allows explicit return type on recursive local function (§7.14.8)", () => {
@@ -279,6 +337,17 @@ function bad@every(c: boolean@every) {
 }
 `,
         "location",
+      );
+    });
+
+    it("rejects @every binary with different concrete operand locations (§7.11)", () => {
+      expectTypeCheckFailure(
+        `
+function bad@every(a: integer@alice, b: integer@bob) {
+  return a + b;
+}
+`,
+        "compatible location",
       );
     });
 

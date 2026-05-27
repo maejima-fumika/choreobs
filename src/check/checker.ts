@@ -986,12 +986,10 @@ class TypeChecker {
   ): TypedBinaryExpression {
     const left = this.checkExpression(expr.left, ctx, allowOmit);
     const right = this.checkExpression(expr.right, ctx, allowOmit);
-    const useLoc = contextAsLocation(ctx);
     const choreoType = this.binaryResultType(
       expr.operator,
       left.choreoType,
       right.choreoType,
-      useLoc,
       expr.span,
     );
     return { expr, choreoType, left, right };
@@ -1001,7 +999,6 @@ class TypeChecker {
     operator: BinaryExpression["operator"],
     left: LocatedType,
     right: LocatedType,
-    useLoc: Location,
     span: Span,
   ): LocatedType {
     const arith = ["+", "-", "*", "/", "%"] as const;
@@ -1011,7 +1008,7 @@ class TypeChecker {
 
     if ((arith as readonly string[]).includes(operator)) {
       if (operator === "+" && left.base === "string" && right.base === "string") {
-        return this.sameLocationBinary(left, right, "string", useLoc, span);
+        return this.locationAwareBinary(left, right, "string", span);
       }
       if (!this.isNumeric(left) || !this.isNumeric(right)) {
         this.error(
@@ -1022,13 +1019,13 @@ class TypeChecker {
       }
       const base: LocatedType["base"] =
         left.base === "float" || right.base === "float" ? "float" : "integer";
-      return this.sameLocationBinary(left, right, base, useLoc, span);
+      return this.locationAwareBinary(left, right, base, span);
     }
     if ((rel as readonly string[]).includes(operator)) {
       if (!this.isNumeric(left) || !this.isNumeric(right)) {
         this.error(`operator '${operator}' requires numeric operands`, span);
       }
-      return this.sameLocationBinary(left, right, "boolean", useLoc, span);
+      return this.locationAwareBinary(left, right, "boolean", span);
     }
     if ((eq as readonly string[]).includes(operator)) {
       if (left.base !== right.base) {
@@ -1037,13 +1034,13 @@ class TypeChecker {
           span,
         );
       }
-      return this.sameLocationBinary(left, right, "boolean", useLoc, span);
+      return this.locationAwareBinary(left, right, "boolean", span);
     }
     if ((log as readonly string[]).includes(operator)) {
       if (left.base !== "boolean" || right.base !== "boolean") {
         this.error(`operator '${operator}' requires boolean operands`, span);
       }
-      return this.sameLocationBinary(left, right, "boolean", useLoc, span);
+      return this.locationAwareBinary(left, right, "boolean", span);
     }
     return left;
   }
@@ -1247,22 +1244,34 @@ class TypeChecker {
     }
   }
 
-  private sameLocationBinary(
+  private locationAwareBinary(
     left: LocatedType,
     right: LocatedType,
     base: LocatedType["base"],
-    useLoc: Location,
     span: Span,
   ): LocatedType {
-    if (!locationsEqual(left.location, right.location)) {
-      this.error(
-        `binary operands must be at the same location`,
-        span,
-      );
+    const evalLoc = this.resolveBinaryEvaluationLocation(left.location, right.location, span);
+    this.requireAvailable(left.location, evalLoc, span);
+    this.requireAvailable(right.location, evalLoc, span);
+    return locatedType(base, evalLoc);
+  }
+
+  private resolveBinaryEvaluationLocation(
+    left: Location,
+    right: Location,
+    span: Span,
+  ): Location {
+    if (locationsEqual(left, right)) {
+      return left;
     }
-    this.requireAvailable(left.location, useLoc, span);
-    this.requireAvailable(right.location, useLoc, span);
-    return locatedType(base, left.location);
+    if (left.kind === "every" && right.kind === "concrete") {
+      return right;
+    }
+    if (left.kind === "concrete" && right.kind === "every") {
+      return left;
+    }
+    this.error("binary operands must be at a compatible location", span);
+    return left;
   }
 
   private requireAvailable(valueLoc: Location, useLoc: Location, span: Span): void {

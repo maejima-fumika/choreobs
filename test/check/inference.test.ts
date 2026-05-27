@@ -45,14 +45,34 @@ const literalResolver: ExprTypeResolver = (expr: Expression) => {
 describe("return inference utilities (spec §7.14.4)", () => {
   describe("lubBase", () => {
     it("computes numeric lubs", () => {
-      assert.equal(lubBase("integer", "integer").ok && lubBase("integer", "integer").value, "integer");
-      assert.equal(lubBase("integer", "float").ok && lubBase("integer", "float").value, "float");
-      assert.equal(lubBase("float", "integer").ok && lubBase("float", "integer").value, "float");
-      assert.equal(lubBase("float", "float").ok && lubBase("float", "float").value, "float");
+      const ii = lubBase("integer", "integer");
+      assert.equal(ii.ok, true);
+      if (ii.ok) {
+        assert.equal(ii.value, "integer");
+      }
+      const ift = lubBase("integer", "float");
+      assert.equal(ift.ok, true);
+      if (ift.ok) {
+        assert.equal(ift.value, "float");
+      }
+      const fi = lubBase("float", "integer");
+      assert.equal(fi.ok, true);
+      if (fi.ok) {
+        assert.equal(fi.value, "float");
+      }
+      const ff = lubBase("float", "float");
+      assert.equal(ff.ok, true);
+      if (ff.ok) {
+        assert.equal(ff.value, "float");
+      }
     });
 
     it("accepts identical non-numeric types", () => {
-      assert.equal(lubBase("boolean", "boolean").ok && lubBase("boolean", "boolean").value, "boolean");
+      const bb = lubBase("boolean", "boolean");
+      assert.equal(bb.ok, true);
+      if (bb.ok) {
+        assert.equal(bb.value, "boolean");
+      }
     });
 
     it("rejects incompatible base types", () => {
