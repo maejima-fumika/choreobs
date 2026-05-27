@@ -139,8 +139,10 @@ class Parser {
     this.consume(TokenKind.LParen, "expected '(' after function location");
     const params = this.check(TokenKind.RParen) ? [] : this.parameterList();
     this.consume(TokenKind.RParen, "expected ')' after parameters");
-    this.consume(TokenKind.Colon, "expected ':' before return type");
-    const returnType = this.parseType();
+    let returnType: TypeAnnotation | undefined;
+    if (this.match(TokenKind.Colon)) {
+      returnType = this.parseType();
+    }
     const body = this.parseBlock();
 
     const decl: FunctionDeclaration = {
@@ -298,8 +300,12 @@ class Parser {
   private parseLetStatement(requireSemicolon: boolean): LetStatement | LetReceiveStatement {
     const start = this.previous();
     const nameTok = this.consumeIdentifierToken("expected variable name after 'let'");
-    this.consume(TokenKind.Colon, "expected ':' after variable name");
-    const type = this.parseType();
+
+    if (this.match(TokenKind.Receive)) {
+      throw this.fail(
+        "type annotation required for communication let (spec §5.6, §7.14.3)",
+      );
+    }
 
     if (this.match(TokenKind.Assign)) {
       const initializer = this.parseExpression();
@@ -309,30 +315,52 @@ class Parser {
       const stmt: LetStatement = {
         kind: "LetStatement",
         name: nameTok.name,
-        type,
         initializer,
         span: spanFrom(start, requireSemicolon ? this.previous() : initializer),
       };
       return stmt;
     }
 
-    if (this.match(TokenKind.Receive)) {
-      const source = this.parseExpression();
-      if (requireSemicolon) {
-        this.consume(TokenKind.Semicolon, "expected ';' after let statement");
+    if (this.match(TokenKind.Colon)) {
+      const type = this.parseType();
+
+      if (this.match(TokenKind.Assign)) {
+        const initializer = this.parseExpression();
+        if (requireSemicolon) {
+          this.consume(TokenKind.Semicolon, "expected ';' after let statement");
+        }
+        const stmt: LetStatement = {
+          kind: "LetStatement",
+          name: nameTok.name,
+          type,
+          initializer,
+          span: spanFrom(start, requireSemicolon ? this.previous() : initializer),
+        };
+        return stmt;
       }
-      const stmt: LetReceiveStatement = {
-        kind: "LetReceiveStatement",
-        name: nameTok.name,
-        type,
-        source,
-        span: spanFrom(start, requireSemicolon ? this.previous() : source),
-      };
-      return stmt;
+
+      if (this.match(TokenKind.Receive)) {
+        const source = this.parseExpression();
+        if (requireSemicolon) {
+          this.consume(TokenKind.Semicolon, "expected ';' after let statement");
+        }
+        const stmt: LetReceiveStatement = {
+          kind: "LetReceiveStatement",
+          name: nameTok.name,
+          type,
+          source,
+          span: spanFrom(start, requireSemicolon ? this.previous() : source),
+        };
+        return stmt;
+      }
+
+      throw this.fail(
+        "expected '=' or '<~' after type in let statement; uninitialized let is not allowed (spec §5.6)",
+      );
     }
 
     throw this.fail(
-      "expected '=' or '<~' after type in let statement; uninitialized let is not allowed (spec §5.6)",
+      "expected ':', '=', or '<~' after variable name in let; uninitialized let is not allowed (spec §5.6)",
     );
   }
 
@@ -431,8 +459,10 @@ class Parser {
     if (this.match(TokenKind.Let)) {
       const start = this.previous();
       const nameTok = this.consumeIdentifierToken("expected variable name after 'let'");
-      this.consume(TokenKind.Colon, "expected ':' after variable name");
-      const type = this.parseType();
+      let type: TypeAnnotation | undefined;
+      if (this.match(TokenKind.Colon)) {
+        type = this.parseType();
+      }
       this.consume(TokenKind.Assign, "expected '=' in for-loop let initializer");
       const initializer = this.parseExpression();
       const init: ForLetInit = {

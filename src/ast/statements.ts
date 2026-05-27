@@ -13,15 +13,21 @@ export type Statement =
   | ReturnStatement
   | ExpressionStatement;
 
-/** `let x: T = e;` (spec §5.6). */
+/**
+ * Ordinary initialized `let` (spec §5.6).
+ * `type` is present for `let x: T = e;`, omitted for `let x = e;` (inferred in §7.14.1).
+ */
 export interface LetStatement extends AstNode {
   readonly kind: "LetStatement";
   readonly name: string;
-  readonly type: TypeAnnotation;
+  readonly type?: TypeAnnotation;
   readonly initializer: Expression;
 }
 
-/** `let y: T <~ e;` — receive into a new binding (spec §5.6). */
+/**
+ * Communication `let` (spec §5.6, §7.14.3).
+ * `type` is always required; destination type/location are not inferred.
+ */
 export interface LetReceiveStatement extends AstNode {
   readonly kind: "LetReceiveStatement";
   readonly name: string;
@@ -69,15 +75,18 @@ export interface ForStatement extends AstNode {
 
 export type ForInit = ForLetInit | ForLetReceiveInit | ForAssignmentInit;
 
-/** `let i: T = e` in for-header (no trailing `;`). */
+/**
+ * `let i: T = e` or `let i = e` in for-header (spec §5.11, §7.14.2).
+ * `type` omitted when inferred from `initializer`.
+ */
 export interface ForLetInit extends AstNode {
   readonly kind: "ForLetInit";
   readonly name: string;
-  readonly type: TypeAnnotation;
+  readonly type?: TypeAnnotation;
   readonly initializer: Expression;
 }
 
-/** `let y: T <~ e` in for-header (no trailing `;`). */
+/** `let y: T <~ e` in for-header (spec §5.11); `type` is always required. */
 export interface ForLetReceiveInit extends AstNode {
   readonly kind: "ForLetReceiveInit";
   readonly name: string;

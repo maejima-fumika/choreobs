@@ -2,7 +2,7 @@
 
 ChoreoBS Core v0 is an explicitly located choreographic programming language designed to be transpiled to BlueScript through Endpoint Projection (EPP).
 
-This specification defines the initial core language for implementing the first ChoreoBS transpiler. Future features such as Gradual Choreographic Programming, location inference, `any`, `undefined`, asynchronous execution, and dynamic checks are outside the scope of v0.
+This specification defines the initial core language for implementing the first ChoreoBS transpiler. Core v0 supports simple local type inference for initialized `let` declarations, `for` initializer `let` declarations, expression result types, and function return types. Future features such as Gradual Choreographic Programming, general location inference, `any`, `undefined`, asynchronous execution, and dynamic checks are outside the scope of v0.
 
 ---
 
@@ -21,6 +21,7 @@ ChoreoBS Core v0 aims to:
 
 - describe communication among multiple nodes as a single choreography;
 - statically track where values are located using explicit location annotations;
+- reduce annotation burden through simple local type inference;
 - generate BlueScript endpoint programs for each participant;
 - reduce send/receive mismatches through syntax, typing, and EPP rules;
 - serve as the foundation for future Gradual Choreographic Programming.
@@ -32,7 +33,7 @@ let x: integer@alice = 10@alice;
 let y: integer@bob <~ x;
 ```
 
-This program sends the value `x` located at `alice` to `bob`, and stores it in `y`.
+This program infers `x` as `integer@alice`, sends the value `x` located at `alice` to `bob`, and stores it in `y`.
 
 After EPP:
 
@@ -395,8 +396,14 @@ Location ::= Identifier | "every"
 
 ```ebnf
 FunctionDeclaration ::=
-  "function" Identifier "@" Location "(" ParameterList? ")" ":" Type Block
+  "function" Identifier "@" Location "(" ParameterList? ")" FunctionReturnType? Block
 ```
+
+```ebnf
+FunctionReturnType ::= ":" Type
+```
+
+The return type annotation may be omitted. When omitted, the return type is inferred according to Section 7.14.
 
 ```ebnf
 ParameterList ::= Parameter ("," Parameter)*
@@ -410,6 +417,12 @@ Examples:
 
 ```ts
 function add@alice(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+```ts
+function addInferred@alice(a: integer, b: integer) {
     return a + b;
 }
 ```
@@ -442,23 +455,30 @@ Statement ::= LetStatement
 ### 5.6 Let Statement
 
 ```ebnf
-LetStatement ::= "let" Identifier ":" Type "=" Expression ";"
+LetStatement ::= "let" Identifier TypeAnnotation? "=" Expression ";"
                | "let" Identifier ":" Type "<~" Expression ";"
+TypeAnnotation ::= ":" Type
 ```
 
 Uninitialized `let` declarations are not allowed in v0.
+
+For ordinary initialized `let` declarations using `=`, the type annotation may be omitted and inferred from the right-hand side according to Section 7.14.
+
+For communication declarations using `<~`, the type annotation is still required. Core v0 does not infer the destination type or destination location of a communication declaration.
 
 Allowed:
 
 ```ts
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y = x + 1@alice;
+let z: integer@bob <~ x;
 ```
 
 Disallowed:
 
 ```ts
 let x: integer@alice;
+let y <~ x;
 ```
 
 ### 5.7 Assignment Statement
@@ -517,7 +537,7 @@ ForUpdate ::= AssignmentStatementNoSemicolon
 
 ```ebnf
 LetStatementNoSemicolon ::=
-  "let" Identifier ":" Type "=" Expression
+  "let" Identifier TypeAnnotation? "=" Expression
 ```
 
 ```ebnf
@@ -528,10 +548,12 @@ AssignmentStatementNoSemicolon ::=
 Example:
 
 ```ts
-for (let i: integer@every = 0@every; i < 10@every; i = i + 1@every) {
+for (let i = 0@every; i < 10@every; i = i + 1@every) {
     // body
 }
 ```
+
+The type annotation in a `for` initializer `let` may be omitted and inferred from the initializer expression according to Section 7.14.
 
 The following forms are not supported in v0:
 
@@ -551,7 +573,7 @@ for (k in obj) {
 ReturnStatement ::= "return" Expression? ";"
 ```
 
-`return;` is allowed only when the function return type is `unit@L`.
+`return;` is allowed only when the function return type is `unit@L`, or when an omitted function return type is inferred as `unit@L`.
 
 ### 5.13 Expression Statement
 
@@ -989,6 +1011,17 @@ Because `integer <: float`, an `integer` may be used where a `float` is expected
 
 BlueScript performs implicit conversion from `integer` to `float`; therefore, the ChoreoBS transpiler does not insert explicit conversion functions.
 
+The inferred result base type is:
+
+```text
+integer op integer => integer
+integer op float   => float
+float   op integer => float
+float   op float   => float
+```
+
+The result is located at the operand location.
+
 #### String Concatenation
 
 `string + string` is allowed.
@@ -996,6 +1029,8 @@ BlueScript performs implicit conversion from `integer` to `float`; therefore, th
 ```ts
 let s: string@alice = "hello "@alice + "world"@alice;
 ```
+
+The inferred result type is `string` at the operand location.
 
 #### Comparison Operators
 
@@ -1011,8 +1046,10 @@ Example:
 
 ```ts
 let x: integer@alice = 1@alice;
-let c: boolean@alice = x < 10@alice;
+let c = x < 10@alice;
 ```
+
+`c` is inferred as `boolean@alice`.
 
 #### Equality Operators
 
@@ -1022,6 +1059,8 @@ let c: boolean@alice = x < 10@alice;
 ```
 
 These operators are available for values of the same base type.
+
+The inferred result type is `boolean` at the operand location.
 
 `==` and `!=` are not allowed.
 
@@ -1035,6 +1074,8 @@ These operators are available for values of the same base type.
 
 These operators are available for `boolean`.
 
+The inferred result type is `boolean` at the operand location.
+
 ### 7.12 Function Call Typing
 
 Function calls do not specify locations at the call site.
@@ -1044,6 +1085,8 @@ add(1@alice, 2@alice)
 ```
 
 Whether a function call is valid depends on the location of the function definition.
+
+The inferred type of a function call expression is the declared or inferred return type of the called function.
 
 #### In an `@every` Context
 
@@ -1063,6 +1106,8 @@ The following are disallowed:
 
 ### 7.13 Return Typing
 
+When a function has an explicit return type:
+
 ```ts
 return expr;
 ```
@@ -1074,6 +1119,191 @@ return;
 ```
 
 is allowed only if the function return type is `unit@L`.
+
+When a function omits its return type, the return type is inferred according to Section 7.14.
+
+### 7.14 Type Inference
+
+ChoreoBS Core v0 supports simple, local type inference. This feature does not perform general location inference. It only uses types and locations already determined by literals, identifiers, function signatures, local context elaboration, and expression typing.
+
+The compiler should elaborate inferred constructs into a fully typed AST before Endpoint Projection.
+
+#### 7.14.1 Let Type Inference
+
+For an ordinary initialized `let` declaration:
+
+```ts
+let x = expr;
+```
+
+if:
+
+```text
+expr : T@L
+```
+
+then:
+
+```text
+x : T@L
+```
+
+Examples:
+
+```ts
+let x = 1@alice;          // x : integer@alice
+let y = x + 2@alice;      // y : integer@alice
+let c = y < 10@alice;     // c : boolean@alice
+let e = true@every;       // e : boolean@every
+```
+
+A `let` declaration with an explicit type annotation is still checked using the normal assignment typing rule.
+
+```ts
+let x: float@alice = 1@alice;
+```
+
+This is valid because `integer <: float`.
+
+#### 7.14.2 For Initializer Let Type Inference
+
+For a C-style `for` initializer:
+
+```ts
+for (let i = expr; cond; update) {
+    ...
+}
+```
+
+if:
+
+```text
+expr : T@L
+```
+
+then:
+
+```text
+i : T@L
+```
+
+#### 7.14.3 Communication Let Does Not Infer Destination Type
+
+Communication declarations keep the existing syntax:
+
+```ts
+let y: integer@bob <~ x;
+```
+
+The type annotation is required. The following remains invalid:
+
+```ts
+let y <~ x;
+```
+
+#### 7.14.4 Function Return Type Inference
+
+A function declaration may omit its return type:
+
+```ts
+function f@L(params) {
+    body
+}
+```
+
+The compiler infers the function return type from `return` statements in the body.
+
+If all returns are bare `return;`, or if there are no return statements, the inferred return type is:
+
+```text
+unit@L
+```
+
+where `L` is the function location.
+
+For `return expr;`, the return candidate is the type of `expr`.
+
+For multiple return candidates, the compiler computes their least upper bound using the following rules.
+
+For base types:
+
+```text
+lub(integer, integer) = integer
+lub(integer, float)   = float
+lub(float, integer)   = float
+lub(float, float)     = float
+lub(T, T)             = T
+```
+
+All other base type combinations are invalid.
+
+For locations, Core v0 return type inference is conservative:
+
+```text
+lub_location(L, L) = L
+```
+
+All other location combinations are invalid.
+
+Example:
+
+```ts
+function f@alice(c: boolean) {
+    if (c) {
+        return 1;
+    } else {
+        return 2.5;
+    }
+}
+```
+
+The return type is inferred as `float@alice`.
+
+#### 7.14.5 Mixing `return;` and `return expr;`
+
+A function with an omitted return type must not mix bare `return;` and value-returning `return expr;`.
+
+#### 7.14.6 Return Coverage for Inferred Non-Unit Functions
+
+If a function with an omitted return type contains any `return expr;`, then all execution paths must return a value.
+
+Core v0 requires only a conservative syntactic return coverage analysis. At minimum, an implementation must accept:
+
+- a final `return expr;` statement in the function body;
+- an `if (...) { ... } else { ... }` statement where both branches are definitely returning;
+- nested combinations of the above.
+
+The compiler may reject programs whose totality is not proven by this conservative analysis.
+
+#### 7.14.7 Parameter Types Are Not Inferred
+
+Function parameter types are not inferred in Core v0.
+
+Disallowed:
+
+```ts
+function add@alice(a, b) {
+    return a + b;
+}
+```
+
+Allowed:
+
+```ts
+function add@alice(a: integer, b: integer) {
+    return a + b;
+}
+```
+
+#### 7.14.8 Inference and Recursion
+
+Local function recursion is allowed, but recursive local functions must have explicit return types in Core v0.
+
+Therefore:
+
+- direct or indirect recursive local functions with omitted return types are compile-time errors;
+- direct or indirect recursive local functions with explicit return types are allowed;
+- `@every` recursion remains unsupported.
 
 ***
 
@@ -1097,6 +1327,24 @@ function add@alice(
     b: integer@alice
 ): integer@alice {
     return a + b + 1@alice;
+}
+```
+
+This rule also applies when the function return type is omitted and inferred.
+
+```ts
+function add@alice(a: integer, b: integer) {
+    let c = a + b + 1;
+    return c;
+}
+```
+
+This is elaborated to:
+
+```ts
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
+    let c: integer@alice = a + b + 1@alice;
+    return c;
 }
 ```
 
@@ -1129,14 +1377,18 @@ Therefore, location omission is not allowed at top level.
 Disallowed:
 
 ```ts
-let x: integer = 1;
+let x = 1;
+let y: integer = 1;
 ```
 
 Allowed:
 
 ```ts
-let x: integer@alice = 1@alice;
+let x = 1@alice;
+let y: integer@alice = 1@alice;
 ```
+
+Here `x` omits its type annotation, but the literal location is explicit, so `x` is inferred as `integer@alice`.
 
 ### 8.4 `@every` Literals
 
@@ -1252,7 +1504,7 @@ while (c) {
 Only C-style `for` loops are supported.
 
 ```ts
-for (let i: integer@every = 0@every; i < 10@every; i = i + 1@every) {
+for (let i = 0@every; i < 10@every; i = i + 1@every) {
     // body
 }
 ```
@@ -1287,11 +1539,20 @@ function f@every(...): T@L {
 }
 ```
 
-* Describes choreography.
-* May contain communication.
-* Is projected to every participant.
-* Does not allow location omission.
-* Recursion is not supported in v0.
+or, with inferred return type:
+
+```ts
+function f@every(...) {
+    ...
+}
+```
+
+- Describes choreography.
+- May contain communication.
+- Is projected to every participant.
+- Does not allow location omission.
+- Allows return type inference.
+- Recursion is not supported in v0.
 
 #### Local Function
 
@@ -1301,11 +1562,20 @@ function f@alice(...): T {
 }
 ```
 
-* Runs on a single node.
-* Must not contain communication.
-* Is generated only for the corresponding node.
-* Allows location omission.
-* Recursion is allowed.
+or, with inferred return type:
+
+```ts
+function f@alice(...) {
+    ...
+}
+```
+
+- Runs on a single node.
+- Must not contain communication.
+- Is generated only for the corresponding node.
+- Allows location omission.
+- Allows return type inference.
+- Recursion is allowed only when the recursive function has an explicit return type.
 
 ### 10.2 Calling Local Functions from an `@every` Context
 
@@ -1391,6 +1661,18 @@ Allowed:
 
 ```ts
 function fact@alice(n: integer): integer {
+    if (n <= 1) {
+        return 1;
+    } else {
+        return n * fact(n - 1);
+    }
+}
+```
+
+Disallowed:
+
+```ts
+function fact@alice(n: integer) {
     if (n <= 1) {
         return 1;
     } else {
@@ -1536,6 +1818,8 @@ Endpoint Projection, EPP, transforms a ChoreoBS program into a BlueScript progra
 EPP(program, participant) -> BlueScript program
 ```
 
+Before EPP, all inferred types must be elaborated into explicit located types in the internal AST.
+
 ### 12.2 Type Projection
 
 Projection of type `T@L` to participant `P` is:
@@ -1646,6 +1930,12 @@ EPP at `bob` after cleanup:
 ### 12.8 Let Projection
 
 ```ts
+let x = 1@alice;
+```
+
+After type inference, this is treated internally as:
+
+```ts
 let x: integer@alice = 1@alice;
 ```
 
@@ -1703,7 +1993,15 @@ EPP to participant `P`:
 #### Local Function
 
 ```ts
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer, b: integer) {
+    return a + b;
+}
+```
+
+After type inference, this is treated internally as:
+
+```ts
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
 }
 ```
@@ -2414,7 +2712,7 @@ Input:
 
 ```ts
 for (
-    let i: integer@every = 0@every;
+    let i = 0@every;
     i < 3@every;
     i = i + 1@every
 ) {
@@ -2519,6 +2817,22 @@ foo(null, null);
 ```
 
 Ordinary function calls are not removed by the v0 cleanup pass.
+
+### 15.8 Return Type Inference with Numeric LUB
+
+Input:
+
+```ts
+function f@alice(c: boolean) {
+    if (c) {
+        return 1;
+    } else {
+        return 2.5;
+    }
+}
+```
+
+The inferred return type is `float@alice`.
 
 ***
 
@@ -2696,6 +3010,83 @@ Use:
 x === y;
 x !== y;
 ```
+
+### 16.18 Communication Let Without Type Annotation
+
+```ts
+let y <~ x;
+```
+
+Communication declarations require an explicit destination type.
+
+### 16.19 Cannot Infer Function Return Type
+
+A function return type cannot be inferred if value-returning paths are not proven to return.
+
+```ts
+function maybe@alice(c: boolean) {
+    if (c) {
+        return 1;
+    }
+}
+```
+
+### 16.20 Mixed Bare and Value Returns
+
+```ts
+function bad@alice(c: boolean) {
+    if (c) {
+        return 1;
+    }
+    return;
+}
+```
+
+### 16.21 Incompatible Inferred Return Types
+
+```ts
+function bad@alice(c: boolean) {
+    if (c) {
+        return 1;
+    } else {
+        return "one";
+    }
+}
+```
+
+### 16.22 Incompatible Inferred Return Locations
+
+```ts
+function bad@every(c: boolean@every) {
+    if (c) {
+        return 1@alice;
+    } else {
+        return 1@bob;
+    }
+}
+```
+
+### 16.23 Recursive Function With Omitted Return Type
+
+```ts
+function fact@alice(n: integer) {
+    if (n <= 1) {
+        return 1;
+    } else {
+        return n * fact(n - 1);
+    }
+}
+```
+
+### 16.24 Parameter Type Omission
+
+```ts
+function add@alice(a, b) {
+    return a + b;
+}
+```
+
+Parameter types are not inferred in Core v0.
 
 ***
 

@@ -135,4 +135,67 @@ let y: integer@bob <~ x;`;
     assert.equal(program, null);
     assert.ok(errors.some((e) => e.message.includes("=") || e.message.includes("<~")));
   });
+
+  it("parses let without type annotation (spec §5.6, §7.14.1)", () => {
+    const { program, errors } = parse("let x = 1@alice;");
+    assert.equal(errors.length, 0);
+    const item = program?.items[0];
+    if (item?.kind === "TopLevelStatement" && item.statement.kind === "LetStatement") {
+      assert.equal(item.statement.name, "x");
+      assert.equal(item.statement.type, undefined);
+      assert.equal(item.statement.initializer.kind, "LiteralExpression");
+    } else {
+      assert.fail("expected LetStatement");
+    }
+  });
+
+  it("parses for-loop let initializer without type annotation (spec §5.11, §7.14.2)", () => {
+    const { program, errors } = parse(
+      "for (let i = 0@every; i < 3@every; i = i + 1@every) {}",
+    );
+    assert.equal(errors.length, 0);
+    const item = program?.items[0];
+    if (item?.kind === "TopLevelStatement" && item.statement.kind === "ForStatement") {
+      const init = item.statement.init;
+      assert.equal(init?.kind, "ForLetInit");
+      if (init?.kind === "ForLetInit") {
+        assert.equal(init.name, "i");
+        assert.equal(init.type, undefined);
+      }
+    } else {
+      assert.fail("expected ForStatement");
+    }
+  });
+
+  it("parses function without return type annotation (spec §5.3, §7.14.4)", () => {
+    const { program, errors } = parse(`function f@alice(a: integer) {
+  return a;
+}`);
+    assert.equal(errors.length, 0);
+    const fn = program?.items[0];
+    if (fn?.kind === "FunctionDeclaration") {
+      assert.equal(fn.name, "f");
+      assert.equal(fn.returnType, undefined);
+      assert.equal(fn.params.length, 1);
+      assert.equal(fn.params[0]?.type.base, "integer");
+    } else {
+      assert.fail("expected FunctionDeclaration");
+    }
+  });
+
+  it("rejects communication let without type annotation (spec §7.14.3)", () => {
+    const { program, errors } = parse("let y <~ x;");
+    assert.equal(program, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("type annotation required for communication let")),
+    );
+  });
+
+  it("rejects function parameter without type annotation (spec §7.14.7)", () => {
+    const { program, errors } = parse(`function f@alice(a) {
+  return a;
+}`);
+    assert.equal(program, null);
+    assert.ok(errors.some((e) => e.message.includes("expected ':' after parameter name")));
+  });
 });

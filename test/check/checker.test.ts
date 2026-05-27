@@ -136,17 +136,41 @@ if (ok) {
     assert.ok(typed);
   });
 
-  it("allows local function recursion (spec §10.4)", () => {
+  it("rejects indirect recursive local functions with omitted return types (spec §7.14.8)", () => {
     const { typed, errors } = checkSource(`
-function fact@alice(n: integer): integer {
-  if (n <= 1@alice) {
-    return 1;
-  } else {
-    return n * fact(n - 1@alice);
-  }
+function f@alice(n: integer) {
+  return g(n);
+}
+function g@alice(n: integer) {
+  return f(n);
 }
 `);
-    assert.equal(errors.length, 0);
-    assert.ok(typed);
+    assert.equal(typed, null);
+    const recursiveErrors = errors.filter((e) =>
+      e.message.includes("omitted return type cannot be recursive"),
+    );
+    assert.ok(recursiveErrors.length >= 2);
+  });
+
+  it("uses inferred return type at call sites (spec §7.14.4)", () => {
+    const { typed, errors } = checkSource(`
+function add@alice(a: integer, b: integer) {
+  return a + b;
+}
+function caller@alice(): integer {
+  return add(1, 2);
+}
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    const caller = typed?.items[1];
+    if (caller && "body" in caller) {
+      const ret = caller.body.statements[0];
+      if (ret && "value" in ret && ret.value && "callee" in ret.value) {
+        assert.equal(ret.value.choreoType.base, "integer");
+        if (ret.value.choreoType.location.kind === "concrete") {
+          assert.equal(ret.value.choreoType.location.name, "alice");
+        }
+      }
+    }
   });
 });

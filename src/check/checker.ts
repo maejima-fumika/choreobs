@@ -78,6 +78,16 @@ import {
 } from "../elaborate/resolve.js";
 import { CommTagGenerator, TOP_SCOPE } from "../comm/tags.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
+import {
+  inferReturnTypeFromCandidates,
+  inferenceOk,
+  type InferErr,
+  type ReturnCandidate,
+} from "./inference.js";
+import {
+  isRecursiveComponent,
+  stronglyConnectedComponents,
+} from "./recursion.js";
 
 export interface TypeCheckResult {
   readonly typed: TypedProgram | null;
@@ -95,10 +105,13 @@ export function typeCheck(
 class TypeChecker {
   private readonly errors: TypeCheckError[] = [];
   private readonly functions = new Map<string, FunctionDeclaration>();
+  private readonly resolvedReturnTypes = new Map<string, LocatedType>();
   private readonly participants: Set<string>;
   private readonly commTags = new CommTagGenerator();
   private commScope = TOP_SCOPE;
   private currentFunction: FunctionDeclaration | undefined;
+  /** Resolved return type for the function currently being type-checked. */
+  private currentFunctionReturnType: LocatedType | undefined;
   private inTopLevel = false;
   private readonly topLevelEnv = new Map<string, LocatedType>();
   private envStack: Map<string, LocatedType>[] = [];
@@ -118,6 +131,9 @@ class TypeChecker {
 
   check(): TypeCheckResult {
     this.collectFunctions();
+    this.checkRecursiveOmittedReturnTypes();
+    this.resolveExplicitFunctionSignatures();
+    this.inferOmittedReturnTypes();
     const items: TypedTopLevelItem[] = [];
     for (const item of this.program.items) {
       items.push(this.checkTopLevelItem(item));
@@ -151,6 +167,420 @@ class TypeChecker {
     }
   }
 
+  private checkRecursiveOmittedReturnTypes(): void {
+    const names = [...this.functions.keys()];
+    const callGraph = new Map<string, readonly string[]>();
+    for (const name of names) {
+      const decl = this.functions.get(name)!;
+      const callees = [...this.collectCalleeNames(decl.body)].filter((callee) =>
+        this.functions.has(callee),
+      );
+      callGraph.set(name, callees);
+    }
+    const successors = (name: string): readonly string[] =>
+      callGraph.get(name) ?? [];
+    const components = stronglyConnectedComponents(names, successors);
+    for (const component of components) {
+      if (!isRecursiveComponent(component, successors)) {
+        continue;
+      }
+      for (const name of component) {
+        const decl = this.functions.get(name);
+        if (decl === undefined) {
+          continue;
+        }
+        if (decl.at.kind === "every") {
+          continue;
+        }
+        if (decl.returnType !== undefined) {
+          continue;
+        }
+        this.error(
+          `function '${name}' with omitted return type cannot be recursive (spec §7.14.8)`,
+          decl.span,
+        );
+      }
+    }
+  }
+
+  private resolveExplicitFunctionSignatures(): void {
+    for (const decl of this.functions.values()) {
+      if (decl.returnType === undefined) {
+        continue;
+      }
+      const allowOmit = decl.context.kind === "local";
+      const returnType = this.resolveType(decl.returnType, decl.context, allowOmit);
+      this.resolvedReturnTypes.set(decl.name, returnType);
+    }
+  }
+
+  private inferOmittedReturnTypes(): void {
+    const pending = [...this.functions.values()].filter(
+      (decl) => !this.resolvedReturnTypes.has(decl.name),
+    );
+    let progress = true;
+    while (pending.length > 0 && progress) {
+      progress = false;
+      for (let i = pending.length - 1; i >= 0; i--) {
+        const decl = pending[i]!;
+        if (!this.calleesReadyForInference(decl)) {
+          continue;
+        }
+        if (this.inferReturnTypeFor(decl)) {
+          pending.splice(i, 1);
+          progress = true;
+        }
+      }
+    }
+    for (const decl of pending) {
+      this.error(
+        `cannot infer return type for '${decl.name}': depends on other functions with omitted return types that are not yet resolved (spec §7.14.4)`,
+        decl.span,
+      );
+    }
+  }
+
+  private calleesReadyForInference(decl: FunctionDeclaration): boolean {
+    const callees = this.collectCalleeNames(decl.body);
+    for (const name of callees) {
+      if (name === decl.name) {
+        continue;
+      }
+      if (this.functions.has(name) && !this.resolvedReturnTypes.has(name)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private inferReturnTypeFor(decl: FunctionDeclaration): boolean {
+    const allowOmit = decl.context.kind === "local";
+    const env = new Map<string, LocatedType>();
+    for (const param of decl.params) {
+      env.set(
+        param.name,
+        this.resolveType(param.type, decl.context, allowOmit),
+      );
+    }
+    this.currentFunction = decl;
+    this.pushEnv(env);
+    this.pushEnv(new Map());
+    const collected = this.collectReturnCandidatesWithEnv(
+      decl.body,
+      decl.context,
+      allowOmit,
+    );
+    this.popEnv();
+    this.popEnv();
+    this.currentFunction = undefined;
+    this.currentFunctionReturnType = undefined;
+    if (!collected.ok) {
+      this.error(collected.message, decl.span);
+      return false;
+    }
+    const inferred = inferReturnTypeFromCandidates(
+      decl.body,
+      decl.at,
+      collected.value,
+    );
+    if (!inferred.ok) {
+      this.error(inferred.message, decl.span);
+      return false;
+    }
+    this.resolvedReturnTypes.set(decl.name, inferred.value);
+    return true;
+  }
+
+  /**
+   * Collects return candidates while binding `let` names in execution order,
+   * matching function-body scoping during the full type check (spec §7.14.4).
+   */
+  private collectReturnCandidatesWithEnv(
+    block: Block,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): import("./inference.js").InferResult<readonly ReturnCandidate[]> {
+    const candidates: ReturnCandidate[] = [];
+    const err = this.walkStatementsForReturnInference(
+      block.statements,
+      ctx,
+      allowOmit,
+      candidates,
+    );
+    if (err !== undefined) {
+      return err;
+    }
+    return inferenceOk(candidates);
+  }
+
+  private walkStatementsForReturnInference(
+    statements: readonly Statement[],
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    out: ReturnCandidate[],
+  ): InferErr | undefined {
+    for (const stmt of statements) {
+      const err = this.walkStatementForReturnInference(
+        stmt,
+        ctx,
+        allowOmit,
+        out,
+      );
+      if (err !== undefined) {
+        return err;
+      }
+    }
+    return undefined;
+  }
+
+  private walkStatementForReturnInference(
+    stmt: Statement,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    out: ReturnCandidate[],
+  ): InferErr | undefined {
+    switch (stmt.kind) {
+      case "LetStatement": {
+        const initializer = this.typeReturnValueExpression(
+          stmt.initializer,
+          ctx,
+          allowOmit,
+        );
+        const choreoType =
+          stmt.type !== undefined
+            ? this.resolveLetType(
+                stmt.type,
+                initializer,
+                ctx,
+                allowOmit,
+                stmt.span,
+              )
+            : initializer.choreoType;
+        this.defineLocal(stmt.name, choreoType, stmt.span);
+        return undefined;
+      }
+      case "ReturnStatement":
+        if (stmt.value === undefined) {
+          out.push({ kind: "unit", span: stmt.span });
+          return undefined;
+        }
+        {
+          const value = this.typeReturnValueExpression(
+            stmt.value,
+            ctx,
+            allowOmit,
+          );
+          out.push({
+            kind: "value",
+            type: value.choreoType,
+            span: stmt.span,
+          });
+          return undefined;
+        }
+      case "IfStatement": {
+        this.pushEnv(new Map());
+        let err = this.walkStatementsForReturnInference(
+          stmt.then.statements,
+          ctx,
+          allowOmit,
+          out,
+        );
+        this.popEnv();
+        if (err !== undefined) {
+          return err;
+        }
+        if (stmt.else !== undefined) {
+          this.pushEnv(new Map());
+          err = this.walkStatementsForReturnInference(
+            stmt.else.statements,
+            ctx,
+            allowOmit,
+            out,
+          );
+          this.popEnv();
+        }
+        return err;
+      }
+      case "WhileStatement":
+        this.pushEnv(new Map());
+        {
+          const err = this.walkStatementsForReturnInference(
+            stmt.body.statements,
+            ctx,
+            allowOmit,
+            out,
+          );
+          this.popEnv();
+          return err;
+        }
+      case "ForStatement": {
+        this.pushEnv(new Map());
+        if (stmt.init !== undefined) {
+          const initErr = this.walkForInitForReturnInference(
+            stmt.init,
+            ctx,
+            allowOmit,
+          );
+          if (initErr !== undefined) {
+            this.popEnv();
+            return initErr;
+          }
+        }
+        this.pushEnv(new Map());
+        const err = this.walkStatementsForReturnInference(
+          stmt.body.statements,
+          ctx,
+          allowOmit,
+          out,
+        );
+        this.popEnv();
+        this.popEnv();
+        return err;
+      }
+      default:
+        return undefined;
+    }
+  }
+
+  private walkForInitForReturnInference(
+    init: ForInit,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): InferErr | undefined {
+    if (init.kind !== "ForLetInit") {
+      return undefined;
+    }
+    const initializer = this.typeReturnValueExpression(
+      init.initializer,
+      ctx,
+      allowOmit,
+    );
+    const choreoType =
+      init.type !== undefined
+        ? this.resolveLetType(
+            init.type,
+            initializer,
+            ctx,
+            allowOmit,
+            init.span,
+          )
+        : initializer.choreoType;
+    this.defineLocal(init.name, choreoType, init.span);
+    return undefined;
+  }
+
+  /** Return type after elaboration or inference; does not read raw AST annotations. */
+  private getResolvedReturnType(decl: FunctionDeclaration): LocatedType {
+    const resolved = this.resolvedReturnTypes.get(decl.name);
+    if (resolved !== undefined) {
+      return resolved;
+    }
+    if (decl.returnType !== undefined) {
+      const allowOmit = decl.context.kind === "local";
+      const returnType = this.resolveType(
+        decl.returnType,
+        decl.context,
+        allowOmit,
+      );
+      this.resolvedReturnTypes.set(decl.name, returnType);
+      return returnType;
+    }
+    this.error(
+      `function '${decl.name}' has no resolved return type`,
+      decl.span,
+    );
+    return locatedType("unit", decl.at);
+  }
+
+  private collectCalleeNames(block: Block): Set<string> {
+    const names = new Set<string>();
+    const visitExpr = (expr: Expression): void => {
+      switch (expr.kind) {
+        case "CallExpression":
+          names.add(expr.callee);
+          for (const arg of expr.args) {
+            visitExpr(arg);
+          }
+          break;
+        case "BinaryExpression":
+          visitExpr(expr.left);
+          visitExpr(expr.right);
+          break;
+        case "UnaryExpression":
+          visitExpr(expr.operand);
+          break;
+        case "ParenthesizedExpression":
+          visitExpr(expr.expression);
+          break;
+        case "LiteralExpression":
+        case "IdentifierExpression":
+          break;
+      }
+    };
+    const visitStmt = (stmt: Statement): void => {
+      switch (stmt.kind) {
+        case "ReturnStatement":
+          if (stmt.value !== undefined) {
+            visitExpr(stmt.value);
+          }
+          break;
+        case "LetStatement":
+          visitExpr(stmt.initializer);
+          break;
+        case "LetReceiveStatement":
+          visitExpr(stmt.source);
+          break;
+        case "AssignmentStatement":
+          visitExpr(stmt.value);
+          break;
+        case "CommStatement":
+          visitExpr(stmt.source);
+          break;
+        case "IfStatement":
+          for (const s of stmt.then.statements) {
+            visitStmt(s);
+          }
+          if (stmt.else !== undefined) {
+            for (const s of stmt.else.statements) {
+              visitStmt(s);
+            }
+          }
+          break;
+        case "WhileStatement":
+          visitExpr(stmt.condition);
+          for (const s of stmt.body.statements) {
+            visitStmt(s);
+          }
+          break;
+        case "ForStatement":
+          if (stmt.init?.kind === "ForLetInit") {
+            visitExpr(stmt.init.initializer);
+          } else if (stmt.init?.kind === "ForLetReceiveInit") {
+            visitExpr(stmt.init.source);
+          } else if (stmt.init?.kind === "ForAssignmentInit") {
+            visitExpr(stmt.init.value);
+          }
+          if (stmt.condition !== undefined) {
+            visitExpr(stmt.condition);
+          }
+          if (stmt.update !== undefined) {
+            visitExpr(stmt.update.value);
+          }
+          for (const s of stmt.body.statements) {
+            visitStmt(s);
+          }
+          break;
+        case "ExpressionStatement":
+          visitExpr(stmt.expression);
+          break;
+      }
+    };
+    for (const stmt of block.statements) {
+      visitStmt(stmt);
+    }
+    return names;
+  }
+
   private checkTopLevelItem(item: TopLevelItem): TypedTopLevelItem {
     if (item.kind === "FunctionDeclaration") {
       return this.checkFunction(item, false);
@@ -161,6 +591,7 @@ class TypeChecker {
   private checkTopLevelStatement(item: TopLevelStatement): TypedTopLevelStatement {
     this.commScope = TOP_SCOPE;
     this.currentFunction = undefined;
+    this.currentFunctionReturnType = undefined;
     this.inTopLevel = true;
     const statement = this.checkStatement(item.statement, EVERY_CONTEXT, false, false);
     this.inTopLevel = false;
@@ -180,7 +611,8 @@ class TypeChecker {
     }
     this.currentFunction = decl;
     const allowOmit = decl.context.kind === "local";
-    const returnType = this.resolveType(decl.returnType, decl.context, allowOmit);
+    const returnType = this.getResolvedReturnType(decl);
+    this.currentFunctionReturnType = returnType;
     const params: TypedParameter[] = [];
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
@@ -199,6 +631,7 @@ class TypeChecker {
     const body = this.checkBlock(decl.body, decl.context, allowOmit, true);
     this.popEnv();
     this.currentFunction = undefined;
+    this.currentFunctionReturnType = undefined;
     return {
       decl,
       context: decl.context,
@@ -258,11 +691,25 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
   ): TypedLetStatement {
-    const choreoType = this.resolveType(stmt.type, ctx, allowOmit);
     const initializer = this.checkExpression(stmt.initializer, ctx, allowOmit);
-    this.validateAssignmentLike(choreoType, initializer.choreoType, stmt.span);
+    const choreoType =
+      stmt.type !== undefined
+        ? this.resolveLetType(stmt.type, initializer, ctx, allowOmit, stmt.span)
+        : initializer.choreoType;
     this.defineLocal(stmt.name, choreoType, stmt.span);
     return { stmt, choreoType, initializer };
+  }
+
+  private resolveLetType(
+    ann: import("../ast/syntax-types.js").TypeAnnotation,
+    initializer: TypedExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    span: Span,
+  ): LocatedType {
+    const choreoType = this.resolveType(ann, ctx, allowOmit);
+    this.validateAssignmentLike(choreoType, initializer.choreoType, span);
+    return choreoType;
   }
 
   private checkLetReceive(
@@ -368,9 +815,11 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
   ): TypedForLetInit {
-    const choreoType = this.resolveType(init.type, ctx, allowOmit);
     const initializer = this.checkExpression(init.initializer, ctx, allowOmit);
-    this.validateAssignmentLike(choreoType, initializer.choreoType, init.span);
+    const choreoType =
+      init.type !== undefined
+        ? this.resolveLetType(init.type, initializer, ctx, allowOmit, init.span)
+        : initializer.choreoType;
     this.defineLocal(init.name, choreoType, init.span);
     return { init, choreoType, initializer };
   }
@@ -414,15 +863,36 @@ class TypeChecker {
     allowOmit: boolean,
     inFunction: boolean,
   ): TypedReturnStatement {
-    if (!inFunction || this.currentFunction === undefined) {
+    if (
+      !inFunction ||
+      this.currentFunction === undefined ||
+      this.currentFunctionReturnType === undefined
+    ) {
       this.error("'return' outside function", stmt.span);
       return { stmt };
     }
-    const returnType = this.resolveType(
-      this.currentFunction.returnType,
-      this.currentFunction.context,
-      this.currentFunction.context.kind === "local",
+    return this.checkReturnAgainstResolvedType(
+      stmt,
+      this.currentFunctionReturnType,
+      ctx,
+      allowOmit,
     );
+  }
+
+  private typeReturnValueExpression(
+    expr: Expression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedExpression {
+    return this.checkExpression(expr, ctx, allowOmit);
+  }
+
+  private checkReturnAgainstResolvedType(
+    stmt: ReturnStatement,
+    returnType: LocatedType,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedReturnStatement {
     if (stmt.value === undefined) {
       if (returnType.base !== "unit") {
         this.error(
@@ -438,7 +908,11 @@ class TypeChecker {
         stmt.span,
       );
     }
-    const value = this.checkExpression(stmt.value, ctx, allowOmit);
+    const value = this.typeReturnValueExpression(
+      stmt.value,
+      ctx,
+      allowOmit,
+    );
     if (!locatedTypesCompatible(value.choreoType, returnType)) {
       this.error(
         `return type ${formatLocatedType(value.choreoType)} is not compatible with ${formatLocatedType(returnType)}`,
@@ -915,7 +1389,7 @@ class TypeChecker {
     const params = decl.params.map((p) =>
       this.resolveType(p.type, decl.context, allowOmit),
     );
-    const returnType = this.resolveType(decl.returnType, decl.context, allowOmit);
+    const returnType = this.getResolvedReturnType(decl);
     return {
       name: decl.name,
       at: decl.at,

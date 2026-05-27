@@ -83,6 +83,17 @@ let x: integer@alice = add(1@alice, 2@alice);
     assert.match(code, /function f\(\): void/);
   });
 
+  it("emits function with inferred return type through EPP (spec §7.14.4)", () => {
+    const code = pipeline(
+      `function add@alice(a: integer, b: integer) {
+  return a + b;
+}`,
+      "alice",
+    );
+    assert.match(code, /function add\(a: integer, b: integer\): integer/);
+    assert.match(code, /return a \+ b;/);
+  });
+
   it("compile writes index_<participant>.bs files", () => {
     const dir = mkdtempSync(join(tmpdir(), "choreobs-test-"));
     try {

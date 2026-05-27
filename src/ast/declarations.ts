@@ -4,7 +4,10 @@ import type { ExecutionContext } from "./context.js";
 import type { TypeAnnotation } from "./syntax-types.js";
 import type { Block } from "./statements.js";
 
-/** `function name@location(…): Type { … }` (spec §5.3). */
+/**
+ * Function declaration (spec §5.3).
+ * `returnType` is present for `function f@L(...): T { ... }`, omitted when inferred (§7.14.4).
+ */
 export interface FunctionDeclaration extends AstNode {
   readonly kind: "FunctionDeclaration";
   readonly name: string;
@@ -16,10 +19,11 @@ export interface FunctionDeclaration extends AstNode {
    */
   readonly context: ExecutionContext;
   readonly params: readonly Parameter[];
-  readonly returnType: TypeAnnotation;
+  readonly returnType?: TypeAnnotation;
   readonly body: Block;
 }
 
+/** Function parameter; type annotation is always required (spec §7.14.7). */
 export interface Parameter extends AstNode {
   readonly kind: "Parameter";
   readonly name: string;

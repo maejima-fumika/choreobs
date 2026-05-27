@@ -98,6 +98,32 @@ let x: integer = add(1, 2);`,
     assert.equal(bs(result, "bob"), "");
   });
 
+  it("§7.14 type inference — add, inferred let, and communication", () => {
+    const result = compile(`
+function add@alice(a: integer, b: integer) {
+  let c = a + b;
+  return c;
+}
+
+let x = add(1@alice, 2@alice);
+let y: integer@bob <~ x;
+`);
+    expectSuccess(result);
+    assert.equal(
+      bs(result, "alice"),
+      `function add(a: integer, b: integer): integer {
+  let c: integer = a + b;
+  return c;
+}
+let x: integer = add(1, 2);
+sendInteger("bob", "top_0", x);`,
+    );
+    assert.equal(
+      bs(result, "bob"),
+      `let y: integer = receiveInteger("alice", "top_0");`,
+    );
+  });
+
   it("§15.4 @every function", () => {
     const result = compile(`
 function choose@every(c: boolean@every): integer@alice {
