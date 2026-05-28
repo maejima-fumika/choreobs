@@ -69,6 +69,18 @@ export function lubLocatedType(
   a: LocatedType,
   b: LocatedType,
 ): InferResult<LocatedType> {
+  if (a.isArray || b.isArray) {
+    if (a.isArray !== true || b.isArray !== true || a.base !== b.base) {
+      return inferenceError(
+        `incompatible return types: cannot compute least upper bound of ${a.isArray ? `${a.base}[]` : a.base} and ${b.isArray ? `${b.base}[]` : b.base} (array invariance, spec §7.11.1)`,
+      );
+    }
+    const location = lubLocation(a.location, b.location);
+    if (!location.ok) {
+      return location;
+    }
+    return inferenceOk(locatedType(a.base, location.value, true));
+  }
   const base = lubBase(a.base, b.base);
   if (!base.ok) {
     return base;

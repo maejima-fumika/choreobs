@@ -9,7 +9,12 @@ import type {
 } from "../ast/operators.js";
 
 /** ChoreoBS `unit` projects to `void` (spec §12.2). */
-export type ProjectedBaseType = BaseType | "void";
+export type ProjectedBaseType =
+  | BaseType
+  | "void"
+  | "integer[]"
+  | "float[]"
+  | "boolean[]";
 
 /**
  * Projected type: present base type or internal absent (spec §12.2, §12.4).
@@ -19,7 +24,14 @@ export type ProjectedType =
   | { readonly kind: "PresentType"; readonly base: ProjectedBaseType }
   | { readonly kind: "AbsentType" };
 
-export type CommKind = "integer" | "float" | "boolean" | "string";
+export type CommKind =
+  | "integer"
+  | "float"
+  | "boolean"
+  | "string"
+  | "integerArray"
+  | "floatArray"
+  | "booleanArray";
 
 export type ProjectedExpression =
   | AbsentExpression
@@ -32,6 +44,8 @@ export type ProjectedExpression =
   | BinaryExpression
   | UnaryExpression
   | CallExpression
+  | IndexExpression
+  | PropertyLengthExpression
   | NothingExpression
   | ParenthesizedExpression
   | ReceiveExpression;
@@ -103,6 +117,19 @@ export interface CallExpression {
   readonly span: Span;
 }
 
+export interface IndexExpression {
+  readonly kind: "IndexExpression";
+  readonly target: ProjectedExpression;
+  readonly index: ProjectedExpression;
+  readonly span: Span;
+}
+
+export interface PropertyLengthExpression {
+  readonly kind: "PropertyLengthExpression";
+  readonly target: ProjectedExpression;
+  readonly span: Span;
+}
+
 /**
  * Compiler-generated `nothing(...)` artifact (spec §12.4, §14.1).
  * Distinct from {@link CallExpression} so user-defined functions named `nothing` are preserved.
@@ -156,9 +183,24 @@ export interface LetStatement {
 
 export interface AssignmentStatement {
   readonly kind: "AssignmentStatement";
-  readonly name: string;
+  readonly target: ProjectedAssignmentTarget;
   readonly value: ProjectedExpression;
   readonly span: Span;
+}
+
+export type ProjectedAssignmentTarget =
+  | ProjectedIdentifierAssignmentTarget
+  | ProjectedIndexAssignmentTarget;
+
+export interface ProjectedIdentifierAssignmentTarget {
+  readonly kind: "IdentifierAssignmentTarget";
+  readonly name: string;
+}
+
+export interface ProjectedIndexAssignmentTarget {
+  readonly kind: "IndexAssignmentTarget";
+  readonly name: string;
+  readonly index: ProjectedExpression;
 }
 
 export interface SendStatement {

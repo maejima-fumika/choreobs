@@ -115,7 +115,7 @@ let y: integer@bob <~ x;`;
         assert.equal(lit.literal.literal.kind, "StringLiteral");
         assert.equal(lit.literal.location?.location.kind, "concrete");
       }
-      const typeLoc = letStmt.statement.type.location?.location;
+      const typeLoc = letStmt.statement.type?.location?.location;
       if (typeLoc?.kind === "concrete") {
         assert.equal(typeLoc.name, "bob");
       } else {
@@ -197,5 +197,19 @@ let y: integer@bob <~ x;`;
 }`);
     assert.equal(program, null);
     assert.ok(errors.some((e) => e.message.includes("expected ':' after parameter name")));
+  });
+
+  it("parses array types, literals, index access, and builtins", () => {
+    const { program, errors } = parse(`
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let ys: float[]@bob = []@bob;
+let zs: boolean[]@every = [true, false]@every;
+let x: integer@alice = xs[0@alice];
+xs[1@alice] = 10@alice;
+let n: integer@alice = length(xs);
+push(xs, 20@alice);
+`);
+    assert.equal(errors.length, 0);
+    assert.ok(program);
   });
 });

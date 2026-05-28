@@ -6,6 +6,7 @@ import type {
   LetStatement,
   LetReceiveStatement,
   AssignmentStatement,
+  AssignmentTarget,
   CommStatement,
   IfStatement,
   WhileStatement,
@@ -22,8 +23,10 @@ import type {
   BinaryExpression,
   UnaryExpression,
   LiteralExpression,
+  ArrayLiteralExpression,
   IdentifierExpression,
   CallExpression,
+  IndexExpression,
   ParenthesizedExpression,
 } from "./expressions.js";
 import type { LocatedLiteral } from "./literals.js";
@@ -37,6 +40,7 @@ import type { Location } from "./location.js";
  */
 export interface LocatedType {
   readonly base: TypeAnnotation["base"];
+  readonly isArray?: boolean;
   readonly location: Location;
 }
 
@@ -101,9 +105,25 @@ export interface TypedLetReceiveStatement {
 
 export interface TypedAssignmentStatement {
   readonly stmt: AssignmentStatement;
-  readonly targetType: LocatedType;
+  readonly target: TypedAssignmentTarget;
   readonly value: TypedExpression;
 }
+
+export interface TypedIdentifierAssignmentTarget {
+  readonly target: AssignmentTarget & { readonly kind: "IdentifierAssignmentTarget" };
+  readonly targetType: LocatedType;
+}
+
+export interface TypedIndexAssignmentTarget {
+  readonly target: AssignmentTarget & { readonly kind: "IndexAssignmentTarget" };
+  readonly arrayType: LocatedType;
+  readonly index: TypedExpression;
+  readonly elementType: LocatedType;
+}
+
+export type TypedAssignmentTarget =
+  | TypedIdentifierAssignmentTarget
+  | TypedIndexAssignmentTarget;
 
 export interface TypedCommStatement {
   readonly stmt: CommStatement;
@@ -179,8 +199,10 @@ export type TypedExpression =
   | TypedBinaryExpression
   | TypedUnaryExpression
   | TypedLiteralExpression
+  | TypedArrayLiteralExpression
   | TypedIdentifierExpression
   | TypedCallExpression
+  | TypedIndexExpression
   | TypedParenthesizedExpression;
 
 export interface TypedBinaryExpression {
@@ -202,6 +224,12 @@ export interface TypedLiteralExpression {
   readonly literal: LocatedLiteral;
 }
 
+export interface TypedArrayLiteralExpression {
+  readonly expr: ArrayLiteralExpression;
+  readonly choreoType: LocatedType;
+  readonly elements: readonly TypedExpression[];
+}
+
 export interface TypedIdentifierExpression {
   readonly expr: IdentifierExpression;
   readonly choreoType: LocatedType;
@@ -212,6 +240,13 @@ export interface TypedCallExpression {
   readonly choreoType: LocatedType;
   readonly callee: FunctionSymbol;
   readonly args: readonly TypedExpression[];
+}
+
+export interface TypedIndexExpression {
+  readonly expr: IndexExpression;
+  readonly choreoType: LocatedType;
+  readonly target: TypedExpression;
+  readonly index: TypedExpression;
 }
 
 export interface TypedParenthesizedExpression {

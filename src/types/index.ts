@@ -1,5 +1,6 @@
 export {
   isSubtype,
+  isArraySubtype,
   locatedTypesCompatible,
   locationsEqual,
   available,

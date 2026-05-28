@@ -15,8 +15,10 @@ export type Expression =
   | BinaryExpression
   | UnaryExpression
   | LiteralExpression
+  | ArrayLiteralExpression
   | IdentifierExpression
   | CallExpression
+  | IndexExpression
   | ParenthesizedExpression;
 
 export interface BinaryExpression extends AstNode {
@@ -37,6 +39,12 @@ export interface LiteralExpression extends AstNode {
   readonly literal: LocatedLiteral;
 }
 
+export interface ArrayLiteralExpression extends AstNode {
+  readonly kind: "ArrayLiteralExpression";
+  readonly elements: readonly Expression[];
+  readonly location?: import("./location.js").LocationAnnotation;
+}
+
 export interface IdentifierExpression extends AstNode {
   readonly kind: "IdentifierExpression";
   readonly name: string;
@@ -47,6 +55,12 @@ export interface CallExpression extends AstNode {
   readonly kind: "CallExpression";
   readonly callee: string;
   readonly args: readonly Expression[];
+}
+
+export interface IndexExpression extends AstNode {
+  readonly kind: "IndexExpression";
+  readonly target: Expression;
+  readonly index: Expression;
 }
 
 export interface ParenthesizedExpression extends AstNode {

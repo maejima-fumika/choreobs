@@ -16,7 +16,7 @@ const config: ChoreoBSConfig = { participants: ["alice", "bob"] };
 function eppAll(
   source: string,
   participants: ChoreoBSConfig = config,
-): ProjectedProgram[] {
+): readonly ProjectedProgram[] {
   const { program, errors: pe } = parse(source);
   assert.equal(pe.length, 0);
   const { typed, errors: te } = typeCheck(program!, participants);
@@ -221,6 +221,24 @@ y <~ x;
       if (assign?.kind === "AssignmentStatement") {
         assert.equal(assign.value.kind, "ReceiveExpression");
       }
+    }
+  });
+
+  it("projects array communication and array operations", () => {
+    const source = `
+let xs: integer[]@alice = [1, 2, 3]@alice;
+xs[1@alice] = 10@alice;
+push(xs, 20@alice);
+let n: integer@alice = length(xs);
+let ys: integer[]@bob <~ xs;
+`;
+    const alice = epp(source, "alice");
+    const bob = epp(source, "bob");
+    assert.equal(findStmt(alice.body, "SendStatement")?.kind, "SendStatement");
+    const recvLet = findStmt(bob.body, "LetStatement");
+    assert.ok(recvLet);
+    if (recvLet?.kind === "LetStatement") {
+      assert.equal(recvLet.initializer.kind, "ReceiveExpression");
     }
   });
 });

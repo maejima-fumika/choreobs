@@ -382,4 +382,29 @@ function g@alice(n: integer) {
       assert.ok(recursiveErrors.length >= 2);
     });
   });
+
+  describe("array inference", () => {
+    it("infers located array literals", () => {
+      const typed = expectTypeCheckSuccess(`
+let xs = [1, 2, 3]@alice;
+let ys = [1, 2.5]@alice;
+let zs = [true, false]@alice;
+`);
+      const a = typed.items[0];
+      const b = typed.items[1];
+      const c = typed.items[2];
+      if (a && "statement" in a && "choreoType" in a.statement) {
+        assert.equal(a.statement.choreoType.isArray, true);
+        assert.equal(a.statement.choreoType.base, "integer");
+      }
+      if (b && "statement" in b && "choreoType" in b.statement) {
+        assert.equal(b.statement.choreoType.isArray, true);
+        assert.equal(b.statement.choreoType.base, "float");
+      }
+      if (c && "statement" in c && "choreoType" in c.statement) {
+        assert.equal(c.statement.choreoType.isArray, true);
+        assert.equal(c.statement.choreoType.base, "boolean");
+      }
+    });
+  });
 });

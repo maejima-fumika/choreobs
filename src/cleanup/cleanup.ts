@@ -183,6 +183,17 @@ export function simplifyExpression(expr: ProjectedExpression): ProjectedExpressi
         ...expr,
         args: expr.args.map((arg) => simplifyExpression(arg)),
       };
+    case "IndexExpression":
+      return {
+        ...expr,
+        target: simplifyExpression(expr.target),
+        index: simplifyExpression(expr.index),
+      };
+    case "PropertyLengthExpression":
+      return {
+        ...expr,
+        target: simplifyExpression(expr.target),
+      };
   }
 }
 

@@ -346,6 +346,8 @@ The lexer recognizes the following tokens:
 )
 {
 }
+[
+]
 ```
 
 `==` and `!=` are not supported in v0.
@@ -372,7 +374,12 @@ Top-level statements are executed in an implicit `@every` context.
 ### 5.2 Types
 
 ```ebnf
-Type ::= BaseType LocationAnnotation?
+Type ::= NonLocatedType LocationAnnotation?
+```
+
+```ebnf
+NonLocatedType ::= BaseType
+                 | ArrayType
 ```
 
 ```ebnf
@@ -385,11 +392,34 @@ BaseType ::= "integer"
 ```
 
 ```ebnf
+ArrayType ::= ArrayElementType "[" "]"
+```
+
+```ebnf
+ArrayElementType ::= "integer"
+                   | "float"
+                   | "boolean"
+```
+
+```ebnf
 LocationAnnotation ::= "@" Location
 ```
 
 ```ebnf
 Location ::= Identifier | "every"
+```
+
+Arrays are mutable reference values. ChoreoBS Core v0 with the mutable array extension supports only one-dimensional arrays whose element type is `integer`, `float`, or `boolean`.
+
+The following array types are not supported:
+
+```text
+string[]
+null[]
+unit[]
+integer[][]
+float[][]
+boolean[][]
 ```
 
 ### 5.3 Function Declaration
@@ -484,13 +514,21 @@ let y <~ x;
 ### 5.7 Assignment Statement
 
 ```ebnf
-AssignmentStatement ::= Identifier "=" Expression ";"
+AssignmentStatement ::= AssignmentTarget "=" Expression ";"
 ```
 
-The left-hand side must be an identifier.
+```ebnf
+AssignmentTarget ::= Identifier
+                   | Identifier "[" Expression "]"
+```
+
+The left-hand side must be either an identifier or a single-level array element target of the form `Identifier[Expression]`.
+
+General lvalues such as `f()[i]`, `xs[i][j]`, and property assignments are not supported.
 
 ```ts
 x = y + 1@alice;
+xs[0@alice] = 10@alice;
 ```
 
 ### 5.8 Communication Statement
@@ -588,42 +626,51 @@ Expression ::= LogicalOrExpression
 ```
 
 ```ebnf
-LogicalOrExpression ::=
+LogicalOrExpression ::= 
   LogicalAndExpression ("||" LogicalAndExpression)*
 ```
 
 ```ebnf
-LogicalAndExpression ::=
+LogicalAndExpression ::= 
   EqualityExpression ("&&" EqualityExpression)*
 ```
 
 ```ebnf
-EqualityExpression ::=
+EqualityExpression ::= 
   RelationalExpression (("===" | "!==") RelationalExpression)*
 ```
 
 ```ebnf
-RelationalExpression ::=
+RelationalExpression ::= 
   AdditiveExpression (("<" | "<=" | ">" | ">=") AdditiveExpression)*
 ```
 
 ```ebnf
-AdditiveExpression ::=
+AdditiveExpression ::= 
   MultiplicativeExpression (("+" | "-") MultiplicativeExpression)*
 ```
 
 ```ebnf
-MultiplicativeExpression ::=
+MultiplicativeExpression ::= 
   UnaryExpression (("*" | "/" | "%") UnaryExpression)*
 ```
 
 ```ebnf
 UnaryExpression ::= ("!" | "-") UnaryExpression
-                  | PrimaryExpression
+                  | PostfixExpression
+```
+
+```ebnf
+PostfixExpression ::= PrimaryExpression PostfixOp*
+```
+
+```ebnf
+PostfixOp ::= "[" Expression "]"
 ```
 
 ```ebnf
 PrimaryExpression ::= Literal
+                    | ArrayLiteral
                     | Identifier
                     | FunctionCall
                     | "(" Expression ")"
@@ -635,6 +682,10 @@ FunctionCall ::= Identifier "(" ArgumentList? ")"
 
 ```ebnf
 ArgumentList ::= Expression ("," Expression)*
+```
+
+```ebnf
+ArrayLiteral ::= "[" ArgumentList? "]" LocationAnnotation?
 ```
 
 ### 5.15 Located Literals
@@ -662,6 +713,52 @@ Examples:
 true@every
 null@alice
 ```
+
+### 5.16 Array Literals
+
+Array literals have the following form:
+
+```ebnf
+ArrayLiteral ::= "[" ArgumentList? "]" LocationAnnotation?
+```
+
+Examples:
+
+```ts
+[1, 2, 3]@alice
+[true, false]@bob
+[]@alice
+```
+
+If an array literal has an explicit location annotation `@L`, unlocated literal elements inside the array literal are elaborated as located at `L`.
+
+Example:
+
+```ts
+[1, 2, 3]@alice
+```
+
+is elaborated as:
+
+```ts
+[1@alice, 2@alice, 3@alice]@alice
+```
+
+In top-level and `@every` contexts, an array literal without an explicit location annotation must not contain unlocated literal elements. The expected type of a `let` declaration, assignment, function argument, or return does not provide a location for unlocated array literal elements.
+
+Allowed at top level:
+
+```ts
+let arr: integer[]@alice = [1, 2, 3]@alice;
+```
+
+Disallowed at top level:
+
+```ts
+let arr: integer[]@alice = [1, 3, 5];
+```
+
+Inside a local function declared at concrete location `P`, omitted locations in array literals are elaborated to `@P`, following the ordinary local function location omission rule.
 
 ***
 
@@ -788,6 +885,59 @@ unit
 ```
 
 `any` and `undefined` do not exist in v0.
+
+#### 7.1.1 Array Types
+
+The mutable array extension adds the following array types:
+
+```text
+T[]
+```
+
+where `T` is one of:
+
+```text
+integer
+float
+boolean
+```
+
+Examples:
+
+```text
+integer[]@alice
+float[]@bob
+boolean[]@every
+```
+
+The following array types are not supported:
+
+```text
+string[]
+null[]
+unit[]
+integer[][]
+float[][]
+boolean[][]
+```
+
+Arrays are mutable reference values.
+
+Within the same location, array assignment, function argument passing, and function return preserve array identity. Therefore, two variables may refer to the same mutable array.
+
+Example:
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@alice = xs;
+ys[0@alice] = 99@alice;
+```
+
+After the element assignment, `xs[0]` is also `99` at `alice`.
+
+Communication and broadcast transfer array contents by serialized value transfer. The receiver obtains a fresh mutable array that does not share identity with the sender's array. For broadcast to `@every`, the sender-side binding is also a fresh mutable array copy.
+
+A value of type `T[]@every` means that every participant has an independent local mutable array with the same contents. It is not shared memory.
 
 ### 7.2 Located Types
 
@@ -971,6 +1121,8 @@ Ldst != Lsrc
 
 If `Ldst = every`, the communication is treated as a broadcast.
 
+For array communication, the array element type must match exactly because arrays are invariant. Communication and broadcast of arrays produce fresh mutable arrays at the destination. For broadcast to `@every`, the sender-side binding is also a fresh mutable array copy.
+
 Example:
 
 ```ts
@@ -1113,6 +1265,180 @@ The inferred result type is `boolean` at the operand location.
 These operators are available for `boolean`.
 
 The inferred result type is `boolean` at the operand location.
+
+### 7.11.1 Array Typing
+
+#### Array Invariance
+
+Array types are invariant. `T1[]` is compatible with `T2[]` only when `T1` and `T2` are the same element type.
+
+Therefore, `integer[]` is not a subtype of `float[]`, even though `integer <: float`.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: float[]@alice = xs;
+```
+
+Array literals may still be checked against an explicitly expected array type.
+
+```ts
+let xs: float[]@alice = [1, 2]@alice;
+```
+
+This is allowed because each integer element is checked against the expected `float` element type. It is not an array subtyping conversion.
+
+#### Array Literal Typing
+
+For an array literal `[e1, ..., en]@L`, each element must be available at `L`. Unlocated literal elements are elaborated to `@L` before type checking.
+
+The inferred element type of a non-empty array literal is computed from the element base types. `integer` and `float` elements have LUB `float`. Other mixed element types are invalid.
+
+Examples:
+
+```ts
+let xs = [1, 2, 3]@alice;
+// xs : integer[]@alice
+
+let ys = [1, 2.5]@alice;
+// ys : float[]@alice
+
+let zs = [true, false]@alice;
+// zs : boolean[]@alice
+```
+
+Disallowed:
+
+```ts
+let bad = [1, true]@alice;
+```
+
+An empty array literal cannot infer its element type. It is allowed only when checked against an explicit array type and when the array literal has an explicit location annotation, except inside local functions where location omission is allowed.
+
+Allowed:
+
+```ts
+let xs: integer[]@alice = []@alice;
+```
+
+Disallowed:
+
+```ts
+let xs = []@alice;
+let ys: integer[]@alice = [];
+```
+
+#### Index Access
+
+For an index expression `xs[i]`:
+
+```text
+xs : T[]@L
+i  : integer@M
+available(M, L)
+```
+
+then:
+
+```text
+xs[i] : T@L
+```
+
+The index expression must have type `integer`. Bounds checking is a runtime responsibility of BlueScript.
+
+#### Array Element Assignment
+
+For an array element assignment `xs[i] = v;`:
+
+```text
+xs : T[]@L
+i  : integer@Li
+v  : S@Lv
+S <: T
+available(Li, L)
+available(Lv, L)
+```
+
+then the assignment is valid.
+
+Only assignment targets of the form `Identifier[Expression]` are supported. General lvalues such as `f()[i]`, `xs[i][j]`, and property assignments are not supported.
+
+#### `length` Builtin
+
+`length(xs)` is a compiler-known builtin operation.
+
+```text
+xs : T[]@L
+```
+
+then:
+
+```text
+length(xs) : integer@L
+```
+
+During BlueScript code generation, `length(xs)` is emitted as `xs.length`.
+
+#### `push` Builtin
+
+`push(xs, v)` is a compiler-known statement-like builtin operation. It may appear only as an expression statement.
+
+```text
+xs : T[]@L
+v  : S@M
+S <: T
+available(M, L)
+```
+
+then:
+
+```text
+push(xs, v) : unit@L
+```
+
+During BlueScript code generation, `push(xs, v)` is emitted as `xs.push(v)`.
+
+#### `@every` Array Restrictions
+
+Mutable arrays located at `@every` must not be implicitly converted to concrete-location arrays.
+
+Disallowed:
+
+```ts
+let xs: integer[]@every = [1, 2, 3]@every;
+let ys: integer[]@alice = xs;
+```
+
+Similarly, a value of type `T[]@every` must not be passed to a function parameter of type `T[]@P` where `P` is a concrete location. This restriction applies to all functions, not only local functions.
+
+Disallowed:
+
+```ts
+function f@alice(xs: integer[]): unit {
+    return;
+}
+let xs: integer[]@every = [1, 2, 3]@every;
+f(xs);
+```
+
+To create an `@every` array from a concrete-location array, use communication/broadcast:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let ys: integer[]@every <~ xs;
+```
+
+#### Array Equality
+
+The equality operators `===` and `!==` are not defined for array types.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = [1]@alice;
+xs === xs;
+```
 
 ### 7.12 Function Call Typing
 
@@ -2281,6 +2607,85 @@ for (let i: integer = 0; i < 10; i = i + 1) {
 }
 ```
 
+### 12.14.1 Array Projection
+
+Array types, array literals, index expressions, element assignments, `length(xs)`, and `push(xs, v)` are projected according to the location of the array value.
+
+Example:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let x: integer@alice = xs[0@alice];
+xs[1@alice] = 10@alice;
+push(xs, 20@alice);
+let n: integer@alice = length(xs);
+```
+
+EPP at `alice`:
+
+```ts
+let xs: integer[] = [1, 2, 3];
+let x: integer = xs[0];
+xs[1] = 10;
+xs.push(20);
+let n: integer = xs.length;
+```
+
+EPP at `bob` before cleanup:
+
+```ts
+nothing(null);
+nothing(null, null);
+nothing(null, null, null);
+nothing(null, null);
+nothing(null);
+```
+
+Array communication sends the current contents of the array at the communication statement and produces a fresh mutable array at the receiver.
+
+Example:
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@bob <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: integer[] = [1, 2];
+sendIntegerArray("bob", "top_0", xs);
+```
+
+EPP at `bob`:
+
+```ts
+let ys: integer[] = receiveIntegerArray("alice", "top_0");
+```
+
+Broadcast to `@every` uses a fresh copy at every participant, including the sender.
+
+Example:
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@every <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: integer[] = [1, 2];
+broadcastIntegerArray("top_0", xs);
+let ys: integer[] = cloneIntegerArray(xs);
+```
+
+EPP at `bob`:
+
+```ts
+let ys: integer[] = receiveIntegerArray("alice", "top_0");
+```
+
 ### 12.15 Top-Level Projection
 
 Top-level non-function statements are projected as the entry program for each participant.
@@ -2333,6 +2738,22 @@ EPP at `alice`:
 ```ts
 let x: integer = 1;
 ```
+
+### 13.2.1 Array Builtin Code Generation
+
+The ChoreoBS builtin expression `length(xs)` is emitted as BlueScript property access:
+
+```ts
+xs.length
+```
+
+The ChoreoBS builtin statement `push(xs, v);` is emitted as BlueScript method call:
+
+```ts
+xs.push(v);
+```
+
+ChoreoBS does not otherwise expose property access or method calls in source programs.
 
 ### 13.3 Function Names
 
@@ -2408,6 +2829,15 @@ receiveBoolean(src: string, tag: string): boolean;
 
 sendString(dst: string, tag: string, value: string): void;
 receiveString(src: string, tag: string): string;
+
+sendIntegerArray(dst: string, tag: string, value: integer[]): void;
+receiveIntegerArray(src: string, tag: string): integer[];
+
+sendFloatArray(dst: string, tag: string, value: float[]): void;
+receiveFloatArray(src: string, tag: string): float[];
+
+sendBooleanArray(dst: string, tag: string, value: boolean[]): void;
+receiveBooleanArray(src: string, tag: string): boolean[];
 ```
 
 Broadcast APIs:
@@ -2417,6 +2847,18 @@ broadcastInteger(tag: string, value: integer): void;
 broadcastFloat(tag: string, value: float): void;
 broadcastBoolean(tag: string, value: boolean): void;
 broadcastString(tag: string, value: string): void;
+
+broadcastIntegerArray(tag: string, value: integer[]): void;
+broadcastFloatArray(tag: string, value: float[]): void;
+broadcastBooleanArray(tag: string, value: boolean[]): void;
+```
+
+Array clone helper APIs used by generated code for broadcast sender-side fresh copies:
+
+```ts
+cloneIntegerArray(value: integer[]): integer[];
+cloneFloatArray(value: float[]): float[];
+cloneBooleanArray(value: boolean[]): boolean[];
 ```
 
 ### 13.9 Projected AST Cleanup
@@ -3019,6 +3461,48 @@ The inferred return type is `float@alice`.
 
 ***
 
+### 15.9 Mutable Arrays
+
+Input:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;
+xs[1@alice] = 10@alice;
+push(xs, 20@alice);
+let n: integer@alice = length(xs);
+let ys: integer[]@bob <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: integer[] = [1, 2, 3];
+xs[1] = 10;
+xs.push(20);
+let n: integer = xs.length;
+sendIntegerArray("bob", "top_0", xs);
+```
+
+EPP at `bob`:
+
+```ts
+let ys: integer[] = receiveIntegerArray("alice", "top_0");
+```
+
+Input:
+
+```ts
+let xs: integer[]@every = [1, 2, 3]@every;
+xs[0@every] = 10@every;
+```
+
+EPP at every participant:
+
+```ts
+let xs: integer[] = [1, 2, 3];
+xs[0] = 10;
+```
+
 ## 16. Compile-time Errors
 
 The following are compile-time errors.
@@ -3402,6 +3886,130 @@ function bad@alice(x: integer@every): integer@alice {
 
 This remains invalid because local function parameters must not be located at `every`.
 
+### 16.29 Unsupported Array Element Type
+
+`string[]`, `null[]`, and `unit[]` are not supported in the mutable array extension.
+
+Disallowed:
+
+```ts
+let xs: string[]@alice = []@alice;
+let ys: null[]@alice = []@alice;
+let zs: unit[]@alice = []@alice;
+```
+
+### 16.30 Nested Array
+
+Nested arrays are not supported.
+
+Disallowed:
+
+```ts
+let xs: integer[][]@alice = []@alice;
+```
+
+### 16.31 Array Literal Without Required Location
+
+At top level and inside `@every` functions, array literals without explicit location annotations must not contain unlocated literal elements.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3];
+```
+
+Use:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;
+```
+
+### 16.32 Cannot Infer Empty Array Element Type
+
+An empty array literal cannot infer its element type.
+
+Disallowed:
+
+```ts
+let xs = []@alice;
+```
+
+Allowed:
+
+```ts
+let xs: integer[]@alice = []@alice;
+```
+
+### 16.33 Array Type Invariance
+
+Array types are invariant.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: float[]@alice = xs;
+```
+
+### 16.34 Invalid `@every` Array Assignment to Concrete Location
+
+A mutable array located at `@every` cannot be assigned to a concrete-location array variable.
+
+Disallowed:
+
+```ts
+let xs: integer[]@every = [1, 2, 3]@every;
+let ys: integer[]@alice = xs;
+```
+
+### 16.35 Invalid `@every` Array Argument to Concrete Location Parameter
+
+A mutable array located at `@every` cannot be passed to a function parameter located at a concrete location.
+
+Disallowed:
+
+```ts
+function f@alice(xs: integer[]): unit {
+    return;
+}
+let xs: integer[]@every = [1, 2, 3]@every;
+f(xs);
+```
+
+### 16.36 Invalid Array Equality
+
+The equality operators `===` and `!==` are not defined for array types.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = [1]@alice;
+xs === xs;
+```
+
+### 16.37 Invalid Array Index Location
+
+The index expression must be available at the array location.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = [1]@alice;
+let i: integer@bob = 0@bob;
+let x: integer@alice = xs[i];
+```
+
+### 16.38 Invalid `push` Element Type
+
+The pushed value must be compatible with the array element type.
+
+Disallowed:
+
+```ts
+let xs: integer[]@alice = []@alice;
+push(xs, 1.5@alice);
+```
+
 ## 17. Non-goals and Future Extensions
 
 The following features are not part of ChoreoBS Core v0.
@@ -3421,7 +4029,7 @@ The following features are not part of ChoreoBS Core v0.
 
 * `const`;
 * object literals;
-* arrays;
+* arrays beyond the mutable one-dimensional `integer[]` / `float[]` / `boolean[]` support defined in this specification;
 * property access as lvalue;
 * classes;
 * interfaces;
@@ -3460,7 +4068,10 @@ The following features are not part of ChoreoBS Core v0.
 
 ### 17.5 Data Structures
 
-* arrays;
+* string arrays;
+* null arrays;
+* unit arrays;
+* nested arrays;
 * records;
 * structs;
 * tuples;

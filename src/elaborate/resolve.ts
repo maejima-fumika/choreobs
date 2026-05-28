@@ -49,6 +49,18 @@ export function resolveLiteralType(
   return locatedType(base, location);
 }
 
+export function validateArrayTypeAnnotation(ann: TypeAnnotation): void {
+  if (!ann.isArray) {
+    return;
+  }
+  if (ann.base !== "integer" && ann.base !== "float" && ann.base !== "boolean") {
+    throw new LocationOmitError(
+      `unsupported array element type '${ann.base}' (spec §16.29)`,
+      ann.span,
+    );
+  }
+}
+
 function rawLiteralBaseType(raw: RawLiteral): LocatedType["base"] {
   switch (raw.kind) {
     case "IntegerLiteral":

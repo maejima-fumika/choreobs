@@ -17,6 +17,8 @@ import type {
   LetStatement,
   LetReceiveStatement,
   AssignmentStatement,
+  IdentifierAssignmentTarget,
+  IndexAssignmentTarget,
   CommStatement,
   IfStatement,
   WhileStatement,
@@ -32,8 +34,10 @@ import type {
   BinaryExpression,
   UnaryExpression,
   LiteralExpression,
+  ArrayLiteralExpression,
   IdentifierExpression,
   CallExpression,
+  IndexExpression,
   ParenthesizedExpression,
 } from "../ast/expressions.js";
 import type {
@@ -196,6 +200,14 @@ class Parser {
   private parseType(): TypeAnnotation {
     const start = this.current();
     const base = this.parseBaseType();
+    let isArray = false;
+    if (this.match(TokenKind.LBracket)) {
+      this.consume(TokenKind.RBracket, "expected ']' after '[' in array type");
+      isArray = true;
+      if (this.match(TokenKind.LBracket)) {
+        throw this.fail("nested array types are not supported (spec §5.2, §16.30)");
+      }
+    }
     let location: LocationAnnotation | undefined;
     if (this.match(TokenKind.At)) {
       location = this.locationAnnotationAfterAt();
@@ -203,6 +215,7 @@ class Parser {
     return {
       kind: "TypeAnnotation",
       base: base.type,
+      isArray: isArray ? true : undefined,
       location,
       span: location
         ? spanMerge(spanBetween(start, base.token), location.span)
@@ -366,12 +379,36 @@ class Parser {
 
   private parseIdentifierLeadingStatement(): Statement {
     const nameTok = this.consumeIdentifierToken("expected identifier");
+    if (this.match(TokenKind.LBracket)) {
+      const index = this.parseExpression();
+      this.consume(TokenKind.RBracket, "expected ']' after assignment index");
+      this.consume(TokenKind.Assign, "expected '=' after assignment target");
+      const value = this.parseExpression();
+      this.consume(TokenKind.Semicolon, "expected ';' after assignment");
+      const target: IndexAssignmentTarget = {
+        kind: "IndexAssignmentTarget",
+        name: nameTok.name,
+        index,
+        span: spanFrom(nameTok, index),
+      };
+      return {
+        kind: "AssignmentStatement",
+        target,
+        value,
+        span: spanFrom(nameTok, value),
+      };
+    }
     if (this.match(TokenKind.Assign)) {
       const value = this.parseExpression();
       this.consume(TokenKind.Semicolon, "expected ';' after assignment");
+      const target: IdentifierAssignmentTarget = {
+        kind: "IdentifierAssignmentTarget",
+        name: nameTok.name,
+        span: spanOf(nameTok),
+      };
       return {
         kind: "AssignmentStatement",
-        name: nameTok.name,
+        target,
         value,
         span: spanFrom(nameTok, value),
       };
@@ -605,10 +642,29 @@ class Parser {
       };
       return expr;
     }
-    return this.parsePrimary();
+    return this.parsePostfix();
+  }
+
+  private parsePostfix(): Expression {
+    let expr = this.parsePrimary();
+    while (this.match(TokenKind.LBracket)) {
+      const start = spanOfNode(expr);
+      const index = this.parseExpression();
+      const end = this.consume(TokenKind.RBracket, "expected ']' after index expression");
+      expr = {
+        kind: "IndexExpression",
+        target: expr,
+        index,
+        span: spanMerge(start, spanOf(end)),
+      } satisfies IndexExpression;
+    }
+    return expr;
   }
 
   private parsePrimary(): Expression {
+    if (this.match(TokenKind.LBracket)) {
+      return this.parseArrayLiteral();
+    }
     if (this.match(TokenKind.LParen)) {
       const start = this.previous();
       const expression = this.parseExpression();
@@ -639,6 +695,27 @@ class Parser {
     }
 
     throw this.fail(`expected expression, found '${this.current().lexeme}'`);
+  }
+
+  private parseArrayLiteral(): ArrayLiteralExpression {
+    const start = this.previous();
+    const elements: Expression[] = [];
+    if (!this.check(TokenKind.RBracket)) {
+      do {
+        elements.push(this.parseExpression());
+      } while (this.match(TokenKind.Comma));
+    }
+    const close = this.consume(TokenKind.RBracket, "expected ']' after array literal");
+    let location: LocationAnnotation | undefined;
+    if (this.match(TokenKind.At)) {
+      location = this.locationAnnotationAfterAt();
+    }
+    return {
+      kind: "ArrayLiteralExpression",
+      elements,
+      location,
+      span: location ? spanMerge(spanOf(start), location.span) : spanBetween(start, close),
+    };
   }
 
   private finishCall(calleeToken: { name: string; span: Token["span"] } & Token): CallExpression {

@@ -7,6 +7,7 @@ import type {
   LetStatement,
   LetReceiveStatement,
   AssignmentStatement,
+  IndexAssignmentTarget,
   CommStatement,
   IfStatement,
   WhileStatement,
@@ -23,8 +24,10 @@ import type {
   BinaryExpression,
   UnaryExpression,
   LiteralExpression,
+  ArrayLiteralExpression,
   IdentifierExpression,
   CallExpression,
+  IndexExpression,
   ParenthesizedExpression,
 } from "../ast/expressions.js";
 import type { ExecutionContext } from "../ast/context.js";
@@ -54,8 +57,10 @@ import type {
   TypedBinaryExpression,
   TypedUnaryExpression,
   TypedLiteralExpression,
+  TypedArrayLiteralExpression,
   TypedIdentifierExpression,
   TypedCallExpression,
+  TypedIndexExpression,
   TypedParenthesizedExpression,
   LocatedType,
   FunctionSymbol,
@@ -67,6 +72,7 @@ import {
   contextAsLocation,
   formatLocatedType,
   isSubtype,
+  isArraySubtype,
   localAvailable,
   locatedType,
   locationsEqual,
@@ -75,6 +81,7 @@ import {
   LocationOmitError,
   resolveLiteralType,
   resolveTypeAnnotation,
+  validateArrayTypeAnnotation,
 } from "../elaborate/resolve.js";
 import { CommTagGenerator, TOP_SCOPE } from "../comm/tags.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
@@ -152,6 +159,13 @@ class TypeChecker {
   private collectFunctions(): void {
     for (const item of this.program.items) {
       if (item.kind !== "FunctionDeclaration") {
+        continue;
+      }
+      if (item.name === "length" || item.name === "push") {
+        this.error(
+          `'${item.name}' is a reserved builtin function name (spec §6.2, §7.11.1)`,
+          item.span,
+        );
         continue;
       }
       const existing = this.functions.get(item.name);
@@ -518,6 +532,15 @@ class TypeChecker {
             visitExpr(arg);
           }
           break;
+        case "ArrayLiteralExpression":
+          for (const element of expr.elements) {
+            visitExpr(element);
+          }
+          break;
+        case "IndexExpression":
+          visitExpr(expr.target);
+          visitExpr(expr.index);
+          break;
         case "BinaryExpression":
           visitExpr(expr.left);
           visitExpr(expr.right);
@@ -714,6 +737,16 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedLetStatement {
     const initializer = this.checkExpression(stmt.initializer, ctx, allowOmit);
+    if (
+      stmt.type === undefined &&
+      stmt.initializer.kind === "ArrayLiteralExpression" &&
+      stmt.initializer.elements.length === 0
+    ) {
+      this.error("cannot infer empty array element type (spec §16.32)", stmt.span);
+    }
+    if (this.isPushCallExpression(stmt.initializer)) {
+      this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
+    }
     const choreoType =
       stmt.type !== undefined
         ? this.resolveLetType(stmt.type, initializer, ctx, allowOmit, stmt.span)
@@ -737,6 +770,28 @@ class TypeChecker {
       span,
       "variable type",
     );
+    if (choreoType.isArray) {
+      if (!initializer.choreoType.isArray) {
+        this.error(
+          `cannot assign ${formatLocatedType(initializer.choreoType)} to ${formatLocatedType(choreoType)}`,
+          span,
+        );
+        return choreoType;
+      }
+      if (initializer.expr.kind === "ArrayLiteralExpression") {
+        if (initializer.expr.elements.length === 0) {
+          return choreoType;
+        }
+        const expectedElement = locatedType(choreoType.base, choreoType.location);
+        const typedArray = initializer as TypedArrayLiteralExpression;
+        for (const element of typedArray.elements) {
+          this.validateAssignmentLike(expectedElement, element.choreoType, element.expr.span);
+        }
+        return choreoType;
+      }
+      this.validateAssignmentLike(choreoType, initializer.choreoType, span);
+      return choreoType;
+    }
     this.validateAssignmentLike(choreoType, initializer.choreoType, span);
     return choreoType;
   }
@@ -759,10 +814,29 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
   ): TypedAssignmentStatement {
-    const targetType = this.lookupVariable(stmt.name, stmt.span);
     const value = this.checkExpression(stmt.value, ctx, allowOmit);
-    this.validateAssignmentLike(targetType, value.choreoType, stmt.span);
-    return { stmt, targetType, value };
+    if (this.isPushCallExpression(stmt.value)) {
+      this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
+    }
+    if (stmt.target.kind === "IdentifierAssignmentTarget") {
+      const targetType = this.lookupVariable(stmt.target.name, stmt.span);
+      this.validateAssignmentLike(targetType, value.choreoType, stmt.span);
+      return { stmt, target: { target: stmt.target, targetType }, value };
+    }
+    const arrayType = this.lookupVariable(stmt.target.name, stmt.span);
+    if (!arrayType.isArray) {
+      this.error("index assignment target must be an array value", stmt.span);
+    }
+    const index = this.checkExpression(stmt.target.index, ctx, allowOmit);
+    if (index.choreoType.base !== "integer" || index.choreoType.isArray) {
+      this.error("array index must have type integer", stmt.target.index.span);
+    }
+    const elementType = locatedType(arrayType.base, arrayType.location);
+    this.validateAssignmentLike(elementType, value.choreoType, stmt.span);
+    if (!available(index.choreoType.location, arrayType.location)) {
+      this.error("array index location is not available at array location (spec §16.37)", stmt.span);
+    }
+    return { stmt, target: { target: stmt.target, arrayType, index, elementType }, value };
   }
 
   private checkComm(
@@ -845,6 +919,13 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedForLetInit {
     const initializer = this.checkExpression(init.initializer, ctx, allowOmit);
+    if (
+      init.type === undefined &&
+      init.initializer.kind === "ArrayLiteralExpression" &&
+      init.initializer.elements.length === 0
+    ) {
+      this.error("cannot infer empty array element type (spec §16.32)", init.span);
+    }
     const choreoType =
       init.type !== undefined
         ? this.resolveLetType(init.type, initializer, ctx, allowOmit, init.span)
@@ -943,6 +1024,9 @@ class TypeChecker {
       ctx,
       allowOmit,
     );
+    if (this.isPushCallExpression(stmt.value)) {
+      this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
+    }
     this.validateReturnLike(returnType, value.choreoType, stmt.span);
     return { stmt, value };
   }
@@ -953,6 +1037,12 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedExpressionStatement {
     const expression = this.checkExpression(stmt.expression, ctx, allowOmit);
+    if (
+      expression.expr.kind === "CallExpression" &&
+      expression.expr.callee === "length"
+    ) {
+      this.error("length(xs) cannot be used as a statement", stmt.span);
+    }
     return { stmt, expression };
   }
 
@@ -998,10 +1088,14 @@ class TypeChecker {
         return this.checkUnary(expr, ctx, allowOmit);
       case "LiteralExpression":
         return this.checkLiteral(expr, ctx, allowOmit);
+      case "ArrayLiteralExpression":
+        return this.checkArrayLiteral(expr, ctx, allowOmit);
       case "IdentifierExpression":
         return this.checkIdentifier(expr, ctx);
       case "CallExpression":
         return this.checkCall(expr, ctx, allowOmit);
+      case "IndexExpression":
+        return this.checkIndex(expr, ctx, allowOmit);
       case "ParenthesizedExpression":
         return this.checkParen(expr, ctx, allowOmit);
     }
@@ -1058,6 +1152,9 @@ class TypeChecker {
       return this.locationAwareBinary(left, right, "boolean", ctx, span);
     }
     if ((eq as readonly string[]).includes(operator)) {
+      if (left.isArray || right.isArray) {
+        this.error("array equality is not supported (spec §16.36)", span);
+      }
       if (left.base !== right.base) {
         this.error(
           `operator '${operator}' requires operands of the same base type`,
@@ -1109,6 +1206,91 @@ class TypeChecker {
     return { expr, choreoType, literal: expr.literal };
   }
 
+  private checkArrayLiteral(
+    expr: ArrayLiteralExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedArrayLiteralExpression {
+    let location = expr.location?.location;
+    if (location === undefined) {
+      if (allowOmit && ctx.kind === "local") {
+        location = { kind: "concrete", name: ctx.participant };
+      } else {
+        this.error("array literal location annotation required in @every/top-level context (spec §5.16, §16.31)", expr.span);
+        location = contextAsLocation(ctx);
+      }
+    }
+    const elements = expr.elements.map((element) =>
+      this.typeArrayElementExpression(element, location, ctx, allowOmit),
+    );
+    if (elements.length === 0) {
+      return { expr, choreoType: locatedType("integer", location, true), elements };
+    }
+    let elementBase = elements[0]!.choreoType.base;
+    for (let i = 1; i < elements.length; i++) {
+      const next = elements[i]!.choreoType.base;
+      const lub = this.lubArrayElementBase(elementBase, next, expr.span);
+      elementBase = lub;
+    }
+    return { expr, choreoType: locatedType(elementBase, location, true), elements };
+  }
+
+  private typeArrayElementExpression(
+    element: Expression,
+    arrayLocation: Location,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedExpression {
+    if (
+      element.kind === "LiteralExpression" &&
+      element.literal.location === undefined
+    ) {
+      const base = this.rawLiteralBase(element.literal.literal.kind);
+      return {
+        expr: element,
+        choreoType: locatedType(base, arrayLocation),
+        literal: element.literal,
+      } as TypedLiteralExpression;
+    }
+    const typed = this.checkExpression(element, ctx, allowOmit);
+    if (!available(typed.choreoType.location, arrayLocation)) {
+      this.error("array element location is not available at array literal location", element.span);
+    }
+    return typed;
+  }
+
+  private rawLiteralBase(kind: string): LocatedType["base"] {
+    switch (kind) {
+      case "IntegerLiteral":
+        return "integer";
+      case "FloatLiteral":
+        return "float";
+      case "BooleanLiteral":
+        return "boolean";
+      case "StringLiteral":
+        return "string";
+      case "NullLiteral":
+        return "null";
+      default:
+        return "integer";
+    }
+  }
+
+  private lubArrayElementBase(
+    a: LocatedType["base"],
+    b: LocatedType["base"],
+    span: Span,
+  ): LocatedType["base"] {
+    if (a === b) {
+      return a;
+    }
+    if ((a === "integer" && b === "float") || (a === "float" && b === "integer")) {
+      return "float";
+    }
+    this.error("array literal has incompatible mixed element types", span);
+    return a;
+  }
+
   private checkIdentifier(
     expr: IdentifierExpression,
     ctx: ExecutionContext,
@@ -1123,6 +1305,59 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
   ): TypedCallExpression {
+    if (expr.callee === "length") {
+      if (expr.args.length !== 1) {
+        this.error("length(xs) expects exactly one argument", expr.span);
+      }
+      const arg = expr.args[0] !== undefined
+        ? this.checkExpression(expr.args[0], ctx, allowOmit)
+        : ({
+            expr: {
+              kind: "IdentifierExpression",
+              name: "_",
+              span: expr.span,
+            },
+            choreoType: locatedType("integer", contextAsLocation(ctx)),
+          } as TypedExpression);
+      if (!arg.choreoType.isArray) {
+        this.error("length builtin requires array argument", expr.span);
+      }
+      return {
+        expr,
+        choreoType: locatedType("integer", arg.choreoType.location),
+        callee: this.unknownFunction(expr.callee),
+        args: [arg],
+      };
+    }
+    if (expr.callee === "push") {
+      if (expr.args.length !== 2) {
+        this.error("push(xs, v) expects two arguments", expr.span);
+      }
+      const xs = expr.args[0] !== undefined
+        ? this.checkExpression(expr.args[0], ctx, allowOmit)
+        : ({
+            expr: { kind: "IdentifierExpression", name: "_", span: expr.span },
+            choreoType: locatedType("integer", contextAsLocation(ctx), true),
+          } as TypedExpression);
+      const v = expr.args[1] !== undefined
+        ? this.checkExpression(expr.args[1], ctx, allowOmit)
+        : ({
+            expr: { kind: "IdentifierExpression", name: "_", span: expr.span },
+            choreoType: locatedType("integer", contextAsLocation(ctx)),
+          } as TypedExpression);
+      if (!xs.choreoType.isArray) {
+        this.error("push builtin requires array as first argument", expr.span);
+      } else {
+        const elementType = locatedType(xs.choreoType.base, xs.choreoType.location);
+        this.validateAssignmentLike(elementType, v.choreoType, expr.span);
+      }
+      return {
+        expr,
+        choreoType: locatedType("unit", xs.choreoType.location),
+        callee: this.unknownFunction(expr.callee),
+        args: [xs, v],
+      };
+    }
     const decl = this.functions.get(expr.callee);
     if (decl === undefined) {
       this.error(`undefined function '${expr.callee}'`, expr.span);
@@ -1155,6 +1390,9 @@ class TypeChecker {
     const args: TypedExpression[] = [];
     for (let i = 0; i < expr.args.length; i++) {
       const arg = this.checkExpression(expr.args[i]!, ctx, allowOmit);
+      if (this.isPushCallExpression(expr.args[i]!)) {
+        this.error("push(xs, v) is allowed only as an expression statement", expr.args[i]!.span);
+      }
       const param = params[i];
       if (param !== undefined) {
         this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
@@ -1167,6 +1405,30 @@ class TypeChecker {
       choreoType: symbol.returnType,
       callee: symbol,
       args,
+    };
+  }
+
+  private checkIndex(
+    expr: IndexExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): TypedIndexExpression {
+    const target = this.checkExpression(expr.target, ctx, allowOmit);
+    const index = this.checkExpression(expr.index, ctx, allowOmit);
+    if (!target.choreoType.isArray) {
+      this.error("index target must have array type", expr.span);
+    }
+    if (index.choreoType.base !== "integer" || index.choreoType.isArray) {
+      this.error("array index must have type integer", expr.index.span);
+    }
+    if (!available(index.choreoType.location, target.choreoType.location)) {
+      this.error("array index location is not available at array location (spec §16.37)", expr.span);
+    }
+    return {
+      expr,
+      choreoType: locatedType(target.choreoType.base, target.choreoType.location),
+      target,
+      index,
     };
   }
 
@@ -1211,7 +1473,21 @@ class TypeChecker {
     arg: LocatedType,
     span: Span,
   ): void {
-    if (!isSubtype(arg.base, param.base)) {
+    if (arg.isArray && !param.isArray) {
+      this.error("array argument is not assignable to non-array parameter", span);
+      return;
+    }
+    if (!arg.isArray && param.isArray) {
+      this.error("non-array argument is not assignable to array parameter", span);
+      return;
+    }
+    if (arg.isArray && param.isArray && arg.location.kind === "every" && param.location.kind === "concrete") {
+      this.error(
+        "cannot pass T[]@every to T[]@P parameter (spec §7.11.1, §16.35)",
+        span,
+      );
+    }
+    if (!isArraySubtype(arg, param)) {
       this.error(
         `argument type ${formatLocatedType(arg)} is not assignable to parameter type ${formatLocatedType(param)}`,
         span,
@@ -1225,12 +1501,22 @@ class TypeChecker {
     }
   }
 
+  private isPushCallExpression(expr: Expression): boolean {
+    return expr.kind === "CallExpression" && expr.callee === "push";
+  }
+
   private validateAssignmentLike(
     target: LocatedType,
     source: LocatedType,
     span: Span,
   ): void {
-    if (!isSubtype(source.base, target.base)) {
+    if (source.isArray && target.isArray && source.location.kind === "every" && target.location.kind === "concrete") {
+      this.error(
+        "cannot assign T[]@every to T[]@P (spec §7.11.1, §16.34)",
+        span,
+      );
+    }
+    if (!isArraySubtype(source, target)) {
       this.error(
         `cannot assign ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
@@ -1250,7 +1536,7 @@ class TypeChecker {
     value: LocatedType,
     span: Span,
   ): void {
-    if (!isSubtype(value.base, returnType.base)) {
+    if (!isArraySubtype(value, returnType)) {
       this.error(
         `return type ${formatLocatedType(value)} is not compatible with ${formatLocatedType(returnType)}`,
         span,
@@ -1269,7 +1555,7 @@ class TypeChecker {
     source: LocatedType,
     span: Span,
   ): void {
-    if (!isSubtype(source.base, target.base)) {
+    if (!isArraySubtype(source, target)) {
       this.error(
         `communication type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
@@ -1404,9 +1690,10 @@ class TypeChecker {
     allowOmit: boolean,
   ): LocatedType {
     try {
+      validateArrayTypeAnnotation(ann);
       const resolved = resolveTypeAnnotation(ann, ctx, allowOmit);
       this.validateLocation(resolved.location, ann.span);
-      return resolved;
+      return { ...resolved, isArray: ann.isArray === true ? true : undefined };
     } catch (e) {
       if (e instanceof LocationOmitError) {
         this.error(e.message, e.span);

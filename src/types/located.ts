@@ -11,6 +11,13 @@ export function isSubtype(source: BaseType, target: BaseType): boolean {
   return source === "integer" && target === "float";
 }
 
+export function isArraySubtype(source: LocatedType, target: LocatedType): boolean {
+  if (source.isArray || target.isArray) {
+    return source.isArray === true && target.isArray === true && source.base === target.base;
+  }
+  return isSubtype(source.base, target.base);
+}
+
 export function locatedTypesCompatible(
   source: LocatedType,
   target: LocatedType,
@@ -62,12 +69,14 @@ export function contextAsLocation(ctx: ExecutionContext): Location {
 export function formatLocatedType(type: LocatedType): string {
   const loc =
     type.location.kind === "every" ? "every" : type.location.name;
-  return `${type.base}@${loc}`;
+  const head = type.isArray ? `${type.base}[]` : type.base;
+  return `${head}@${loc}`;
 }
 
 export function locatedType(
   base: BaseType,
   location: Location,
+  isArray?: boolean,
 ): LocatedType {
-  return { base, location };
+  return { base, location, isArray };
 }

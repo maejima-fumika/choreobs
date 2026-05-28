@@ -62,7 +62,7 @@ class BlueScriptEmitter {
         );
         return;
       case "AssignmentStatement":
-        this.line(`${stmt.name} = ${this.emitExpr(stmt.value)};`);
+        this.line(`${this.emitAssignmentTarget(stmt.target)} = ${this.emitExpr(stmt.value)};`);
         return;
       case "SendStatement":
         this.line(
@@ -161,9 +161,21 @@ class BlueScriptEmitter {
           ? `!${this.emitExpr(expr.operand)}`
           : `(-${this.emitExpr(expr.operand)})`;
       case "CallExpression": {
+        if (expr.callee === "__array") {
+          return `[${expr.args.map((a) => this.emitExpr(a)).join(", ")}]`;
+        }
+        if (expr.callee === "__push") {
+          const xs = expr.args[0] ? this.emitExpr(expr.args[0]) : "null";
+          const v = expr.args[1] ? this.emitExpr(expr.args[1]) : "null";
+          return `${xs}.push(${v})`;
+        }
         const args = expr.args.map((a) => this.emitExpr(a)).join(", ");
         return `${expr.callee}(${args})`;
       }
+      case "IndexExpression":
+        return `${this.emitExpr(expr.target)}[${this.emitExpr(expr.index)}]`;
+      case "PropertyLengthExpression":
+        return `${this.emitExpr(expr.target)}.length`;
       case "NothingExpression":
         return `nothing(${expr.parts.map((p) => this.emitExpr(p)).join(", ")})`;
       case "ParenthesizedExpression":
@@ -171,6 +183,15 @@ class BlueScriptEmitter {
       case "ReceiveExpression":
         return `${receiveFunction(expr.comm)}("${expr.sourceParticipant}", "${expr.tag}")`;
     }
+  }
+
+  private emitAssignmentTarget(
+    target: import("../ir/projected.js").ProjectedAssignmentTarget,
+  ): string {
+    if (target.kind === "IdentifierAssignmentTarget") {
+      return target.name;
+    }
+    return `${target.name}[${this.emitExpr(target.index)}]`;
   }
 
   private line(text: string): void {

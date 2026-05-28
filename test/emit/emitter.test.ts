@@ -145,4 +145,31 @@ let y: integer@bob <~ x;
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("emits array builtins and array communication APIs", () => {
+    const alice = pipeline(
+      `
+let xs: integer[]@alice = [1, 2, 3]@alice;
+xs[1@alice] = 10@alice;
+push(xs, 20@alice);
+let n: integer@alice = length(xs);
+let ys: integer[]@bob <~ xs;
+`,
+      "alice",
+    );
+    assert.match(alice, /let xs: integer\[] = \[1, 2, 3\];/);
+    assert.match(alice, /xs\[1\] = 10;/);
+    assert.match(alice, /xs\.push\(20\);/);
+    assert.match(alice, /let n: integer = xs\.length;/);
+    assert.match(alice, /sendIntegerArray\("bob", "top_0", xs\);/);
+
+    const bob = pipeline(
+      `
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let ys: integer[]@bob <~ xs;
+`,
+      "bob",
+    );
+    assert.match(bob, /receiveIntegerArray\("alice", "top_0"\)/);
+  });
 });

@@ -38,8 +38,21 @@ export interface LetReceiveStatement extends AstNode {
 /** `x = e;` — lhs is always an identifier (spec §5.7). */
 export interface AssignmentStatement extends AstNode {
   readonly kind: "AssignmentStatement";
-  readonly name: string;
+  readonly target: AssignmentTarget;
   readonly value: Expression;
+}
+
+export type AssignmentTarget = IdentifierAssignmentTarget | IndexAssignmentTarget;
+
+export interface IdentifierAssignmentTarget extends AstNode {
+  readonly kind: "IdentifierAssignmentTarget";
+  readonly name: string;
+}
+
+export interface IndexAssignmentTarget extends AstNode {
+  readonly kind: "IndexAssignmentTarget";
+  readonly name: string;
+  readonly index: Expression;
 }
 
 /** `y <~ x;` — communication statement (spec §5.8). */

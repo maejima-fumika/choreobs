@@ -499,4 +499,30 @@ function f@alice(): integer@bob {
       );
     });
   });
+
+  describe("mutable arrays", () => {
+    it("accepts array literal, index, assignment, push, and length", () => {
+      const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let ys: float[]@alice = [1, 2.5]@alice;
+let zs: boolean[]@bob = [true, false]@bob;
+let empty: integer[]@alice = []@alice;
+let x: integer@alice = xs[0@alice];
+xs[1@alice] = 10@alice;
+push(xs, 20@alice);
+let n: integer@alice = length(xs);
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("rejects unsupported array features and invalid uses", () => {
+      const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: float[]@alice = xs;
+`);
+      assert.equal(typed, null);
+      assert.ok(errors.some((e) => e.message.includes("cannot assign")));
+    });
+  });
 });

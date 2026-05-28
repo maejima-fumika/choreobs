@@ -23,9 +23,11 @@ import type {
   TypedReturnStatement,
   TypedExpressionStatement,
   TypedLiteralExpression,
+  TypedArrayLiteralExpression,
   TypedBinaryExpression,
   TypedUnaryExpression,
   TypedCallExpression,
+  TypedIndexExpression,
   TypedParenthesizedExpression,
 } from "../ast/typed.js";
 import { available } from "../types/located.js";
@@ -41,6 +43,7 @@ import type {
   AbsentExpression,
   ReceiveExpression,
 } from "../ir/projected.js";
+import { cloneFunction } from "../emit/comm.js";
 
 export function projectAll(
   typed: TypedProgram,
@@ -194,7 +197,7 @@ class Projector {
     const src = stmt.source.choreoType.location;
     const tag = stmt.commTag;
     const name = stmt.stmt.name;
-    const comm = this.commKind(stmt.choreoType.base);
+    const comm = this.commKindForType(stmt.choreoType);
 
     if (dst.kind === "every") {
       return this.projectBroadcastReceive(
@@ -248,6 +251,15 @@ class Projector {
     const projectedSource = this.projectExpression(source);
 
     if (this.participant === srcParticipant) {
+      const senderInitializer =
+        choreoType.isArray
+          ? ({
+              kind: "CallExpression",
+              callee: cloneFunction(comm),
+              args: [projectedSource],
+              span,
+            } as ProjectedExpression)
+          : projectedSource;
       return [
         {
           kind: "BroadcastStatement",
@@ -260,7 +272,7 @@ class Projector {
           kind: "LetStatement",
           name,
           type: this.projectType(choreoType),
-          initializer: projectedSource,
+          initializer: senderInitializer,
           span,
         },
       ];
@@ -283,7 +295,7 @@ class Projector {
     const src = stmt.source.choreoType.location;
     const tag = stmt.commTag;
     const name = stmt.stmt.name;
-    const comm = this.commKind(stmt.targetType.base);
+    const comm = this.commKindForType(stmt.targetType);
 
     if (dst.kind === "every") {
       return this.projectBroadcastComm(
@@ -313,7 +325,7 @@ class Projector {
     if (this.participant === dstParticipant) {
       return {
         kind: "AssignmentStatement",
-        name,
+        target: { kind: "IdentifierAssignmentTarget", name },
         value: this.receiveExpr(comm, srcParticipant, tag, span),
         span,
       };
@@ -345,7 +357,7 @@ class Projector {
         },
         {
           kind: "AssignmentStatement",
-          name,
+          target: { kind: "IdentifierAssignmentTarget", name },
           value: projectedSource,
           span,
         },
@@ -354,7 +366,7 @@ class Projector {
 
     return {
       kind: "AssignmentStatement",
-      name,
+      target: { kind: "IdentifierAssignmentTarget", name },
       value: this.receiveExpr(comm, srcParticipant, tag, span),
       span,
     };
@@ -364,14 +376,37 @@ class Projector {
     stmt: TypedAssignmentStatement,
   ): ProjectedStatement {
     const span = stmt.stmt.span;
-    if (!this.isAvailable(stmt.targetType.location)) {
+    let targetLocation: Location;
+    if (stmt.target.target.kind === "IdentifierAssignmentTarget") {
+      targetLocation = (stmt.target as import("../ast/typed.js").TypedIdentifierAssignmentTarget).targetType.location;
+    } else {
+      targetLocation = (stmt.target as import("../ast/typed.js").TypedIndexAssignmentTarget).arrayType.location;
+    }
+    if (!this.isAvailable(targetLocation)) {
       return this.nothingForExpression(stmt.value, span);
     }
     return {
       kind: "AssignmentStatement",
-      name: stmt.stmt.name,
+      target: this.projectAssignmentTarget(stmt),
       value: this.projectExpression(stmt.value),
       span,
+    };
+  }
+
+  private projectAssignmentTarget(
+    stmt: TypedAssignmentStatement,
+  ): import("../ir/projected.js").ProjectedAssignmentTarget {
+    if (stmt.target.target.kind === "IdentifierAssignmentTarget") {
+      return {
+        kind: "IdentifierAssignmentTarget",
+        name: stmt.target.target.name,
+      };
+    }
+    const indexTarget = stmt.target as import("../ast/typed.js").TypedIndexAssignmentTarget;
+    return {
+      kind: "IndexAssignmentTarget",
+      name: indexTarget.target.name,
+      index: this.projectExpression(indexTarget.index),
     };
   }
 
@@ -491,6 +526,15 @@ class Projector {
     switch (expr.expr.kind) {
       case "LiteralExpression":
         return this.projectLiteral(expr as TypedLiteralExpression);
+      case "ArrayLiteralExpression": {
+        const arrayExpr = expr as TypedArrayLiteralExpression;
+        return {
+          kind: "CallExpression",
+          callee: "__array",
+          args: arrayExpr.elements.map((e) => this.projectExpression(e)),
+          span: expr.expr.span,
+        };
+      }
       case "IdentifierExpression":
         return {
           kind: "IdentifierExpression",
@@ -503,6 +547,15 @@ class Projector {
         return this.projectUnary(expr as TypedUnaryExpression);
       case "CallExpression":
         return this.projectCall(expr as TypedCallExpression);
+      case "IndexExpression": {
+        const indexExpr = expr as TypedIndexExpression;
+        return {
+          kind: "IndexExpression",
+          target: this.projectExpression(indexExpr.target),
+          index: this.projectExpression(indexExpr.index),
+          span: expr.expr.span,
+        };
+      }
       case "ParenthesizedExpression": {
         const paren = expr as TypedParenthesizedExpression;
         const inner = this.projectExpression(paren.expression);
@@ -552,6 +605,21 @@ class Projector {
   }
 
   private projectCall(expr: TypedCallExpression): ProjectedExpression {
+    if (expr.expr.callee === "length" && expr.args.length === 1) {
+      return {
+        kind: "PropertyLengthExpression",
+        target: this.projectExpression(expr.args[0]!),
+        span: expr.expr.span,
+      };
+    }
+    if (expr.expr.callee === "push" && expr.args.length === 2) {
+      return {
+        kind: "CallExpression",
+        callee: "__push",
+        args: [this.projectExpression(expr.args[0]!), this.projectExpression(expr.args[1]!)],
+        span: expr.expr.span,
+      };
+    }
     const decl = expr.callee.decl;
     if (!this.shouldEmitFunction(decl)) {
       return this.absentExpr(expr.expr.span);
@@ -569,7 +637,15 @@ class Projector {
     if (!this.isAvailable(type.location)) {
       return { kind: "AbsentType" };
     }
-    const base = type.base === "unit" ? "void" : type.base;
+    const base: import("../ir/projected.js").ProjectedBaseType = type.isArray
+      ? (type.base === "integer"
+        ? "integer[]"
+        : type.base === "float"
+          ? "float[]"
+          : "boolean[]")
+      : type.base === "unit"
+        ? "void"
+        : type.base;
     return { kind: "PresentType", base };
   }
 
@@ -629,10 +705,25 @@ class Projector {
   }
 
   private commKind(base: LocatedType["base"]): CommKind {
-    if (base === "integer" || base === "float" || base === "boolean" || base === "string") {
-      return base;
+    const kind = (base === "integer" || base === "float" || base === "boolean" || base === "string")
+      ? base
+      : "integer";
+    return kind;
+  }
+
+  private commKindForType(type: LocatedType): CommKind {
+    if (type.isArray) {
+      if (type.base === "integer") {
+        return "integerArray";
+      }
+      if (type.base === "float") {
+        return "floatArray";
+      }
+      if (type.base === "boolean") {
+        return "booleanArray";
+      }
     }
-    return "integer";
+    return this.commKind(type.base);
   }
 
   private isAvailable(location: Location): boolean {

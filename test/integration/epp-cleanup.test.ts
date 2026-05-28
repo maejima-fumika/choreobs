@@ -170,4 +170,14 @@ for (
       assert.doesNotMatch(alice, /top_1/);
     });
   });
+
+  it("does not emit invalid index-assignment artifacts on unavailable endpoint", () => {
+    const result = compile(`
+let xs: integer[]@alice = [1, 2]@alice;
+xs[0@alice] = 9@alice;
+`);
+    expectSuccess(result);
+    const bob = bs(result, "bob");
+    assert.doesNotMatch(bob, /null\[null\]/);
+  });
 });

@@ -71,6 +71,8 @@ export const TokenKind = {
   RParen: "RParen",
   LBrace: "LBrace",
   RBrace: "RBrace",
+  LBracket: "LBracket",
+  RBracket: "RBracket",
 
   EOF: "EOF",
 } as const;
@@ -143,6 +145,8 @@ export type PunctuationToken = TokenBase & {
     | typeof TokenKind.RParen
     | typeof TokenKind.LBrace
     | typeof TokenKind.RBrace
+    | typeof TokenKind.LBracket
+    | typeof TokenKind.RBracket
   >;
 };
 

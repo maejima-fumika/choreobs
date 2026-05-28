@@ -18,5 +18,6 @@ export type BaseType =
 export interface TypeAnnotation extends AstNode {
   readonly kind: "TypeAnnotation";
   readonly base: BaseType;
+  readonly isArray?: boolean;
   readonly location?: LocationAnnotation;
 }

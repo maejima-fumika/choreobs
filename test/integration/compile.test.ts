@@ -362,4 +362,28 @@ while (false@every) {
       assert.match(bs(result, "bob"), /while \(false\)/);
     });
   });
+
+  describe("mutable array integration", () => {
+    it("compiles array operations and communication", () => {
+      const result = compile(`
+let xs: integer[]@alice = [1, 2, 3]@alice;
+xs[1@alice] = 10@alice;
+push(xs, 20@alice);
+let n: integer@alice = length(xs);
+let ys: integer[]@bob <~ xs;
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /sendIntegerArray\("bob", "top_0", xs\)/);
+      assert.match(bs(result, "bob"), /receiveIntegerArray\("alice", "top_0"\)/);
+    });
+
+    it("rejects assigning @every array to concrete array", () => {
+      const result = compile(`
+let xs: integer[]@every = [1, 2, 3]@every;
+let ys: integer[]@alice = xs;
+`);
+      expectFailure(result);
+      assert.ok(result.errors.some((e) => e.message.includes("T[]@every")));
+    });
+  });
 });

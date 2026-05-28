@@ -95,6 +95,12 @@ class Lexer {
       case "}":
         this.pushPunctuation(TokenKind.RBrace, char, start);
         return;
+      case "[":
+        this.pushPunctuation(TokenKind.LBracket, char, start);
+        return;
+      case "]":
+        this.pushPunctuation(TokenKind.RBracket, char, start);
+        return;
       case ",":
         this.pushPunctuation(TokenKind.Comma, char, start);
         return;

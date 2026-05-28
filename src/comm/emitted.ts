@@ -8,7 +8,15 @@ export interface EmittedParticipantOutput {
   readonly source: string;
 }
 
-const COMM_TYPES = ["Integer", "Float", "Boolean", "String"] as const;
+const COMM_TYPES = [
+  "Integer",
+  "Float",
+  "Boolean",
+  "String",
+  "IntegerArray",
+  "FloatArray",
+  "BooleanArray",
+] as const;
 type CommSuffix = (typeof COMM_TYPES)[number];
 
 const SEND_RE = new RegExp(
@@ -66,7 +74,7 @@ function emittedToProjectedProgram(
     body.push({
       kind: "LetStatement",
       name: "_broadcast_local",
-      type: { kind: "PresentType", base: comm },
+      type: { kind: "PresentType", base: commToProjectedBase(comm) },
       initializer: { kind: "IdentifierExpression", name: "_", span },
       span,
     });
@@ -77,7 +85,7 @@ function emittedToProjectedProgram(
     body.push({
       kind: "LetStatement",
       name: `_recv_${match[3]}`,
-      type: { kind: "PresentType", base: comm },
+      type: { kind: "PresentType", base: commToProjectedBase(comm) },
       initializer: {
         kind: "ReceiveExpression",
         comm,
@@ -98,6 +106,24 @@ function emittedToProjectedProgram(
   };
 }
 
+function commToProjectedBase(
+  comm: CommKind,
+): import("../ir/projected.js").ProjectedBaseType {
+  switch (comm) {
+    case "integer":
+    case "float":
+    case "boolean":
+    case "string":
+      return comm;
+    case "integerArray":
+      return "integer[]";
+    case "floatArray":
+      return "float[]";
+    case "booleanArray":
+      return "boolean[]";
+  }
+}
+
 function suffixToComm(suffix: CommSuffix): CommKind {
   switch (suffix) {
     case "Integer":
@@ -108,5 +134,11 @@ function suffixToComm(suffix: CommSuffix): CommKind {
       return "boolean";
     case "String":
       return "string";
+    case "IntegerArray":
+      return "integerArray";
+    case "FloatArray":
+      return "floatArray";
+    case "BooleanArray":
+      return "booleanArray";
   }
 }
