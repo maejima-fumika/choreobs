@@ -7,7 +7,7 @@ import { parse } from "../../src/parser/index.js";
 import { typeCheck } from "../../src/check/index.js";
 import { project } from "../../src/epp/index.js";
 import { emit } from "../../src/emit/index.js";
-import { compileFile, writeOutputs } from "../../src/driver/index.js";
+import { compileFile, compileSource, writeOutputs } from "../../src/driver/index.js";
 
 const config = { participants: ["alice", "bob"] };
 
@@ -64,7 +64,7 @@ let ok: boolean@every <~ localOk;
     assert.match(bob, /let ok: boolean = receiveBoolean\("alice", "top_0"\)/);
   });
 
-  it("finalizes absent call args to null in nothing (spec §10.2)", () => {
+  it("finalizes absent call args to null in nothing before cleanup (spec §10.2)", () => {
     const bob = pipeline(
       `
 function add@alice(a: integer, b: integer): integer { return a + b; }
@@ -73,6 +73,24 @@ let x: integer@alice = add(1@alice, 2@alice);
       "bob",
     );
     assert.match(bob, /nothing\(null, null\);/);
+  });
+
+  it("removes bob output after cleanup when top level calls alice with integer@every (spec §10.2, §13.9)", () => {
+    const result = compileSource(
+      `
+function add@alice(a: integer) {
+  return a;
+}
+add(10@every);
+`,
+      "index.cbs",
+      config,
+    );
+    assert.equal(result.success, true, JSON.stringify(result.errors));
+    const bob = result.outputs.find((o) => o.participant === "bob")?.source.trimEnd();
+    assert.equal(bob, "");
+    const alice = result.outputs.find((o) => o.participant === "alice")?.source.trimEnd();
+    assert.match(alice!, /add\(10\);/);
   });
 
   it("maps unit to void in functions", () => {

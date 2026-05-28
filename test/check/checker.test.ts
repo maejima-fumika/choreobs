@@ -61,6 +61,28 @@ let y: integer@alice <~ x;
     assert.ok(errors.some((e) => e.message.includes("@every")));
   });
 
+  it("rejects communication when source and destination share a location (spec §7.8)", () => {
+    const { typed, errors } = checkSource(`
+let x: integer@alice = 1@alice;
+let y: integer@alice <~ x;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("must differ")),
+    );
+  });
+
+  it("rejects references to top-level let from local functions (spec §6.5)", () => {
+    const { typed, errors } = checkSource(`
+let x: integer@alice = 1@alice;
+function f@alice(): integer {
+  return x;
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(errors.some((e) => e.message.includes("undefined variable 'x'")));
+  });
+
   it("rejects cross-node local function calls (spec §16.12)", () => {
     const { typed, errors } = checkSource(`
 function f@bob(): integer { return 1; }
@@ -243,6 +265,20 @@ function f@bob() {
       );
     });
 
+    it("rejects binary operands at different concrete locations (spec §8.1.1)", () => {
+      const { typed, errors } = checkSource(`
+function f@alice(): integer {
+  return 1@bob + 2@alice;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("binary operands must be located at alice"),
+        ),
+      );
+    });
+
     it("rejects explicit return type at a different concrete location", () => {
       const { typed, errors } = checkSource(`
 function f@bob(): integer@alice {
@@ -359,6 +395,107 @@ function f@alice(x: integer@every) {
       assert.equal(typed, null);
       assert.ok(
         errors.some((e) => e.message.includes("parameter must be located at alice")),
+      );
+    });
+
+    it("rejects integer@every argument from inside a local function (spec §8.1.1)", () => {
+      const { typed, errors } = checkSource(`
+function add@alice(a: integer) {
+  return a;
+}
+function g@alice(): integer {
+  return add(10@every);
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("not available in local function at alice"),
+        ),
+      );
+    });
+  });
+
+  describe("local control-flow conditions (spec §7.9, §7.10)", () => {
+    it("rejects while with boolean@every in local function", () => {
+      const { typed, errors } = checkSource(`
+function f@alice(): unit {
+  while (true@every) {
+    return;
+  }
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some(
+          (e) =>
+            e.message.includes("not available in local function at alice") ||
+            e.message.includes("boolean@alice in local function"),
+        ),
+      );
+    });
+
+    it("rejects for condition with boolean@every in local function", () => {
+      const { typed, errors } = checkSource(`
+function f@alice(): unit {
+  for (; true@every; ) {
+    return;
+  }
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some(
+          (e) =>
+            e.message.includes("not available in local function at alice") ||
+            e.message.includes("boolean@alice in local function"),
+        ),
+      );
+    });
+
+    it("rejects if with boolean@bob in local function at alice", () => {
+      const { typed, errors } = checkSource(`
+function f@alice(): unit {
+  if (true@bob) {
+    return;
+  }
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("boolean@alice in local function")),
+      );
+    });
+  });
+
+  it("allows explicit float let from integer initializer (spec §7.5, §7.14.1)", () => {
+    const { errors } = checkSource(`
+let x: float@alice = 1@alice;
+`);
+    assert.equal(errors.length, 0);
+  });
+
+  describe("return typing (spec §7.13)", () => {
+    it("allows integer return for float return type via subtyping", () => {
+      const { errors } = checkSource(`
+function f@alice(): float {
+  return 1;
+}
+`);
+      assert.equal(errors.length, 0);
+    });
+
+    it("rejects return at unavailable location", () => {
+      const { typed, errors } = checkSource(`
+function f@alice(): integer@bob {
+  return 1;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("return type must be located at alice"),
+        ),
       );
     });
   });

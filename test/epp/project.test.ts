@@ -7,6 +7,7 @@ import type { ChoreoBSConfig } from "../../src/config/types.js";
 import type {
   ProjectedProgram,
   ProjectedStatement,
+  IfStatement,
 } from "../../src/ir/projected.js";
 
 const config: ChoreoBSConfig = { participants: ["alice", "bob"] };
@@ -24,6 +25,39 @@ function findStmt(
   kind: ProjectedStatement["kind"],
 ): ProjectedStatement | undefined {
   return stmts.find((s) => s.kind === kind);
+}
+
+function collectStmtKinds(
+  stmts: readonly ProjectedStatement[],
+  out: ProjectedStatement["kind"][] = [],
+): ProjectedStatement["kind"][] {
+  for (const stmt of stmts) {
+    out.push(stmt.kind);
+    if (stmt.kind === "IfStatement") {
+      collectStmtKinds(stmt.then.statements, out);
+      if (stmt.else !== undefined) {
+        collectStmtKinds(stmt.else.statements, out);
+      }
+    } else if (stmt.kind === "WhileStatement" || stmt.kind === "ForStatement") {
+      collectStmtKinds(stmt.body.statements, out);
+    }
+  }
+  return out;
+}
+
+function findIf(stmts: readonly ProjectedStatement[]): IfStatement | undefined {
+  for (const stmt of stmts) {
+    if (stmt.kind === "IfStatement") {
+      return stmt;
+    }
+    if (stmt.kind === "WhileStatement" || stmt.kind === "ForStatement") {
+      const hit = findIf(stmt.body.statements);
+      if (hit !== undefined) {
+        return hit;
+      }
+    }
+  }
+  return undefined;
 }
 
 describe("Endpoint Projection (EPP)", () => {
@@ -121,5 +155,62 @@ function foo@every(a: integer@alice, b: integer@bob): integer@alice {
       all.map((p) => p.participant),
       ["alice", "bob"],
     );
+  });
+
+  it("projects bob-only let inside nested if as NothingExpression at alice (spec §15.2 EPP)", () => {
+    const source = `
+let flag: boolean@every = true@every;
+if (flag) {
+  if (flag) {
+    let z: integer@bob = 0@bob;
+  }
+}
+`;
+    const alice = epp(source, "alice");
+    const kinds = collectStmtKinds(alice.body);
+    assert.ok(kinds.includes("IfStatement"));
+    assert.ok(kinds.includes("ExpressionStatement"));
+    const outer = findIf(alice.body);
+    assert.ok(outer);
+    const inner = findIf(outer.then.statements);
+    assert.ok(inner);
+    const innerThen = inner.then.statements;
+    assert.equal(innerThen.length, 1);
+    assert.equal(innerThen[0]?.kind, "ExpressionStatement");
+    if (innerThen[0]?.kind === "ExpressionStatement") {
+      assert.equal(innerThen[0].expression.kind, "NothingExpression");
+    }
+    assert.equal(findStmt(inner.then.statements, "LetStatement"), undefined);
+  });
+
+  it("projects bob-only let at alice as absent or nothing before cleanup (spec §12.8)", () => {
+    const source = `let z: integer@bob = 0@bob;`;
+    const alice = epp(source, "alice");
+    const stmt = alice.body[0];
+    assert.ok(
+      stmt?.kind === "AbsentStatement" ||
+        (stmt?.kind === "ExpressionStatement" &&
+          stmt.expression.kind === "NothingExpression"),
+    );
+    assert.equal(findStmt(alice.body, "LetStatement"), undefined);
+  });
+
+  it("projects assignment communication as SendStatement and AssignmentStatement", () => {
+    const source = `
+let x: integer@alice = 1@alice;
+let y: integer@bob = 0@bob;
+y <~ x;
+`;
+    const alice = epp(source, "alice");
+    const bob = epp(source, "bob");
+    assert.equal(findStmt(alice.body, "SendStatement")?.kind, "SendStatement");
+    assert.equal(findStmt(bob.body, "AssignmentStatement")?.kind, "AssignmentStatement");
+    if (findStmt(bob.body, "AssignmentStatement")?.kind === "AssignmentStatement") {
+      const assign = findStmt(bob.body, "AssignmentStatement");
+      assert.equal(assign?.kind, "AssignmentStatement");
+      if (assign?.kind === "AssignmentStatement") {
+        assert.equal(assign.value.kind, "ReceiveExpression");
+      }
+    }
   });
 });

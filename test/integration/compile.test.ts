@@ -113,6 +113,19 @@ let n: string@bob <~ m;
   });
 
   describe("functions and scoping", () => {
+    it("emits alice call and empty bob after cleanup for add(10@every) (spec §10.2, §13.9)", () => {
+      const result = compile(`
+function add@alice(a: integer) {
+  return a;
+}
+add(10@every);
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /function add\(a: integer\): integer/);
+      assert.match(bs(result, "alice"), /add\(10\);/);
+      assert.equal(bs(result, "bob"), "");
+    });
+
     it("allows forward reference via function hoisting (spec §6.3)", () => {
       const result = compile(`
 let x: integer@alice = f();
@@ -271,6 +284,18 @@ x == y;
       const result = compile(`
 function f@every(): unit@every {
   while (true@alice) {
+    return;
+  }
+}
+`);
+      expectFailure(result);
+      assert.ok(result.errors.some((e) => e.message.includes("boolean@every")));
+    });
+
+    it("§16.11 rejects for with non-@every condition in @every function", () => {
+      const result = compile(`
+function f@every(): unit@every {
+  for (let i: integer@alice = 0@alice; i < 10@alice; i = i + 1@alice) {
     return;
   }
 }

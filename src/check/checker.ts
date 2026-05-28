@@ -69,7 +69,6 @@ import {
   isSubtype,
   localAvailable,
   locatedType,
-  locatedTypesCompatible,
   locationsEqual,
 } from "../types/located.js";
 import {
@@ -944,12 +943,7 @@ class TypeChecker {
       ctx,
       allowOmit,
     );
-    if (!locatedTypesCompatible(value.choreoType, returnType)) {
-      this.error(
-        `return type ${formatLocatedType(value.choreoType)} is not compatible with ${formatLocatedType(returnType)}`,
-        stmt.span,
-      );
-    }
+    this.validateReturnLike(returnType, value.choreoType, stmt.span);
     return { stmt, value };
   }
 
@@ -972,7 +966,6 @@ class TypeChecker {
       this.error("condition must have type boolean", expr.span);
       return typed;
     }
-    const useLoc = contextAsLocation(ctx);
     if (ctx.kind === "every") {
       if (typed.choreoType.location.kind !== "every") {
         this.error(
@@ -980,9 +973,13 @@ class TypeChecker {
           expr.span,
         );
       }
-    } else if (!available(typed.choreoType.location, useLoc)) {
+    } else if (!localAvailable(typed.choreoType.location, ctx.participant)) {
+      const loc =
+        typed.choreoType.location.kind === "every"
+          ? "every"
+          : typed.choreoType.location.name;
       this.error(
-        `condition boolean@${typed.choreoType.location.kind === "every" ? "every" : typed.choreoType.location.name} is not available in this context (spec §7.9)`,
+        `condition must be boolean@${ctx.participant} in local function, got boolean@${loc} (spec §7.9, §7.10)`,
         expr.span,
       );
     }
@@ -1148,7 +1145,6 @@ class TypeChecker {
       );
     }
     const symbol = this.functionSymbol(decl);
-    const calleeAllowOmit = decl.context.kind === "local";
     const params = symbol.params;
     if (expr.args.length !== params.length) {
       this.error(
@@ -1158,7 +1154,7 @@ class TypeChecker {
     }
     const args: TypedExpression[] = [];
     for (let i = 0; i < expr.args.length; i++) {
-      const arg = this.checkExpression(expr.args[i]!, ctx, calleeAllowOmit);
+      const arg = this.checkExpression(expr.args[i]!, ctx, allowOmit);
       const param = params[i];
       if (param !== undefined) {
         this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
@@ -1243,6 +1239,26 @@ class TypeChecker {
     if (!available(source.location, target.location)) {
       this.error(
         `invalid assignment across locations: use communication instead (spec §7.7, §16.7)`,
+        span,
+      );
+    }
+  }
+
+  /** Return value vs declared/inferred return type (spec §7.13; same rules as assignment). */
+  private validateReturnLike(
+    returnType: LocatedType,
+    value: LocatedType,
+    span: Span,
+  ): void {
+    if (!isSubtype(value.base, returnType.base)) {
+      this.error(
+        `return type ${formatLocatedType(value)} is not compatible with ${formatLocatedType(returnType)}`,
+        span,
+      );
+    }
+    if (!available(value.location, returnType.location)) {
+      this.error(
+        `return value ${formatLocatedType(value)} is not available at return type location ${formatLocatedType(returnType)} (spec §7.13)`,
         span,
       );
     }
