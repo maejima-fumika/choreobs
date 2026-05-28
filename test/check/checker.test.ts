@@ -52,13 +52,34 @@ let y: integer@bob = x;
     assert.ok(errors.some((e) => e.message.includes("communication")));
   });
 
-  it("rejects communication from @every (spec §16.8)", () => {
+  it("accepts scalar localization from @every (spec §7.8)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@every = 1@every;
 let y: integer@alice <~ x;
 `);
+    assert.equal(errors.length, 0);
+    const recv = typed?.items[2];
+    if (recv && "statement" in recv && "commMode" in recv.statement) {
+      assert.equal(recv.statement.commMode, "localization");
+      assert.equal(recv.statement.commTag, undefined);
+    }
+  });
+
+  it("accepts scalar localization from @every literals with subtyping", () => {
+    const { errors } = checkSource(`
+let y: float@alice <~ 1@every;
+let b: boolean@bob <~ true@every;
+`);
+    assert.equal(errors.length, 0);
+  });
+
+  it("rejects @every to @every communication (spec §16.8)", () => {
+    const { typed, errors } = checkSource(`
+let x: integer@every = 1@every;
+let y: integer@every <~ x;
+`);
     assert.equal(typed, null);
-    assert.ok(errors.some((e) => e.message.includes("@every")));
+    assert.ok(errors.some((e) => e.message.includes("@every to @every")));
   });
 
   it("rejects communication when source and destination share a location (spec §7.8)", () => {
@@ -520,6 +541,46 @@ let n: integer@alice = length(xs);
       const { typed, errors } = checkSource(`
 let xs: integer[]@alice = [1, 2]@alice;
 let ys: float[]@alice = xs;
+`);
+      assert.equal(typed, null);
+      assert.ok(errors.some((e) => e.message.includes("cannot assign")));
+    });
+
+    it("accepts array localization from @every", () => {
+      const { errors } = checkSource(`
+let xs: float[]@every = [1.1, 2.2]@every;
+let ys: float[]@alice <~ xs;
+`);
+      assert.equal(errors.length, 0);
+    });
+
+    it("rejects array element type conversion during localization", () => {
+      const { typed, errors } = checkSource(`
+let xs: integer[]@every = [1, 2]@every;
+let ys: float[]@alice <~ xs;
+`);
+      assert.equal(typed, null);
+      assert.ok(errors.some((e) => e.message.includes("communication type mismatch")));
+    });
+
+    it("rejects passing @every array directly to concrete array parameter", () => {
+      const { typed, errors } = checkSource(`
+function average@alice(arr: float[]): float {
+  return 0.0;
+}
+let arr: float[]@every = [1.1, 2.2]@every;
+average(arr);
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("cannot pass T[]@every")),
+      );
+    });
+
+    it("rejects assigning @every array to concrete array variable", () => {
+      const { typed, errors } = checkSource(`
+let arr: float[]@every = [1.1, 2.2]@every;
+let arrAlice: float[]@alice = arr;
 `);
       assert.equal(typed, null);
       assert.ok(errors.some((e) => e.message.includes("cannot assign")));

@@ -242,10 +242,10 @@ let y: integer@bob = x;
     assert.ok(result.errors.some((e) => e.message.includes("communication")));
   });
 
-  it("§16.8 invalid communication from @every", () => {
+  it("§16.8 invalid communication from @every to @every", () => {
     const result = compile(`
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@every <~ x;
 `);
     expectFailure(result);
     assert.ok(result.errors.some((e) => e.message.includes("@every")));

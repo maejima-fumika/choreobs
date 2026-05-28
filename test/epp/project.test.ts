@@ -224,6 +224,53 @@ y <~ x;
     }
   });
 
+  it("projects scalar localization without communication APIs (spec §11.4)", () => {
+    const source = `
+let x: integer@every = 1@every;
+let y: integer@alice <~ x;
+`;
+    const alice = epp(source, "alice");
+    const bob = epp(source, "bob");
+    const kindsAlice = collectStmtKinds(alice.body);
+    const kindsBob = collectStmtKinds(bob.body);
+    assert.ok(!kindsAlice.includes("SendStatement"));
+    assert.ok(!kindsAlice.includes("BroadcastStatement"));
+    assert.ok(!kindsBob.includes("SendStatement"));
+    assert.ok(!kindsBob.includes("BroadcastStatement"));
+    const yLet = alice.body.find(
+      (s) => s.kind === "LetStatement" && s.name === "y",
+    );
+    assert.ok(yLet?.kind === "LetStatement");
+    if (yLet?.kind === "LetStatement") {
+      assert.equal(yLet.initializer.kind, "IdentifierExpression");
+      assert.equal(yLet.initializer.name, "x");
+    }
+    assert.equal(
+      bob.body.find((s) => s.kind === "LetStatement" && s.name === "y"),
+      undefined,
+    );
+  });
+
+  it("projects array localization with clone at destination (spec §11.4)", () => {
+    const source = `
+let xs: float[]@every = [1.1, 2.2]@every;
+let ys: float[]@alice <~ xs;
+`;
+    const alice = epp(source, "alice");
+    const ysLet = alice.body.find(
+      (s) => s.kind === "LetStatement" && s.name === "ys",
+    );
+    assert.ok(ysLet?.kind === "LetStatement");
+    if (ysLet?.kind === "LetStatement") {
+      assert.equal(ysLet.initializer.kind, "CallExpression");
+      if (ysLet.initializer.kind === "CallExpression") {
+        assert.equal(ysLet.initializer.callee, "cloneFloatArray");
+        assert.equal(ysLet.initializer.args[0]?.kind, "IdentifierExpression");
+      }
+    }
+    assert.ok(!collectStmtKinds(alice.body).includes("SendStatement"));
+  });
+
   it("projects array communication and array operations", () => {
     const source = `
 let xs: integer[]@alice = [1, 2, 3]@alice;

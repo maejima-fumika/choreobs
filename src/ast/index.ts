@@ -69,6 +69,7 @@ export type { Program, TopLevelItem, TopLevelStatement } from "./program.js";
 export type {
   LocatedType,
   CommTag,
+  CommMode,
   TypedProgram,
   TypedTopLevelItem,
   TypedTopLevelStatement,

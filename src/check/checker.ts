@@ -63,6 +63,7 @@ import type {
   TypedIndexExpression,
   TypedParenthesizedExpression,
   LocatedType,
+  CommMode,
   FunctionSymbol,
 } from "../ast/typed.js";
 import type { ChoreoBSConfig } from "../config/types.js";
@@ -803,10 +804,10 @@ class TypeChecker {
   ): TypedLetReceiveStatement {
     const choreoType = this.resolveType(stmt.type, ctx, allowOmit);
     const source = this.checkExpression(stmt.source, ctx, allowOmit);
-    this.validateCommunication(choreoType, source.choreoType, stmt.span);
-    const commTag = this.commTags.next(this.commScope);
+    const commMode = this.validateCommunication(choreoType, source.choreoType, stmt.span);
+    const commTag = this.commTagForMode(commMode);
     this.defineLocal(stmt.name, choreoType, stmt.span);
-    return { stmt, choreoType, source, commTag };
+    return { stmt, choreoType, source, commMode, commTag };
   }
 
   private checkAssignment(
@@ -846,9 +847,9 @@ class TypeChecker {
   ): TypedCommStatement {
     const targetType = this.lookupVariable(stmt.name, stmt.span);
     const source = this.checkExpression(stmt.source, ctx, allowOmit);
-    this.validateCommunication(targetType, source.choreoType, stmt.span);
-    const commTag = this.commTags.next(this.commScope);
-    return { stmt, targetType, source, commTag };
+    const commMode = this.validateCommunication(targetType, source.choreoType, stmt.span);
+    const commTag = this.commTagForMode(commMode);
+    return { stmt, targetType, source, commMode, commTag };
   }
 
   private checkIf(
@@ -943,10 +944,10 @@ class TypeChecker {
     this.assertCommAllowed(ctx, init.span);
     const choreoType = this.resolveType(init.type, ctx, allowOmit);
     const source = this.checkExpression(init.source, ctx, allowOmit);
-    this.validateCommunication(choreoType, source.choreoType, init.span);
-    const commTag = this.commTags.next(this.commScope);
+    const commMode = this.validateCommunication(choreoType, source.choreoType, init.span);
+    const commTag = this.commTagForMode(commMode);
     this.defineLocal(init.name, choreoType, init.span);
-    return { init, choreoType, source, commTag };
+    return { init, choreoType, source, commMode, commTag };
   }
 
   private checkForAssignmentInit(
@@ -1554,25 +1555,48 @@ class TypeChecker {
     target: LocatedType,
     source: LocatedType,
     span: Span,
-  ): void {
+  ): CommMode {
     if (!isArraySubtype(source, target)) {
       this.error(
         `communication type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
       );
     }
-    if (source.location.kind === "every") {
+    const srcLoc = source.location;
+    const dstLoc = target.location;
+
+    if (srcLoc.kind === "every" && dstLoc.kind === "every") {
       this.error(
-        "cannot communicate from @every; use assignment instead (spec §11.4, §16.8)",
+        "communication from @every to @every is invalid; use assignment instead (spec §7.8, §16.8)",
         span,
       );
+      return "localization";
     }
-    if (locationsEqual(source.location, target.location)) {
+    if (locationsEqual(srcLoc, dstLoc)) {
       this.error(
-        "communication source and destination must differ (spec §7.8)",
+        "communication source and destination must differ; use assignment instead (spec §7.8)",
         span,
       );
+      return "direct";
     }
+    if (dstLoc.kind === "every" && srcLoc.kind === "concrete") {
+      return "broadcast";
+    }
+    if (dstLoc.kind === "concrete" && srcLoc.kind === "every") {
+      return "localization";
+    }
+    if (dstLoc.kind === "concrete" && srcLoc.kind === "concrete") {
+      return "direct";
+    }
+    this.error("invalid communication pattern (spec §7.8)", span);
+    return "direct";
+  }
+
+  private commTagForMode(mode: CommMode): string | undefined {
+    if (mode === "direct" || mode === "broadcast") {
+      return this.commTags.next(this.commScope);
+    }
+    return undefined;
   }
 
   private assertCommAllowed(ctx: ExecutionContext, span: Span): void {

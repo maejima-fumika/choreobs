@@ -192,10 +192,14 @@ class Projector {
   private projectLetReceive(
     stmt: TypedLetReceiveStatement,
   ): ProjectedStatement | ProjectedStatement[] {
+    if (stmt.commMode === "localization") {
+      return this.projectLocalizationLetReceive(stmt);
+    }
+
     const span = stmt.stmt.span;
     const dst = stmt.choreoType.location;
     const src = stmt.source.choreoType.location;
-    const tag = stmt.commTag;
+    const tag = stmt.commTag!;
     const name = stmt.stmt.name;
     const comm = this.commKindForType(stmt.choreoType);
 
@@ -290,10 +294,14 @@ class Projector {
   private projectComm(
     stmt: TypedCommStatement,
   ): ProjectedStatement | ProjectedStatement[] {
+    if (stmt.commMode === "localization") {
+      return this.projectLocalizationComm(stmt);
+    }
+
     const span = stmt.stmt.span;
     const dst = stmt.targetType.location;
     const src = stmt.source.choreoType.location;
-    const tag = stmt.commTag;
+    const tag = stmt.commTag!;
     const name = stmt.stmt.name;
     const comm = this.commKindForType(stmt.targetType);
 
@@ -332,6 +340,68 @@ class Projector {
     }
 
     return this.absentStatement(span);
+  }
+
+  private projectLocalizationLetReceive(
+    stmt: TypedLetReceiveStatement,
+  ): ProjectedStatement {
+    const span = stmt.stmt.span;
+    const dst = stmt.choreoType.location;
+    if (dst.kind !== "concrete" || this.participant !== dst.name) {
+      return this.absentStatement(span);
+    }
+    const projectedSource = this.projectExpression(stmt.source);
+    const initializer = this.localizationInitializer(
+      stmt.choreoType,
+      projectedSource,
+      span,
+    );
+    return {
+      kind: "LetStatement",
+      name: stmt.stmt.name,
+      type: this.projectType(stmt.choreoType),
+      initializer,
+      span,
+    };
+  }
+
+  private projectLocalizationComm(
+    stmt: TypedCommStatement,
+  ): ProjectedStatement {
+    const span = stmt.stmt.span;
+    const dst = stmt.targetType.location;
+    if (dst.kind !== "concrete" || this.participant !== dst.name) {
+      return this.absentStatement(span);
+    }
+    const projectedSource = this.projectExpression(stmt.source);
+    const value = this.localizationInitializer(
+      stmt.targetType,
+      projectedSource,
+      span,
+    );
+    return {
+      kind: "AssignmentStatement",
+      target: { kind: "IdentifierAssignmentTarget", name: stmt.stmt.name },
+      value,
+      span,
+    };
+  }
+
+  private localizationInitializer(
+    choreoType: LocatedType,
+    projectedSource: ProjectedExpression,
+    span: Span,
+  ): ProjectedExpression {
+    if (choreoType.isArray) {
+      const comm = this.commKindForType(choreoType);
+      return {
+        kind: "CallExpression",
+        callee: cloneFunction(comm),
+        args: [projectedSource],
+        span,
+      };
+    }
+    return projectedSource;
   }
 
   /** Broadcast to `@every`: sender broadcasts; all participants assign from receive or local copy (§11.3). */

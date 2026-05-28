@@ -172,7 +172,7 @@ A value of type `T@every` means:
 
 > Every participant locally has the same value of type `T`.
 
-Therefore, a value of type `T@every` can be used as a local value at any concrete location.
+For immutable scalar values, a value of type `T@every` can be used as a local value at any concrete location.
 
 Example:
 
@@ -181,6 +181,10 @@ let c: boolean@every = true@every;
 ```
 
 This means every participant locally has `c = true`.
+
+For mutable arrays, `T[]@every` means that each participant has an independent local mutable array with the same contents. It is not shared memory.
+
+A mutable array located at `@every` must not be implicitly assigned to, or passed as, a mutable array at a concrete location. To obtain a concrete-location mutable array from an `@every` array, use explicit localization with `<~`, which creates a fresh mutable copy at the destination.
 
 ### 3.4 Location Names
 
@@ -790,6 +794,7 @@ However, the same variable name must not be defined more than once in the same s
 * Function overloading is not supported in v0.
 * The same function name must not be defined more than once.
 * Functions with the same name but different locations are also disallowed.
+* `length` and `push` are compiler-known builtin function names and cannot be used as user-defined function names.
 
 Disallowed:
 
@@ -1033,6 +1038,8 @@ integer@every is available at alice and bob
 integer@alice is not available in an every context
 ```
 
+For mutable arrays, the general `available` relation only describes where an array value exists. It is not sufficient by itself to allow implicit conversion from `T[]@every` to `T[]@P`, where `P` is a concrete location. Such implicit assignment and function argument passing are prohibited; use explicit localization with `<~` to create a fresh concrete-location mutable array.
+
 #### Local Function Strict Availability
 
 Local functions use a stricter availability rule than the general `available` relation.
@@ -1075,6 +1082,10 @@ T2 <: T1
 available(L2, L1)
 ```
 
+For mutable arrays, compatibility is checked by array invariance as defined in Section 7.11.1. Therefore, `T1[]` and `T2[]` are compatible only when `T1` and `T2` are the same element type.
+
+Additionally, assignment from `T[]@every` to `T[]@P`, where `P` is a concrete location, is invalid. Use explicit localization with `<~` instead.
+
 Example:
 
 ```ts
@@ -1098,6 +1109,19 @@ let y: integer@bob = x;
 
 Communication must be used instead.
 
+Disallowed:
+
+```ts
+let xs: float[]@every = [1.1, 2.2]@every;
+let ys: float[]@alice = xs;
+```
+
+Use explicit localization instead:
+
+```ts
+let ys: float[]@alice <~ xs;
+```
+
 ### 7.8 Communication Typing
 
 Communication:
@@ -1106,22 +1130,63 @@ Communication:
 a <~ b;
 ```
 
-sends the value of `b` to the location of `a`.
+moves a value from the location of `b` to the location of `a`. Depending on the source and destination locations, `<~` has one of the following modes.
 
-It is valid if:
+#### Direct Communication
 
 ```text
-a : T1@Ldst
-b : T2@Lsrc
-
-T2 <: T1
-Lsrc != every
-Ldst != Lsrc
+a : Tdst@Q
+b : Tsrc@P
+P and Q are concrete locations
+P != Q
+Tsrc is compatible with Tdst
 ```
 
-If `Ldst = every`, the communication is treated as a broadcast.
+This is direct network communication from `P` to `Q`.
 
-For array communication, the array element type must match exactly because arrays are invariant. Communication and broadcast of arrays produce fresh mutable arrays at the destination. For broadcast to `@every`, the sender-side binding is also a fresh mutable array copy.
+#### Broadcast
+
+```text
+a : Tdst@every
+b : Tsrc@P
+P is a concrete location
+Tsrc is compatible with Tdst
+```
+
+This is broadcast from `P` to every participant.
+
+#### Localization
+
+```text
+a : Tdst@P
+b : Tsrc@every
+P is a concrete location
+Tsrc is compatible with Tdst
+```
+
+This is explicit localization from `@every` to the concrete location `P`. It does not perform network communication.
+
+For scalar values, localization is equivalent to local initialization or assignment at the destination.
+
+For mutable arrays, localization creates a fresh mutable copy at the destination.
+
+For array communication, broadcast, and localization, the array element type must match exactly because arrays are invariant. There is no array element type conversion.
+
+Disallowed:
+
+```ts
+let xs: integer[]@every = [1, 2]@every;
+let ys: float[]@alice <~ xs;
+```
+
+The following forms are invalid:
+
+```text
+@every -> @every
+P -> P where P is the same concrete location
+```
+
+Use ordinary assignment for those cases.
 
 Example:
 
@@ -1130,7 +1195,16 @@ let x: integer@alice = 1@alice;
 let y: integer@bob <~ x;
 ```
 
-This is a communication from `alice` to `bob`.
+This is direct communication from `alice` to `bob`.
+
+Example:
+
+```ts
+let x: integer@every = 1@every;
+let y: integer@alice <~ x;
+```
+
+This is localization at `alice`.
 
 ### 7.9 If Condition Typing
 
@@ -1254,6 +1328,8 @@ The inferred result type is `boolean` at the operand location.
 
 `==` and `!=` are not allowed.
 
+Array types are not base types. The equality operators `===` and `!==` are not defined for array types.
+
 #### Logical Operators
 
 ```text
@@ -1291,7 +1367,7 @@ This is allowed because each integer element is checked against the expected `fl
 
 #### Array Literal Typing
 
-For an array literal `[e1, ..., en]@L`, each element must be available at `L`. Unlocated literal elements are elaborated to `@L` before type checking.
+For an array literal `[e1, ..., en]@L`, each element must be available at `L`. Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types.
 
 The inferred element type of a non-empty array literal is computed from the element base types. `integer` and `float` elements have LUB `float`. Other mixed element types are invalid.
 
@@ -1378,6 +1454,8 @@ then:
 length(xs) : integer@L
 ```
 
+In this rule, `T` must be `integer`, `float`, or `boolean`.
+
 During BlueScript code generation, `length(xs)` is emitted as `xs.length`.
 
 #### `push` Builtin
@@ -1396,6 +1474,8 @@ then:
 ```text
 push(xs, v) : unit@L
 ```
+
+In this rule, `T` must be `integer`, `float`, or `boolean`.
 
 During BlueScript code generation, `push(xs, v)` is emitted as `xs.push(v)`.
 
@@ -1422,7 +1502,16 @@ let xs: integer[]@every = [1, 2, 3]@every;
 f(xs);
 ```
 
-To create an `@every` array from a concrete-location array, use communication/broadcast:
+To create a concrete-location mutable array from an `@every` array, use explicit localization with `<~`:
+
+```ts
+let xs: integer[]@every = [1, 2, 3]@every;
+let ys: integer[]@alice <~ xs;
+```
+
+This creates a fresh mutable copy at `alice`.
+
+To create an `@every` array from a concrete-location array, use broadcast:
 
 ```ts
 let xs: integer[]@alice = [1, 2, 3]@alice;
@@ -1486,6 +1575,15 @@ In particular, a value of type `T@every` may be passed to a parameter of type `T
 
 ```text
 available(every, P) = true
+```
+For mutable array parameters, array invariance applies. A parameter of type `T[]@L` accepts an argument of type `T[]@M` only when the element types are exactly the same and the location rule is satisfied.
+
+Additionally, a value of type `T[]@every` must not be passed to a parameter of type `T[]@P`, where `P` is a concrete location. Use explicit localization with `<~` to create a fresh `T[]@P` value first.
+
+```ts
+let arr: float[]@every = [1.1, 2.2]@every;
+let arrAlice: float[]@alice <~ arr;
+average(arrAlice);
 ```
 
 Example:
@@ -1652,6 +1750,14 @@ lub(T, T)             = T
 ```
 
 All other base type combinations are invalid.
+
+For array types, return type inference uses array invariance:
+
+```text
+lub(T[], T[]) = T[]
+```
+
+All other array type combinations are invalid. In particular, `integer[]` and `float[]` do not have a LUB for inferred return types.
 
 For locations, Core v0 return type inference is conservative:
 
@@ -2032,6 +2138,8 @@ After EPP, expressions unrelated to the current node may be transformed into `no
 
 These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in Section 13.9.
 
+The builtin `push(xs, v)` may appear only as an expression statement. It must not be used as a subexpression or initializer.
+
 ***
 
 ## 10. Function Rules
@@ -2118,6 +2226,18 @@ EPP at `bob` after cleanup:
 
 ```ts
 // removed
+```
+
+When calling a local function from an `@every` context, a mutable `T[]@every` value must not be passed directly to a `T[]@P` parameter. Use explicit localization with `<~` first.
+
+```ts
+function average@alice(arr: float[]): float {
+    return 0.0;
+}
+
+let arr: float[]@every = [1.1, 2.2]@every;
+let arrAlice: float[]@alice <~ arr;
+let avg: float@alice = average(arrAlice);
 ```
 
 ### 10.3 Calling Functions from a Local Context
@@ -2213,7 +2333,13 @@ a <~ b;
 
 means:
 
-> Send the value of `b` to the location of `a`, then store it in `a`.
+> Move the value of `b` to the location of `a`, then store it in `a`.
+
+Depending on the source and destination locations, this is one of:
+
+* direct communication from one concrete location to another concrete location;
+* broadcast from one concrete location to `@every`;
+* localization from `@every` to one concrete location.
 
 Example:
 
@@ -2252,7 +2378,7 @@ let y: integer = receiveInteger("alice", "top_0");
 
 ### 11.3 Broadcast Communication
 
-If the destination is `@every`, the communication is treated as a broadcast.
+If the destination is `@every` and the source is a concrete location, the communication is treated as a broadcast.
 
 ```ts
 let x: boolean@alice = true@alice;
@@ -2273,22 +2399,58 @@ EPP at `bob`:
 let c: boolean = receiveBoolean("alice", "top_0");
 ```
 
-### 11.4 Communication from `@every`
+For scalar broadcast, the sender-side `@every` binding may be initialized from the source value.
 
-A value located at `@every` already exists at every node. Therefore, it should not be used as the source of communication.
+For array broadcast, the sender-side `@every` binding must be a fresh mutable copy of the source array.
 
-Disallowed:
+```ts
+let xs: float[]@alice = [1.1, 2.2]@alice;
+let ys: float[]@every <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: float[] = [1.1, 2.2];
+broadcastFloatArray("top_0", xs);
+let ys: float[] = cloneFloatArray(xs);
+```
+
+### 11.4 Localization from `@every`
+
+A value located at `@every` already exists locally at every participant. Therefore, `<~` from `@every` to a concrete location does not perform network communication.
+
+Instead, it is treated as explicit localization.
+
+For scalar values, localization is equivalent to local initialization or assignment at the destination.
 
 ```ts
 let x: integer@every = 1@every;
 let y: integer@alice <~ x;
 ```
 
-Use assignment instead:
+EPP at `alice`:
 
 ```ts
-let y: integer@alice = x;
+let x: integer = 1;
+let y: integer = x;
 ```
+
+For mutable arrays, localization creates a fresh mutable copy at the destination.
+
+```ts
+let xs: float[]@every = [1.1, 2.2]@every;
+let ys: float[]@alice <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: float[] = [1.1, 2.2];
+let ys: float[] = cloneFloatArray(xs);
+```
+
+No `send`, `receive`, `broadcast`, or communication tag is generated for localization.
 
 ### 11.5 Communication Tags
 
@@ -2468,6 +2630,8 @@ EPP at `bob` after cleanup:
 
 ### 12.9 Communication Projection
 
+#### Direct Communication
+
 ```ts
 let y: integer@bob <~ x;
 ```
@@ -2486,6 +2650,63 @@ EPP at `bob`:
 let y: integer = receiveInteger("alice", "top_0");
 ```
 
+#### Broadcast
+
+For concrete-to-`@every` communication, EPP generates a broadcast at the sender and a receive at every other participant.
+
+For array broadcast, the sender-side `@every` binding is a fresh mutable copy.
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@every <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: integer[] = [1, 2];
+broadcastIntegerArray("top_0", xs);
+let ys: integer[] = cloneIntegerArray(xs);
+```
+
+EPP at `bob`:
+
+```ts
+let ys: integer[] = receiveIntegerArray("alice", "top_0");
+```
+
+#### Localization
+
+If the source is `@every` and the destination is a concrete location `P`, the communication is projected as localization. No `send`, `receive`, `broadcast`, or communication tag is generated.
+
+For scalar values, localization generates local initialization or assignment at `P`.
+
+```ts
+let x: integer@every = 1@every;
+let y: integer@alice <~ x;
+```
+
+EPP at `alice`:
+
+```ts
+let x: integer = 1;
+let y: integer = x;
+```
+
+For array values, localization generates a fresh mutable copy at `P`.
+
+```ts
+let xs: float[]@every = [1.1, 2.2]@every;
+let ys: float[]@alice <~ xs;
+```
+
+EPP at `alice`:
+
+```ts
+let xs: float[] = [1.1, 2.2];
+let ys: float[] = cloneFloatArray(xs);
+```
+
 ### 12.10 Assignment Projection
 
 ```ts
@@ -2496,6 +2717,8 @@ EPP to participant `P`:
 
 * If `x` is available at `P`, generate the assignment.
 * Otherwise, generate `nothing(...)` or `null`, which may be removed by the cleanup pass.
+
+For array element assignment `xs[i] = v;`, projection is generated only at participants where `xs` is available. If `xs` is not available at participant `P`, the entire statement is projected to an absent/nothing artifact. The compiler must not generate invalid code such as `null[null] = null`.
 
 ### 12.11 Function Projection
 
@@ -2723,6 +2946,9 @@ ChoreoBS boolean -> BlueScript boolean
 ChoreoBS string  -> BlueScript string
 ChoreoBS null    -> BlueScript null
 ChoreoBS unit    -> BlueScript void
+ChoreoBS integer[] -> BlueScript integer[]
+ChoreoBS float[]   -> BlueScript float[]
+ChoreoBS boolean[] -> BlueScript boolean[]
 ```
 
 ### 13.2 Location Annotation Removal
@@ -2853,7 +3079,12 @@ broadcastFloatArray(tag: string, value: float[]): void;
 broadcastBooleanArray(tag: string, value: boolean[]): void;
 ```
 
-Array clone helper APIs used by generated code for broadcast sender-side fresh copies:
+Array clone helper APIs used by generated code for:
+
+* sender-side fresh copies in array broadcast;
+* localization copies from `T[]@every` to `T[]@P`.
+
+APIs:
 
 ```ts
 cloneIntegerArray(value: integer[]): integer[];
@@ -3564,14 +3795,35 @@ Use communication instead:
 let y: integer@bob <~ x;
 ```
 
-### 16.8 Invalid Communication from `@every`
+### 16.8 Invalid Non-Transferring Communication
+
+`<~` must represent direct communication, broadcast, or localization. It must not be used when source and destination are both `@every`, or when source and destination are the same concrete location.
+
+Disallowed:
 
 ```ts
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@every <~ x;
 ```
 
-Use assignment instead.
+Use assignment instead:
+
+```ts
+let y: integer@every = x;
+```
+
+Disallowed:
+
+```ts
+let a: integer@alice = 1@alice;
+let b: integer@alice <~ a;
+```
+
+Use assignment instead:
+
+```ts
+let b: integer@alice = a;
+```
 
 ### 16.9 Invalid If Condition
 
@@ -4085,7 +4337,7 @@ Future versions may add:
 * location inference;
 * optional dynamic checks;
 * richer communication protocols;
-* local object and array support;
+* additional array operations and local object support;
 * state-machine based EPP;
 * non-blocking runtime support;
 * selection-based conditionals;

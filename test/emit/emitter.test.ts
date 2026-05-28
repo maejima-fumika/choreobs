@@ -146,6 +146,57 @@ let y: integer@bob <~ x;
     }
   });
 
+  it("emits scalar localization as local assignment (spec §11.4)", () => {
+    const alice = pipeline(
+      `
+let x: integer@every = 1@every;
+let y: integer@alice <~ x;
+`,
+      "alice",
+    );
+    assert.match(alice, /let x: integer = 1;/);
+    assert.match(alice, /let y: integer = x;/);
+    assert.doesNotMatch(alice, /sendInteger/);
+    assert.doesNotMatch(alice, /receiveInteger/);
+    assert.doesNotMatch(alice, /broadcastInteger/);
+  });
+
+  it("emits array localization with clone helper (spec §11.4)", () => {
+    const alice = pipeline(
+      `
+let xs: float[]@every = [1.1, 2.2]@every;
+let ys: float[]@alice <~ xs;
+`,
+      "alice",
+    );
+    assert.match(alice, /let xs: float\[] = \[1\.1, 2\.2\];/);
+    assert.match(alice, /let ys: float\[] = cloneFloatArray\(xs\);/);
+    assert.doesNotMatch(alice, /sendFloatArray/);
+    assert.doesNotMatch(alice, /receiveFloatArray/);
+    assert.doesNotMatch(alice, /broadcastFloatArray/);
+  });
+
+  it("emits average use case with localized array argument", () => {
+    const alice = pipeline(
+      `
+function average@alice(arr: float[]): float {
+  let sum = 0.0;
+  for (let i = 0; i < length(arr); i = i + 1) {
+    sum = sum + arr[i];
+  }
+  return sum / length(arr);
+}
+let arr: float[]@every = [1.1, 2.2, 4.5]@every;
+let arrAlice: float[]@alice <~ arr;
+let avg: float@alice = average(arrAlice);
+`,
+      "alice",
+    );
+    assert.match(alice, /cloneFloatArray\(arr\)/);
+    assert.match(alice, /average\(arrAlice\)/);
+    assert.doesNotMatch(alice, /sendFloatArray/);
+  });
+
   it("emits array builtins and array communication APIs", () => {
     const alice = pipeline(
       `

@@ -47,6 +47,9 @@ export interface LocatedType {
 /** Communication tag assigned before EPP (spec §11.5). */
 export type CommTag = string;
 
+/** How `<~` transfers a value (spec §7.8). */
+export type CommMode = "direct" | "broadcast" | "localization";
+
 // ---------------------------------------------------------------------------
 // Typed AST — mirrors syntactic nodes with `choreoType` and comm metadata.
 // Built by the type checker; not produced by the parser.
@@ -100,7 +103,8 @@ export interface TypedLetReceiveStatement {
   readonly stmt: LetReceiveStatement;
   readonly choreoType: LocatedType;
   readonly source: TypedExpression;
-  readonly commTag: CommTag;
+  readonly commMode: CommMode;
+  readonly commTag?: CommTag;
 }
 
 export interface TypedAssignmentStatement {
@@ -129,7 +133,8 @@ export interface TypedCommStatement {
   readonly stmt: CommStatement;
   readonly targetType: LocatedType;
   readonly source: TypedExpression;
-  readonly commTag: CommTag;
+  readonly commMode: CommMode;
+  readonly commTag?: CommTag;
 }
 
 export interface TypedIfStatement {
@@ -168,7 +173,8 @@ export interface TypedForLetReceiveInit {
   readonly init: ForLetReceiveInit;
   readonly choreoType: LocatedType;
   readonly source: TypedExpression;
-  readonly commTag: CommTag;
+  readonly commMode: CommMode;
+  readonly commTag?: CommTag;
 }
 
 export interface TypedForAssignmentInit {
