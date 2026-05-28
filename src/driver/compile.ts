@@ -5,6 +5,10 @@ import { typeCheck, type TypeCheckError } from "../check/index.js";
 import { projectAll } from "../epp/index.js";
 import { cleanupAll } from "../cleanup/index.js";
 import { emit } from "../emit/index.js";
+import {
+  commConsistencyDiagnostics,
+  verifyCommunicationConsistency,
+} from "../comm/index.js";
 import { loadConfig, defaultConfigPath } from "../config/index.js";
 import type { ChoreoBSConfig } from "../config/types.js";
 import type { LexicalError } from "../lexer/index.js";
@@ -80,6 +84,18 @@ export function compileSource(
       source: emitted,
     };
   });
+
+  const commCheck = verifyCommunicationConsistency(
+    cleaned,
+    outputs.map((o) => ({ participant: o.participant, source: o.source })),
+  );
+  if (!commCheck.ok) {
+    return {
+      success: false,
+      outputs: [],
+      errors: [...errors, ...commConsistencyDiagnostics(commCheck.errors)],
+    };
+  }
 
   return { success: true, outputs, errors };
 }

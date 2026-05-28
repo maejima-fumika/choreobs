@@ -32,7 +32,8 @@ function expectSuccess(result: CompileResult): void {
 describe("EPP and cleanup — full pipeline (spec §13.9, §15)", () => {
   describe("§15.7 cleanup via compileSource", () => {
     it("removes bob body for alice-only top-level let", () => {
-      const result = compile(`let x: integer@alice = 1@alice;`);
+      const source = `let x: integer@alice = 1@alice;`;
+      const result = compile(source);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /let x: integer = 1/);
       assert.equal(bs(result, "bob"), "");
@@ -40,10 +41,11 @@ describe("EPP and cleanup — full pipeline (spec §13.9, §15)", () => {
     });
 
     it("removes nested nothing statement at uninvolved participant", () => {
-      const result = compile(`
+      const source = `
 let a: integer@alice = 1@alice;
 let b: integer@bob = 2@bob;
-`);
+`;
+      const result = compile(source);
       expectSuccess(result);
       assert.equal(bs(result, "bob"), `let b: integer = 2;`);
       assert.doesNotMatch(bs(result, "bob"), /nothing/);
@@ -83,7 +85,7 @@ let x: integer@alice = choose(c);
 
   describe("§15.2 broadcast — if branch cleanup at alice", () => {
     it("removes nothing from empty if branches on alice after cleanup", () => {
-      const result = compile(`
+      const source = `
 let localOk: boolean@alice = true@alice;
 let ok: boolean@every <~ localOk;
 
@@ -92,7 +94,8 @@ if (ok) {
 } else {
   let msg: string@bob = "ng"@bob;
 }
-`);
+`;
+      const result = compile(source);
       expectSuccess(result);
       const alice = bs(result, "alice");
       assert.match(alice, /broadcastBoolean\("top_0", localOk\)/);
@@ -101,7 +104,7 @@ if (ok) {
     });
 
     it("keeps bob-side bindings inside if branches", () => {
-      const result = compile(`
+      const source = `
 let localOk: boolean@alice = true@alice;
 let ok: boolean@every <~ localOk;
 
@@ -110,7 +113,8 @@ if (ok) {
 } else {
   let msg: string@bob = "ng"@bob;
 }
-`);
+`;
+      const result = compile(source);
       expectSuccess(result);
       const bob = bs(result, "bob");
       assert.match(bob, /receiveBoolean\("alice", "top_0"\)/);
@@ -121,13 +125,11 @@ if (ok) {
 
   describe("multi-participant broadcast (spec §11.3)", () => {
     it("emits broadcast on sender and receive on all other participants", () => {
-      const result = compile(
-        `
+      const source = `
 let x: boolean@alice = true@alice;
 let ok: boolean@every <~ x;
-`,
-        aliceBobCarol,
-      );
+`;
+      const result = compile(source, aliceBobCarol);
       expectSuccess(result);
       assert.equal(result.outputs.length, 3);
 
@@ -149,7 +151,7 @@ let ok: boolean@every <~ x;
 
   describe("for-loop communication EPP (spec §15.6)", () => {
     it("reuses top_0 tag on each loop iteration at both endpoints", () => {
-      const result = compile(`
+      const source = `
 for (
   let i: integer@every = 0@every;
   i < 2@every;
@@ -158,7 +160,8 @@ for (
   let x: integer@alice = i;
   let y: integer@bob <~ x;
 }
-`);
+`;
+      const result = compile(source);
       expectSuccess(result);
       const alice = bs(result, "alice");
       const bob = bs(result, "bob");

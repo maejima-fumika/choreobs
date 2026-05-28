@@ -1,0 +1,112 @@
+import type { CommKind } from "../ir/projected.js";
+import type { CommConsistencyResult } from "./consistency.js";
+import { checkCommunicationConsistency } from "./consistency.js";
+import type { ProjectedProgram, ProjectedStatement } from "../ir/projected.js";
+
+export interface EmittedParticipantOutput {
+  readonly participant: string;
+  readonly source: string;
+}
+
+const COMM_TYPES = ["Integer", "Float", "Boolean", "String"] as const;
+type CommSuffix = (typeof COMM_TYPES)[number];
+
+const SEND_RE = new RegExp(
+  `send(${COMM_TYPES.join("|")})\\("([^"]+)", "([^"]+)",`,
+  "g",
+);
+const RECEIVE_RE = new RegExp(
+  `receive(${COMM_TYPES.join("|")})\\("([^"]+)", "([^"]+)"\\)`,
+  "g",
+);
+const BROADCAST_RE = new RegExp(
+  `broadcast(${COMM_TYPES.join("|")})\\("([^"]+)",`,
+  "g",
+);
+
+/**
+ * Checks generated BlueScript for send/receive/broadcast pairing by
+ * reconstructing a projected view from emitted API calls.
+ */
+export function checkEmittedCommunicationConsistency(
+  outputs: readonly EmittedParticipantOutput[],
+): CommConsistencyResult {
+  const programs = outputs.map(emittedToProjectedProgram);
+  return checkCommunicationConsistency(programs);
+}
+
+function emittedToProjectedProgram(
+  output: EmittedParticipantOutput,
+): ProjectedProgram {
+  const span = { start: 0, end: 1 };
+  const body: ProjectedStatement[] = [];
+  const source = output.source;
+
+  for (const match of source.matchAll(SEND_RE)) {
+    const comm = suffixToComm(match[1] as CommSuffix);
+    body.push({
+      kind: "SendStatement",
+      comm,
+      destinationParticipant: match[2]!,
+      tag: match[3]!,
+      value: { kind: "IdentifierExpression", name: "_", span },
+      span,
+    });
+  }
+
+  for (const match of source.matchAll(BROADCAST_RE)) {
+    const comm = suffixToComm(match[1] as CommSuffix);
+    body.push({
+      kind: "BroadcastStatement",
+      comm,
+      tag: match[2]!,
+      value: { kind: "IdentifierExpression", name: "_", span },
+      span,
+    });
+    body.push({
+      kind: "LetStatement",
+      name: "_broadcast_local",
+      type: { kind: "PresentType", base: comm },
+      initializer: { kind: "IdentifierExpression", name: "_", span },
+      span,
+    });
+  }
+
+  for (const match of source.matchAll(RECEIVE_RE)) {
+    const comm = suffixToComm(match[1] as CommSuffix);
+    body.push({
+      kind: "LetStatement",
+      name: `_recv_${match[3]}`,
+      type: { kind: "PresentType", base: comm },
+      initializer: {
+        kind: "ReceiveExpression",
+        comm,
+        sourceParticipant: match[2]!,
+        tag: match[3]!,
+        span,
+      },
+      span,
+    });
+  }
+
+  return {
+    kind: "ProjectedProgram",
+    participant: output.participant,
+    functions: [],
+    body,
+    span,
+  };
+}
+
+function suffixToComm(suffix: CommSuffix): CommKind {
+  switch (suffix) {
+    case "Integer":
+      return "integer";
+    case "Float":
+      return "float";
+    case "Boolean":
+      return "boolean";
+    case "String":
+      return "string";
+  }
+}

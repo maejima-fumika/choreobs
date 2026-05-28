@@ -4,6 +4,7 @@ import { parse } from "../../src/parser/index.js";
 import { typeCheck } from "../../src/check/index.js";
 import { project, projectAll } from "../../src/epp/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
+import { assertCommConsistent } from "../comm/assert-consistent.js";
 import type {
   ProjectedProgram,
   ProjectedStatement,
@@ -12,12 +13,23 @@ import type {
 
 const config: ChoreoBSConfig = { participants: ["alice", "bob"] };
 
-function epp(source: string, participant: string): ProjectedProgram {
+function eppAll(
+  source: string,
+  participants: ChoreoBSConfig = config,
+): ProjectedProgram[] {
   const { program, errors: pe } = parse(source);
   assert.equal(pe.length, 0);
-  const { typed, errors: te } = typeCheck(program!, config);
+  const { typed, errors: te } = typeCheck(program!, participants);
   assert.equal(te.length, 0);
-  return project(typed!, participant);
+  const all = projectAll(typed!, participants.participants);
+  assertCommConsistent(all);
+  return all;
+}
+
+function epp(source: string, participant: string): ProjectedProgram {
+  const hit = eppAll(source).find((p) => p.participant === participant);
+  assert.ok(hit, `missing projection for ${participant}`);
+  return hit;
 }
 
 function findStmt(
@@ -147,9 +159,7 @@ function foo@every(a: integer@alice, b: integer@bob): integer@alice {
 
   it("projects all participants via projectAll", () => {
     const source = `let x: integer@alice = 1@alice;`;
-    const { program } = parse(source);
-    const { typed } = typeCheck(program!, config);
-    const all = projectAll(typed!, config.participants);
+    const all = eppAll(source);
     assert.equal(all.length, 2);
     assert.deepEqual(
       all.map((p) => p.participant),
