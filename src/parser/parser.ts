@@ -138,8 +138,11 @@ class Parser {
   private functionDeclaration(): FunctionDeclaration {
     const start = this.consume(TokenKind.Function, "expected 'function'");
     const nameTok = this.consumeIdentifierToken("expected function name");
-    this.consume(TokenKind.At, "expected '@' after function name");
-    const at = this.parseLocation();
+    // Omitted `@Location` defaults to `@every` (spec §18.16.1, gradual function location).
+    let at: Location = { kind: "every" };
+    if (this.match(TokenKind.At)) {
+      at = this.parseLocation();
+    }
     this.consume(TokenKind.LParen, "expected '(' after function location");
     const params = this.check(TokenKind.RParen) ? [] : this.parameterList();
     this.consume(TokenKind.RParen, "expected ')' after parameters");

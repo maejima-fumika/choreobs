@@ -430,12 +430,32 @@ boolean[][]
 
 ```ebnf
 FunctionDeclaration ::=
-  "function" Identifier "@" Location "(" ParameterList? ")" FunctionReturnType? Block
+  "function" Identifier FunctionLocationAnnotation? "(" ParameterList? ")" FunctionReturnType? Block
+
+FunctionLocationAnnotation ::= "@" Location
 ```
 
 ```ebnf
 FunctionReturnType ::= ":" Type
 ```
+
+The function location annotation may be omitted. When omitted, the function location is elaborated to `@every`. Therefore:
+
+```ts
+function f(...) {
+    ...
+}
+```
+
+is equivalent to:
+
+```ts
+function f@every(...) {
+    ...
+}
+```
+
+The omitted function location is not inferred from the function body, parameters, return type, or call sites. To define a local function, a concrete function location such as `@alice` must be written explicitly.
 
 The return type annotation may be omitted. When omitted, the return type is inferred according to Section 7.14.
 
@@ -463,6 +483,20 @@ function addInferred@alice(a: integer, b: integer) {
 
 ```ts
 function main@every(x: integer@alice): unit@every {
+    return;
+}
+```
+
+```ts
+function mainOmittedEvery(x: integer@alice): unit@every {
+    return;
+}
+```
+
+The last example is elaborated as:
+
+```ts
+function mainOmittedEvery@every(x: integer@alice): unit@every {
     return;
 }
 ```
@@ -1983,6 +2017,46 @@ function f@every(): unit@every {
 }
 ```
 
+### 8.2.1 Function Location Omission
+
+A function declaration may omit its function location annotation. When the function location is omitted, it is elaborated to `@every` before function kind checking, parameter location elaboration, return type inference, and Endpoint Projection.
+
+Example:
+
+```ts
+function f(): unit@every {
+    return;
+}
+```
+
+is elaborated as:
+
+```ts
+function f@every(): unit@every {
+    return;
+}
+```
+
+The omitted function location is not inferred from the function body, parameters, return type, or call sites. In particular, an omitted function location never defaults to a concrete participant.
+
+Example:
+
+```ts
+function add(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+is a choreographic `@every` function, not a local function. To define a local function at `alice`, write:
+
+```ts
+function add@alice(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+A function whose location was omitted follows all `@every` function rules. In Core v0 sections, this means it follows the rules for `@every` functions. In the Gradual extension, it follows the Gradual `@every` function rules, including omitted parameter locations defaulting to `@dynamic` and base-only return annotations defaulting to `@dynamic`.
+
 ### 8.3 Top-Level Context
 
 Top-level non-function statements are treated as an `@every` context.
@@ -2164,10 +2238,19 @@ function f@every(...) {
 }
 ```
 
+or, with omitted function location:
+
+```ts
+function f(...): T@L {
+    ...
+}
+```
+
 - Describes choreography.
 - May contain communication.
 - Is projected to every participant.
-- Does not allow location omission.
+- A function declaration with no function location annotation is elaborated to `@every` and is therefore a choreographic function.
+- In Core v0 sections, `@every` function bodies do not allow ordinary type or literal location omission. In the Gradual extension, `@every` function omitted type locations follow the Gradual rules.
 - Allows return type inference.
 - Recursion is not supported in v0.
 
@@ -2193,6 +2276,8 @@ function f@alice(...) {
 - Allows location omission.
 - Allows return type inference.
 - Recursion is allowed only when the recursive function has an explicit return type.
+
+A local function must always explicitly write a concrete function location. Omitting the function location never creates a local function.
 
 ### 10.2 Calling Local Functions from an `@every` Context
 
@@ -2775,6 +2860,28 @@ function foo(a: null, b: integer): null {
     return null;
 }
 ```
+
+#### Function with Omitted Location
+
+A function whose location annotation is omitted is projected exactly like the corresponding `@every` function after elaboration.
+
+Example:
+
+```ts
+function foo(a: integer@alice): integer@alice {
+    return a;
+}
+```
+
+is elaborated as:
+
+```ts
+function foo@every(a: integer@alice): integer@alice {
+    return a;
+}
+```
+
+and is emitted for every participant using the `@every` function projection rules.
 
 ### 12.12 If Projection
 
@@ -3902,6 +4009,18 @@ function f@bob(): unit {
 }
 ```
 
+The following is also a duplicate definition, because the first declaration is elaborated to `function f@every()`:
+
+```ts
+function f(): unit@every {
+    return;
+}
+
+function f@every(): unit@every {
+    return;
+}
+```
+
 ### 16.16 Break and Continue
 
 ```ts
@@ -4456,6 +4575,26 @@ function f@every(x: integer@dynamic): integer@dynamic {
   return x + 1;
 }
 ```
+
+A function declaration may also omit the function location annotation. The omitted function location defaults to `@every` before applying the `@every` function location omission rules.
+
+Example:
+
+```ts
+function g(x: integer): integer {
+    return x + 1;
+}
+```
+
+is elaborated as:
+
+```ts
+function g@every(x: integer@dynamic): integer@dynamic {
+    return x + 1;
+}
+```
+
+The function location itself is not inferred from the body or call sites. To define a local function, a concrete function location such as `@alice` must be written explicitly.
 
 In local functions, omitted type locations follow Core v0 and default to the function's own concrete location.
 
@@ -5826,7 +5965,47 @@ Dynamic checks inside arguments to local function calls from @every context:
 ```
 
 
-##### 18.16.1 @every Functions
+##### 18.16.1 Omitted Function Location
+
+In Gradual ChoreoBS, a function declaration may omit the function location annotation. An omitted function location is elaborated to `@every`.
+
+Example:
+
+```ts
+function add(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+is first elaborated to:
+
+```ts
+function add@every(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+Then the ordinary `@every` function rules are applied. Therefore, omitted parameter locations default to `@dynamic`, and a base-only return annotation in an `@every` function defaults to `@dynamic`.
+
+The fully elaborated function is:
+
+```ts
+function add@every(a: integer@dynamic, b: integer@dynamic): integer@dynamic {
+    return a + b;
+}
+```
+
+After EPP at every participant:
+
+```ts
+function add(a: DynValue, b: DynValue) {
+    return dynAdd(a, b);
+}
+```
+
+An omitted function location does not create a local function. To define a local function, the function declaration must explicitly include a concrete location such as `@alice`.
+
+##### 18.16.2 @every Functions
 
 In an `@every` function, omitted parameter locations default to `@dynamic`.
 
@@ -5854,7 +6033,7 @@ function add(a: DynValue, b: DynValue) {
 }
 ```
 
-##### 18.16.2 @every Function Return Types
+##### 18.16.3 @every Function Return Types
 
 If an `@every` function return type annotation is completely omitted, the return type is inferred from return expressions using Core v0 return type inference.
 
@@ -5946,7 +6125,7 @@ function bad@every(c: boolean@every) {
 }
 ```
 
-##### 18.16.3 Local Functions
+##### 18.16.4 Local Functions
 
 Local functions follow Core v0 location omission rules. Omitted parameter and return locations are elaborated to the function's concrete location.
 
@@ -5964,7 +6143,7 @@ function bad2@alice(): integer@dynamic {
 }
 ```
 
-##### 18.16.4 Calling Local Functions from @every Contexts
+##### 18.16.5 Calling Local Functions from @every Contexts
 
 When a local function is called from an `@every` context, the local function is emitted only at its owner endpoint. At non-owner endpoints, the callee itself is not called, but argument expressions containing dynamic checks must still be evaluated.
 
@@ -6000,7 +6179,7 @@ The `nothing(...)` call must not be removed, because its arguments contain dynam
 
 If the arguments are static-only absent expressions, the non-owner endpoint may generate `nothing(null, ..., null)`, which may be cleaned up.
 
-##### 18.16.5 Local Function Return Used as Dynamic
+##### 18.16.6 Local Function Return Used as Dynamic
 
 A static local function result may be packed into a dynamic value.
 
@@ -6287,6 +6466,30 @@ function ok@every(c: boolean@every): integer@dynamic {
 }
 ```
 
+The same incompatible omitted return location rule applies when the function location is omitted, because the function is elaborated to `@every`:
+
+```ts
+function bad(c: boolean@every) {
+    if (c) {
+        return 1@alice;
+    } else {
+        return 2@bob;
+    }
+}
+```
+
+Use an explicit dynamic return type instead:
+
+```ts
+function ok(c: boolean@every): integer@dynamic {
+    if (c) {
+        return 1@alice;
+    } else {
+        return 2@bob;
+    }
+}
+```
+
 ##### 18.21.6 Not Compile-time Errors Merely Due to Dynamic Locations
 
 The following cases are not compile-time errors merely because runtime locations might be incompatible. They must be accepted if base types are valid and then lowered to runtime helpers:
@@ -6424,7 +6627,77 @@ InvalidDynamicArrayAccess
 
 #### 18.23 Dynamic Examples
 
-##### 18.23.1 Dynamic Default Location
+##### 18.23.1 Omitted Function Location Defaults to @every
+
+Input:
+
+```ts
+function add(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+This is elaborated as:
+
+```ts
+function add@every(a: integer@dynamic, b: integer@dynamic): integer@dynamic {
+    return a + b;
+}
+```
+
+After EPP at every participant:
+
+```ts
+function add(a: DynValue, b: DynValue) {
+    return dynAdd(a, b);
+}
+```
+
+##### 18.23.2 Omitted Function Location with Inferred Static Return
+
+Input:
+
+```ts
+function f() {
+    return 1@alice;
+}
+```
+
+The function location is elaborated to `@every`. Because the return type annotation is completely omitted, return type inference follows the `@every` function return inference rule. The inferred return type is `integer@alice`.
+
+After EPP at alice:
+
+```ts
+function f() {
+    return 1;
+}
+```
+
+After EPP at bob:
+
+```ts
+function f() {
+    return null;
+}
+```
+
+##### 18.23.3 Omitted Function Location with Explicit Dynamic Return
+
+Input:
+
+```ts
+function choose(c: boolean@every): integer {
+    if (c) {
+        return 1@alice;
+    } else {
+        return 2@bob;
+    }
+}
+```
+
+The function location is elaborated to `@every`. The base-only return annotation `integer` is elaborated to `integer@dynamic`, so both branch results are packed into `DynValue`.
+
+##### 18.23.4 Dynamic Default Location
 
 Input:
 
@@ -6440,7 +6713,7 @@ let x = new DynValue(1, EVERY);
 let y = dynAdd(x, new DynValue(2, EVERY));
 ```
 
-##### 18.23.2 Static Location Packed into Dynamic
+##### 18.23.5 Static Location Packed into Dynamic
 
 Input:
 
@@ -6463,7 +6736,7 @@ let x = packDynamic(null, "alice");
 let y = dynAdd(x, new DynValue(10, EVERY));
 ```
 
-##### 18.23.3 Dynamic Broadcast via Omitted Communication Destination
+##### 18.23.6 Dynamic Broadcast via Omitted Communication Destination
 
 Input:
 
@@ -6486,7 +6759,7 @@ let x = packDynamic(null, "alice");
 let y = dynMove(x, "top_0", EVERY);
 ```
 
-##### 18.23.4 Completely Omitted Communication Let Type
+##### 18.23.7 Completely Omitted Communication Let Type
 
 Input:
 
@@ -6514,7 +6787,7 @@ let a = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
 
 The source base type `integer` is inferred from `14@alice`. The destination location is not inferred from `alice`; it is `@dynamic` with runtime destination location `EVERY`.
 
-##### 18.23.5 Completely Omitted Communication Let Type for Arrays
+##### 18.23.8 Completely Omitted Communication Let Type for Arrays
 
 Input:
 
@@ -6544,7 +6817,7 @@ let ys = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
 
 Every endpoint obtains a fresh mutable array payload for `ys`, because this is an array broadcast to `every`.
 
-##### 18.23.6 Dynamic Assignment Shares Array Payload Reference
+##### 18.23.9 Dynamic Assignment Shares Array Payload Reference
 
 Input:
 
@@ -6566,7 +6839,7 @@ dynArrayLength(ys);
 
 `ys` observes the mutation because assignment copies the wrapper but shares the payload array reference within the endpoint.
 
-##### 18.23.7 Dynamic Communication Creates Fresh Array Copy
+##### 18.23.10 Dynamic Communication Creates Fresh Array Copy
 
 Input:
 

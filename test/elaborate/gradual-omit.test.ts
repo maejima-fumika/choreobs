@@ -14,6 +14,19 @@ function check(source: string) {
 }
 
 describe("gradual location omission (spec §18.4, §18.16, §18.21)", () => {
+  it("defaults omitted function location to @every (§18.16.1)", () => {
+    const { typed, errors } = check(
+      `function add(a: integer, b: integer): integer { return a + b; }`,
+    );
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
+    const fn = typed.items[0];
+    assert.ok(fn && "decl" in fn);
+    assert.equal(fn.decl.at.kind, "every");
+    assert.equal(fn.decl.context.kind, "every");
+    assert.equal(fn.params[0]?.type.location.kind, "dynamic");
+  });
+
   it("defaults omitted @every function parameters to @dynamic (§18.16.1)", () => {
     const { typed, errors } = check(
       `function id@every(a: integer): integer@dynamic { return a; }`,

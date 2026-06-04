@@ -42,6 +42,22 @@ let y: integer@bob <~ x;`;
     }
   });
 
+  it("parses a function with omitted location as @every (§18.16.1)", () => {
+    const source = `function main(): unit@every {
+  return;
+}`;
+    const { program, errors } = parse(source);
+    assert.equal(errors.length, 0);
+    const fn = program?.items[0];
+    if (fn?.kind === "FunctionDeclaration") {
+      assert.equal(fn.name, "main");
+      assert.equal(fn.at.kind, "every");
+      assert.equal(fn.context.kind, "every");
+    } else {
+      assert.fail("expected FunctionDeclaration");
+    }
+  });
+
   it("parses an @every function", () => {
     const source = `function main@every(): unit@every {
   return;

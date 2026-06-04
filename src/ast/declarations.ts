@@ -7,11 +7,12 @@ import type { Block } from "./statements.js";
 /**
  * Function declaration (spec §5.3).
  * `returnType` is present for `function f@L(...): T { ... }`, omitted when inferred (§7.14.4).
+ * Omitted `function f(...)` is elaborated as `function f@every(...)` (Gradual ChoreoBS).
  */
 export interface FunctionDeclaration extends AstNode {
   readonly kind: "FunctionDeclaration";
   readonly name: string;
-  /** Location after `@` on the function name. */
+  /** Function location; defaults to `every` when `@Location` is omitted in the source. */
   readonly at: Location;
   /**
    * Execution context of the function body (derived from {@link at}).
