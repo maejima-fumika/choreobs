@@ -212,4 +212,21 @@ push(xs, 20@alice);
     assert.equal(errors.length, 0);
     assert.ok(program);
   });
+
+  it("parses array index as expression statement (spec §5.13)", () => {
+    const { program, errors } = parse(`
+let arr = [1, 3, 5]@every;
+arr[2@every];
+`);
+    assert.equal(errors.length, 0);
+    const second = program?.items[1];
+    if (second?.kind === "TopLevelStatement") {
+      assert.equal(second.statement.kind, "ExpressionStatement");
+      if (second.statement.kind === "ExpressionStatement") {
+        assert.equal(second.statement.expression.kind, "IndexExpression");
+      }
+    } else {
+      assert.fail("expected ExpressionStatement at top level");
+    }
+  });
 });
