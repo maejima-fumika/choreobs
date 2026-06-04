@@ -4554,9 +4554,26 @@ After EPP at bob:
 let y = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
 ```
 
-#### 18.7 Base Type Checking
+#### 18.7 Base Type Checking and Dynamic Location Checking
 
 Gradual ChoreoBS only gradualizes locations. Base type checking remains static and follows Core v0.
+
+The compiler must use the following decision rule throughout Section 18:
+
+```text
+If a program has a base type error:
+  reject it at compile time.
+
+Else if a program only has a potential location mismatch involving @dynamic:
+  accept it at compile time;
+  insert the specified runtime helper;
+  let the helper raise a dynamic runtime error if the runtime location is incompatible.
+
+Else if a program violates a non-gradual static rule:
+  reject it at compile time.
+```
+
+Examples:
 
 ```ts
 let x: integer = 1;
@@ -4564,9 +4581,17 @@ let y: string@alice = "foo"@alice;
 x + y; // compile-time error
 ```
 
-Runtime dynamic operators do not check base types. The compiler must only generate them after Core v0 base type checking succeeds.
+This is a compile-time error because `integer + string` is invalid. Runtime dynamic operators do not check base types. The compiler must only generate dynamic runtime helpers after Core v0 base type checking succeeds.
 
-#### 18.8 Dynamic Runtime Representation
+By contrast:
+
+```ts
+let d: integer@dynamic = 1@bob;
+let x: integer@alice = d;
+```
+
+This is not a compile-time error. The base type is compatible, so the compiler inserts `requireIntegerAt(d, "alice")`. If `d.location` is not `alice` or `every`, the generated code raises `DynamicLocationMismatch` at runtime.
+### 18.8 Dynamic Runtime Representation
 
 A dynamic value is represented after EPP by `DynValue`.
 
@@ -4658,9 +4683,44 @@ let x = packDynamic(null, "alice");
 
 #### 18.10 Requiring Dynamic Values at Static Locations
 
-Dynamic values are converted back to static values by require helpers. These helpers perform runtime location checks.
+This section specifies what the compiler must do when a value of type `T@dynamic` is used in a context that expects a statically located value such as `T@alice` or `T@every`.
+
+The key rule is:
+
+```text
+A dynamic-to-static location conversion is not a compile-time location error.
+If the base type is compatible, the compiler accepts the program and inserts a require helper.
+If the runtime location tag is incompatible, the generated helper raises DynamicLocationMismatch at runtime.
+```
+
+This rule applies to ordinary let declarations, assignments, function arguments, returns, and any other context where an expression is checked against an expected statically located type.
+
+Base type checking is still static. If the base type is incompatible, the compiler must reject the program before EPP.
+
+Examples:
+
+```ts
+let d: integer@dynamic = 1@alice;
+let x: integer@alice = d; // allowed; inserts requireIntegerAt(d, "alice")
+```
+
+```ts
+let d: string@dynamic = "hello";
+let x: integer@alice = d; // compile-time error: string is not compatible with integer
+```
 
 ##### 18.10.1 Scalar Require
+
+When a scalar expression of type `T@dynamic` is checked against an expected scalar type `T@L`, the compiler inserts the corresponding `requireTAt` helper.
+
+```text
+integer@dynamic checked against integer@L  => requireIntegerAt(e, L)
+float@dynamic   checked against float@L    => requireFloatAt(e, L)
+boolean@dynamic checked against boolean@L  => requireBooleanAt(e, L)
+string@dynamic  checked against string@L   => requireStringAt(e, L)
+```
+
+This is accepted at compile time if the base type is compatible. Location incompatibility is handled at runtime by the require helper.
 
 ```ts
 function requireIntegerAt(dynamic: DynValue, location: RuntimeLocation): integer {
@@ -4693,18 +4753,211 @@ requireBooleanAt(dynamic: DynValue, location: RuntimeLocation): boolean;
 requireStringAt(dynamic: DynValue, location: RuntimeLocation): string;
 ```
 
-Meaning:
+Scalar require runtime behavior:
 
 ```text
 requireTAt(d, every):
   succeeds only if d.location == every.
+  otherwise raises DynamicLocationMismatch.
 
 requireTAt(d, P), where P is concrete:
   succeeds if d.location == every or d.location == P.
+  if d.location == P and HERE == P, it returns d.value.
   if d.location == P and HERE != P, it returns a dummy value that must not be observed.
+  otherwise raises DynamicLocationMismatch.
 ```
 
-##### 18.10.2 Array Require
+The dummy value exists only to keep generated BlueScript syntactically valid on non-owner endpoints. It must not be observed by user code.
+
+##### 18.10.2 Scalar Require in Let Declarations
+
+For an ordinary let declaration with an explicit statically located scalar type:
+
+```ts
+let x: T@L = e;
+```
+
+if `e : T@dynamic`, then the declaration is accepted at compile time and lowered using `requireTAt(e, L)`.
+
+Example:
+
+```ts
+let d: integer@dynamic = 1@alice;
+let x: integer@alice = d;
+```
+
+After EPP at alice:
+
+```ts
+let d = packDynamic(1, "alice");
+let x: integer = requireIntegerAt(d, "alice");
+```
+
+After EPP at bob:
+
+```ts
+let d = packDynamic(null, "alice");
+nothing(requireIntegerAt(d, "alice"));
+```
+
+This program is not rejected at compile time. If `d.location` is `alice` or `every`, the runtime check succeeds. If `d.location` is another concrete location, the generated code raises `DynamicLocationMismatch`.
+
+Example with runtime success through `every`:
+
+```ts
+let d = 1;
+let x: integer@alice = d;
+```
+
+After EPP at alice:
+
+```ts
+let d = new DynValue(1, EVERY);
+let x: integer = requireIntegerAt(d, "alice");
+```
+
+Example with runtime failure:
+
+```ts
+let d: integer@dynamic = 1@bob;
+let x: integer@alice = d;
+```
+
+After EPP at alice:
+
+```ts
+let d = packDynamic(null, "bob");
+let x: integer = requireIntegerAt(d, "alice"); // DynamicLocationMismatch
+```
+
+After EPP at bob:
+
+```ts
+let d = packDynamic(1, "bob");
+nothing(requireIntegerAt(d, "alice")); // DynamicLocationMismatch
+```
+
+##### 18.10.3 Scalar Require in Assignment Statements
+
+For an assignment to a statically located scalar variable:
+
+```ts
+x = e;
+```
+
+if `x : T@L` and `e : T@dynamic`, then the assignment is accepted at compile time and lowered using `requireTAt(e, L)`.
+
+Example:
+
+```ts
+let x: integer@alice = 0@alice;
+let d: integer@dynamic = 1@alice;
+x = d;
+```
+
+After EPP at alice:
+
+```ts
+let x: integer = 0;
+let d = packDynamic(1, "alice");
+x = requireIntegerAt(d, "alice");
+```
+
+After EPP at bob:
+
+```ts
+let d = packDynamic(null, "alice");
+nothing(requireIntegerAt(d, "alice"));
+```
+
+Again, this is not a compile-time location error. The runtime check may raise `DynamicLocationMismatch`.
+
+##### 18.10.4 Scalar Require in Function Arguments
+
+For a function call:
+
+```ts
+f(e);
+```
+
+if the parameter type is scalar `T@L` and the argument expression has type `T@dynamic`, then the argument is accepted at compile time and lowered using `requireTAt(e, L)`.
+
+Example:
+
+```ts
+function use@alice(x: integer): integer {
+  return x;
+}
+
+let d: integer@dynamic = 1@alice;
+let y: integer@alice = use(d);
+```
+
+After EPP at alice:
+
+```ts
+function use(x: integer): integer {
+  return x;
+}
+
+let d = packDynamic(1, "alice");
+let y: integer = use(requireIntegerAt(d, "alice"));
+```
+
+After EPP at bob, the local function is not called, but the dynamic check in the argument must still be evaluated:
+
+```ts
+let d = packDynamic(null, "alice");
+nothing(requireIntegerAt(d, "alice"));
+```
+
+##### 18.10.5 Scalar Require in Return Statements
+
+For a return statement:
+
+```ts
+return e;
+```
+
+if the function return type is scalar `T@L` and `e : T@dynamic`, then the return expression is accepted at compile time and lowered using `requireTAt(e, L)`.
+
+Example:
+
+```ts
+function f@every(d: integer@dynamic): integer@alice {
+  return d;
+}
+```
+
+After EPP at alice:
+
+```ts
+function f(d: DynValue): integer {
+  return requireIntegerAt(d, "alice");
+}
+```
+
+After EPP at bob:
+
+```ts
+function f(d: DynValue): null {
+  return null;
+}
+```
+
+The compiler must still preserve dynamic checks in non-owner contexts when those checks appear in evaluated expressions, as described in Sections 18.16 and 18.18.
+
+##### 18.10.6 Array Require
+
+When an array expression of type `T[]@dynamic` is checked against an expected array type `T[]@L`, the compiler inserts the corresponding `requireTArrayAt` helper.
+
+```text
+integer[]@dynamic checked against integer[]@L => requireIntegerArrayAt(e, L)
+float[]@dynamic   checked against float[]@L   => requireFloatArrayAt(e, L)
+boolean[]@dynamic checked against boolean[]@L => requireBooleanArrayAt(e, L)
+```
+
+This is accepted at compile time only if the array element type matches exactly. Array types remain invariant.
 
 ```ts
 function requireIntegerArrayAt(dynamic: DynValue, location: RuntimeLocation): integer[] {
@@ -4722,7 +4975,15 @@ requireFloatArrayAt(dynamic: DynValue, location: RuntimeLocation): float[];
 requireBooleanArrayAt(dynamic: DynValue, location: RuntimeLocation): boolean[];
 ```
 
-Array require uses exact location matching. Unlike scalar require, it does not allow `@every` arrays to be implicitly required at a concrete location. This preserves the Core v0 restriction that mutable arrays located at `@every` must not be implicitly converted to concrete-location arrays.
+Array require uses exact location matching:
+
+```text
+requireTArrayAt(d, L):
+  succeeds only if d.location == L.
+  otherwise raises DynamicLocationMismatch.
+```
+
+Unlike scalar require, array require does not allow an `@every` array to be implicitly required at a concrete location. This preserves the Core v0 restriction that mutable arrays located at `@every` must not be implicitly converted to concrete-location arrays.
 
 Example:
 
@@ -4748,7 +5009,7 @@ let ys = requireIntegerArrayAt(xs, EVERY);
 let zs = requireIntegerArrayAt(xs, "alice"); // DynamicLocationMismatch
 ```
 
-##### 18.10.3 Condition Require
+##### 18.10.7 Condition Require
 
 Dynamic conditions must be located at `every` at runtime.
 
@@ -4762,15 +5023,17 @@ function requireCondition(dynamic: DynValue): boolean {
 }
 ```
 
-`if`, `while`, and `for` conditions use `requireCondition` when the condition is dynamic.
+`if`, `while`, and `for` conditions use `requireCondition` when the condition expression has type `boolean@dynamic`.
 
-Runtime error:
+Example:
 
 ```ts
 let c: boolean@dynamic = true@alice;
 if (c) {
 }
 ```
+
+This is accepted at compile time. It is lowered to `requireCondition(c)` and may fail at runtime.
 
 After EPP at alice:
 
@@ -4788,7 +5051,43 @@ if (requireCondition(c)) { // DynamicLocationMismatch
 }
 ```
 
-#### 18.11 Dynamic Runtime Errors
+##### 18.10.8 Compile-time vs Runtime Summary for Require
+
+The following are compile-time errors:
+
+```ts
+let d: string@dynamic = "hello";
+let x: integer@alice = d; // base type mismatch
+```
+
+```ts
+let xs: integer[]@dynamic = [1, 2, 3]@alice;
+let ys: float[]@alice = xs; // array element type mismatch
+```
+
+The following are not compile-time errors; they are accepted and lowered to runtime require helpers:
+
+```ts
+let d: integer@dynamic = 1@alice;
+let x: integer@alice = d; // requireIntegerAt(d, "alice")
+```
+
+```ts
+let d: integer@dynamic = 1@bob;
+let x: integer@alice = d; // runtime DynamicLocationMismatch
+```
+
+```ts
+let xs: integer[]@dynamic = [1, 2, 3]@bob;
+let ys: integer[]@alice = xs; // runtime DynamicLocationMismatch
+```
+
+```ts
+let c: boolean@dynamic = true@alice;
+if (c) {
+} // runtime DynamicLocationMismatch
+```
+### 18.11 Dynamic Runtime Errors
 
 The Gradual runtime distinguishes the following dynamic errors:
 
@@ -4807,6 +5106,33 @@ InvalidDynamicArrayAccess
 Ordinary runtime errors, such as array bounds errors or division by zero, are not dynamic location errors. Ordinary runtime errors are raised only at endpoints where the actual computation occurs.
 
 #### 18.12 Dynamic Operators
+
+Compile-time vs runtime rule for dynamic operators:
+
+```text
+If the operator is invalid for the base types:
+  compile-time error.
+
+If the operator is valid for the base types but operand runtime locations may be incompatible:
+  compile-time success;
+  lower to dyn* helper;
+  runtime helper may raise DynamicLocationMismatch.
+```
+
+Examples:
+
+```ts
+let x: integer@dynamic = 1@alice;
+let y: integer@dynamic = 2@bob;
+x + y; // accepted at compile time; DynamicLocationMismatch at runtime
+```
+
+```ts
+let x: integer@dynamic = 1;
+let s: string@dynamic = "foo";
+x + s; // compile-time error: invalid base types for +
+```
+
 
 If either operand of an operator is dynamic, all static operands are packed into `DynValue` first. The operator result is dynamic.
 
@@ -4964,6 +5290,35 @@ dynNeg(a: DynValue): DynValue;
 
 #### 18.13 Dynamic Communication
 
+Compile-time vs runtime rule for dynamic communication:
+
+```text
+If the communication has a base type incompatibility:
+  compile-time error.
+
+If a communication involving @dynamic may become P -> P or every -> every at runtime:
+  compile-time success;
+  lower to dynMove;
+  dynMove raises InvalidDynamicCommunication if the runtime source and destination form is invalid.
+
+If neither source nor destination is dynamic and Core v0 says the communication is non-transferring:
+  compile-time error, as in Core v0.
+```
+
+Example:
+
+```ts
+let a: integer@dynamic = 1@alice;
+let b: integer@dynamic = 2@alice;
+a <~ b; // accepted at compile time; InvalidDynamicCommunication at runtime
+```
+
+```ts
+let a: integer@alice = 1@alice;
+let b: integer@alice <~ a; // compile-time error: static alice -> alice communication
+```
+
+
 Source-level communication remains a statement. The compiler may lower it to an expression-returning runtime helper.
 
 Dynamic communication uses `dynMove`.
@@ -5068,6 +5423,31 @@ a <~ b; // destination is a.location, so this is alice -> alice
 ```
 
 #### 18.14 Dynamic Arrays
+
+Compile-time vs runtime rule for dynamic arrays:
+
+```text
+If the array element type, index type, or item type is invalid:
+  compile-time error.
+
+If the base/element types are valid but runtime locations may be incompatible:
+  compile-time success;
+  lower to dynArray* helper;
+  helper may raise InvalidDynamicArrayAccess at runtime.
+```
+
+Examples:
+
+```ts
+let arr = [1, 3, 5];
+arr[0] = 3@alice; // accepted at compile time; InvalidDynamicArrayAccess at runtime
+```
+
+```ts
+let arr = [1, 3, 5];
+arr[0] = true; // compile-time error: boolean is not compatible with integer
+```
+
 
 Dynamic arrays use `DynValue` wrappers. The payload is a mutable one-dimensional array.
 
@@ -5290,6 +5670,22 @@ dynArrayLength(arr);
 
 #### 18.15 Dynamic Assignment
 
+This section is only about assignment whose destination variable has type `T@dynamic`.
+
+Compile-time vs runtime note:
+
+```text
+T@dynamic = T@dynamic:
+  copyWrapper().
+
+T@dynamic = T@P:
+  pack_P(e), then assign/copy wrapper.
+
+T@P = T@dynamic:
+  not handled by copyWrapper(); use Section 18.10 require helpers.
+```
+
+
 Assignment to a `@dynamic` variable copies the `DynValue` wrapper.
 
 ```ts
@@ -5333,6 +5729,25 @@ After the push, `ys.value` refers to the same local array payload as `xs.value`,
 Communication is different from assignment: dynamic communication uses `clonePayload` for arrays and creates fresh mutable copies at receivers.
 
 #### 18.16 Dynamic Functions
+
+Compile-time vs runtime note for functions:
+
+```text
+Local function parameter or return type annotated with @dynamic:
+  compile-time error.
+
+@every function return type omitted:
+  infer using Core v0 rules;
+  incompatible inferred static locations are compile-time errors.
+
+@every function return type explicitly T@dynamic, or base-only return type in @every function:
+  pack returned static values into DynValue;
+  location variation is allowed at compile time.
+
+Dynamic checks inside arguments to local function calls from @every context:
+  preserve and evaluate on non-owner endpoints using nothing(...).
+```
+
 
 ##### 18.16.1 @every Functions
 
@@ -5539,6 +5954,27 @@ let y: DynValue = packDynamic(null, "alice");
 ```
 
 #### 18.17 Dynamic Conditions
+
+Compile-time vs runtime rule for dynamic conditions:
+
+```text
+If the condition base type is not boolean:
+  compile-time error.
+
+If the condition has type boolean@dynamic:
+  compile-time success;
+  lower to requireCondition;
+  runtime helper raises DynamicLocationMismatch if the runtime location is not every.
+```
+
+Example:
+
+```ts
+let c: boolean@dynamic = true@alice;
+if (c) {
+} // accepted at compile time; DynamicLocationMismatch at runtime
+```
+
 
 If an `if`, `while`, or `for` condition has type `boolean@dynamic`, its runtime location must be `every`.
 
@@ -5774,7 +6210,38 @@ function ok@every(c: boolean@every): integer@dynamic {
 }
 ```
 
-#### 18.22 Dynamic Runtime Error Examples
+##### 18.21.6 Not Compile-time Errors Merely Due to Dynamic Locations
+
+The following cases are not compile-time errors merely because runtime locations might be incompatible. They must be accepted if base types are valid and then lowered to runtime helpers:
+
+```ts
+let d: integer@dynamic = 1@bob;
+let x: integer@alice = d; // requireIntegerAt; may raise DynamicLocationMismatch
+```
+
+```ts
+let x: integer@dynamic = 1@alice;
+let y: integer@dynamic = 2@bob;
+x + y; // dynAdd; may raise DynamicLocationMismatch
+```
+
+```ts
+let c: boolean@dynamic = true@alice;
+if (c) {
+} // requireCondition; may raise DynamicLocationMismatch
+```
+
+```ts
+let a: integer@dynamic = 1@alice;
+let b: integer@dynamic = 2@alice;
+a <~ b; // dynMove; may raise InvalidDynamicCommunication
+```
+
+```ts
+let arr = [1, 2, 3];
+arr[0@alice]; // dynArrayGet; may raise InvalidDynamicArrayAccess
+```
+### 18.22 Dynamic Runtime Error Examples
 
 ##### 18.22.1 Dynamic Location Mismatch in Operator
 
