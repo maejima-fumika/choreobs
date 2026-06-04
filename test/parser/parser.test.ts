@@ -204,12 +204,16 @@ let y: integer@bob <~ x;`;
     }
   });
 
-  it("rejects communication let without type annotation (spec §7.14.3)", () => {
+  it("parses communication let with omitted destination type (§18.6.1)", () => {
     const { program, errors } = parse("let y <~ x;");
-    assert.equal(program, null);
-    assert.ok(
-      errors.some((e) => e.message.includes("type annotation required for communication let")),
-    );
+    assert.equal(errors.length, 0);
+    const item = program?.items[0];
+    if (item?.kind === "TopLevelStatement" && item.statement.kind === "LetReceiveStatement") {
+      assert.equal(item.statement.name, "y");
+      assert.equal(item.statement.type, undefined);
+    } else {
+      assert.fail("expected LetReceiveStatement");
+    }
   });
 
   it("rejects function parameter without type annotation (spec §7.14.7)", () => {

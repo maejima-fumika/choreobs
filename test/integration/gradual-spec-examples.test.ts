@@ -84,6 +84,16 @@ a <~ b;
     assert.match(bs(result, "alice"), /dynMove\(/);
   });
 
+  it("§18.22.4b omitted-type communication let every-to-every lowers to dynMove", () => {
+    const result = compile(`
+let x = 1;
+let y <~ x;
+`);
+    assert.equal(result.success, true, JSON.stringify(result.errors));
+    assert.match(bs(result, "alice"), /let y: DynValue = dynMove\(x, "top_0", EVERY\)/);
+    assert.match(bs(result, "bob"), /let y: DynValue = dynMove\(x, "top_0", EVERY\)/);
+  });
+
   it("§18.22.5 dynamic array access lowers to dynArrayGet", () => {
     const result = compile(`
 let arr = [1, 2, 3];

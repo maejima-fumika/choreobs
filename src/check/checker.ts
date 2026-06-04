@@ -400,6 +400,18 @@ class TypeChecker {
         this.defineLocal(stmt.name, choreoType, stmt.span);
         return undefined;
       }
+      case "LetReceiveStatement": {
+        const source = this.typeReturnValueExpression(stmt.source, ctx, allowOmit);
+        const choreoType = this.resolveCommLetDestinationType(
+          stmt.type,
+          source,
+          ctx,
+          allowOmit,
+          stmt.span,
+        );
+        this.defineLocal(stmt.name, choreoType, stmt.span);
+        return undefined;
+      }
       case "ReturnStatement":
         if (stmt.value === undefined) {
           out.push({ kind: "unit", span: stmt.span });
@@ -488,26 +500,41 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
   ): InferErr | undefined {
-    if (init.kind !== "ForLetInit") {
-      return undefined;
+    switch (init.kind) {
+      case "ForLetInit": {
+        const initializer = this.typeReturnValueExpression(
+          init.initializer,
+          ctx,
+          allowOmit,
+        );
+        const choreoType =
+          init.type !== undefined
+            ? this.resolveLetType(
+                init.type,
+                initializer,
+                ctx,
+                allowOmit,
+                init.span,
+              ).type
+            : initializer.choreoType;
+        this.defineLocal(init.name, choreoType, init.span);
+        return undefined;
+      }
+      case "ForLetReceiveInit": {
+        const source = this.typeReturnValueExpression(init.source, ctx, allowOmit);
+        const choreoType = this.resolveCommLetDestinationType(
+          init.type,
+          source,
+          ctx,
+          allowOmit,
+          init.span,
+        );
+        this.defineLocal(init.name, choreoType, init.span);
+        return undefined;
+      }
+      default:
+        return undefined;
     }
-    const initializer = this.typeReturnValueExpression(
-      init.initializer,
-      ctx,
-      allowOmit,
-    );
-    const choreoType =
-      init.type !== undefined
-        ? this.resolveLetType(
-            init.type,
-            initializer,
-            ctx,
-            allowOmit,
-            init.span,
-          ).type
-        : initializer.choreoType;
-    this.defineLocal(init.name, choreoType, init.span);
-    return undefined;
   }
 
   /** Return type after elaboration or inference; does not read raw AST annotations. */
@@ -859,12 +886,46 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
   ): TypedLetReceiveStatement {
-    const choreoType = this.resolveType(stmt.type, ctx, allowOmit);
     const source = this.checkExpression(stmt.source, ctx, allowOmit);
+    const choreoType = this.resolveCommLetDestinationType(
+      stmt.type,
+      source,
+      ctx,
+      allowOmit,
+      stmt.span,
+    );
     const commMode = this.validateCommunication(choreoType, source.choreoType, stmt.span);
     const commTag = this.commTagForMode(commMode);
     this.defineLocal(stmt.name, choreoType, stmt.span);
     return { stmt, choreoType, source, commMode, commTag };
+  }
+
+  /**
+   * Destination type for `let x <~ e` (spec §18.6, §18.6.1).
+   * Omitted annotation in global/`@every`: `T@dynamic` from source base type (no widening).
+   */
+  private resolveCommLetDestinationType(
+    ann: import("../ast/syntax-types.js").TypeAnnotation | undefined,
+    source: TypedExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+    span: Span,
+  ): LocatedType {
+    if (ann !== undefined) {
+      return this.resolveType(ann, ctx, allowOmit);
+    }
+    if (ctx.kind === "local") {
+      this.error(
+        "type annotation required for communication let in local function (spec §7.14.3)",
+        span,
+      );
+      return locatedType(source.choreoType.base, contextAsLocation(ctx));
+    }
+    return locatedType(
+      source.choreoType.base,
+      { kind: "dynamic" },
+      source.choreoType.isArray === true ? true : undefined,
+    );
   }
 
   private checkAssignment(
@@ -1023,8 +1084,14 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedForLetReceiveInit {
     this.assertCommAllowed(ctx, init.span);
-    const choreoType = this.resolveType(init.type, ctx, allowOmit);
     const source = this.checkExpression(init.source, ctx, allowOmit);
+    const choreoType = this.resolveCommLetDestinationType(
+      init.type,
+      source,
+      ctx,
+      allowOmit,
+      init.span,
+    );
     const commMode = this.validateCommunication(choreoType, source.choreoType, init.span);
     const commTag = this.commTagForMode(commMode);
     this.defineLocal(init.name, choreoType, init.span);

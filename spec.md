@@ -4554,6 +4554,83 @@ After EPP at bob:
 let y = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
 ```
 
+This rule does not infer the destination location from the source expression. The destination is always `@dynamic`, and the runtime destination location is always `EVERY`.
+
+#### 18.6.1 Communication Let with Completely Omitted Destination Type
+
+In Gradual ChoreoBS, a communication let declaration may omit the destination type entirely in a global or `@every` context.
+
+```ts
+let x <~ e;
+```
+
+If the source expression has type `T@L`, then the declaration is elaborated as:
+
+```ts
+let x: T@dynamic <~ e;
+```
+
+The base type `T` is inferred from the source expression. The destination location is not inferred from the source expression. It is always `@dynamic`, and the runtime destination location is always `EVERY`.
+
+This rule is available only in Gradual ChoreoBS. Core v0 continues to reject communication let declarations without type annotations.
+
+Examples:
+
+```ts
+let a <~ 14@alice;
+```
+
+is elaborated as:
+
+```ts
+let a: integer@dynamic <~ 14@alice;
+```
+
+After EPP at alice:
+
+```ts
+let a = dynMove(packDynamic(14, "alice"), "top_0", EVERY);
+```
+
+After EPP at bob:
+
+```ts
+let a = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
+```
+
+For scalar values, the inferred base type is the inferred base type of the source expression. Numeric widening is not introduced by this inference rule. For example, `let a <~ 14@alice;` infers `a : integer@dynamic`, while `let a: float <~ 14@alice;` explicitly checks the integer source against a `float@dynamic` destination using the ordinary base type compatibility rule.
+
+For array values, the inferred destination type preserves the source array element type exactly.
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let ys <~ xs;
+```
+
+is elaborated as:
+
+```ts
+let ys: integer[]@dynamic <~ xs;
+```
+
+Array invariance is preserved. Communication, broadcast, and localization of arrays keep the existing fresh-copy communication semantics.
+
+The generated code lowers this form to `dynMove`. Static source expressions are packed into `DynValue` using the ordinary packing rules.
+
+Because the runtime destination location is `EVERY`, this form may raise `InvalidDynamicCommunication` at runtime if the source runtime location is also `EVERY`.
+
+Example:
+
+```ts
+let x = 1;
+let y <~ x;
+```
+
+Both `x` and the omitted communication destination have runtime location `EVERY`, so the communication attempts `every -> every` and raises `InvalidDynamicCommunication` at runtime.
+
+For an existing dynamic destination variable, the rule is different. In `x <~ e;`, where `x : T@dynamic`, the runtime destination location is the current runtime location of `x` immediately before the communication. In `let x <~ e;`, there is no previous runtime location for `x`, so the destination runtime location is `EVERY`.
+
+
 #### 18.7 Base Type Checking and Dynamic Location Checking
 
 Gradual ChoreoBS only gradualizes locations. Base type checking remains static and follows Core v0.
@@ -6240,6 +6317,9 @@ a <~ b; // dynMove; may raise InvalidDynamicCommunication
 ```ts
 let arr = [1, 2, 3];
 arr[0@alice]; // dynArrayGet; may raise InvalidDynamicArrayAccess
+let a <~ 14@alice; // base type inferred as integer, destination is integer@dynamic
+let x = 1;
+let y <~ x; // dynMove; may raise InvalidDynamicCommunication because this is every -> every
 ```
 ### 18.22 Dynamic Runtime Error Examples
 
@@ -6301,7 +6381,22 @@ Runtime behavior:
 InvalidDynamicCommunication
 ```
 
-##### 18.22.5 Invalid Dynamic Array Access
+##### 18.22.5 Invalid Dynamic Communication from Completely Omitted Communication Let
+
+```ts
+let x = 1;
+let y <~ x;
+```
+
+Both `x` and the omitted communication destination have runtime location `every`, so this communication attempts `every -> every`.
+
+Runtime behavior:
+
+```text
+InvalidDynamicCommunication
+```
+
+##### 18.22.6 Invalid Dynamic Array Access
 
 ```ts
 let arr = [1, 2, 3];
@@ -6314,7 +6409,7 @@ Runtime behavior:
 InvalidDynamicArrayAccess
 ```
 
-##### 18.22.6 Invalid Dynamic Array Mutation
+##### 18.22.7 Invalid Dynamic Array Mutation
 
 ```ts
 let arr = [1, 2, 3];
@@ -6391,7 +6486,65 @@ let x = packDynamic(null, "alice");
 let y = dynMove(x, "top_0", EVERY);
 ```
 
-##### 18.23.4 Dynamic Assignment Shares Array Payload Reference
+##### 18.23.4 Completely Omitted Communication Let Type
+
+Input:
+
+```ts
+let a <~ 14@alice;
+```
+
+This is elaborated as:
+
+```ts
+let a: integer@dynamic <~ 14@alice;
+```
+
+After EPP at alice:
+
+```ts
+let a = dynMove(packDynamic(14, "alice"), "top_0", EVERY);
+```
+
+After EPP at bob:
+
+```ts
+let a = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
+```
+
+The source base type `integer` is inferred from `14@alice`. The destination location is not inferred from `alice`; it is `@dynamic` with runtime destination location `EVERY`.
+
+##### 18.23.5 Completely Omitted Communication Let Type for Arrays
+
+Input:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;
+let ys <~ xs;
+```
+
+This is elaborated as:
+
+```ts
+let ys: integer[]@dynamic <~ xs;
+```
+
+After EPP at alice:
+
+```ts
+let xs: integer[] = [1, 2, 3];
+let ys = dynMove(packDynamic(xs, "alice"), "top_0", EVERY);
+```
+
+After EPP at bob:
+
+```ts
+let ys = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
+```
+
+Every endpoint obtains a fresh mutable array payload for `ys`, because this is an array broadcast to `every`.
+
+##### 18.23.6 Dynamic Assignment Shares Array Payload Reference
 
 Input:
 
@@ -6413,7 +6566,7 @@ dynArrayLength(ys);
 
 `ys` observes the mutation because assignment copies the wrapper but shares the payload array reference within the endpoint.
 
-##### 18.23.5 Dynamic Communication Creates Fresh Array Copy
+##### 18.23.7 Dynamic Communication Creates Fresh Array Copy
 
 Input:
 

@@ -25,13 +25,13 @@ export interface LetStatement extends AstNode {
 }
 
 /**
- * Communication `let` (spec §5.6, §7.14.3).
- * `type` is always required; destination type/location are not inferred.
+ * Communication `let` (spec §5.6, §7.14.3, §18.6, §18.6.1).
+ * `type` omitted in global/`@every` contexts: infer `T@dynamic` from the source (§18.6.1).
  */
 export interface LetReceiveStatement extends AstNode {
   readonly kind: "LetReceiveStatement";
   readonly name: string;
-  readonly type: TypeAnnotation;
+  readonly type?: TypeAnnotation;
   readonly source: Expression;
 }
 

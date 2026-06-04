@@ -320,9 +320,17 @@ class Parser {
     const nameTok = this.consumeIdentifierToken("expected variable name after 'let'");
 
     if (this.match(TokenKind.Receive)) {
-      throw this.fail(
-        "type annotation required for communication let (spec §5.6, §7.14.3)",
-      );
+      const source = this.parseExpression();
+      if (requireSemicolon) {
+        this.consume(TokenKind.Semicolon, "expected ';' after let statement");
+      }
+      const stmt: LetReceiveStatement = {
+        kind: "LetReceiveStatement",
+        name: nameTok.name,
+        source,
+        span: spanFrom(start, requireSemicolon ? this.previous() : source),
+      };
+      return stmt;
     }
 
     if (this.match(TokenKind.Assign)) {

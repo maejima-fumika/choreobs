@@ -105,6 +105,18 @@ let e: integer@alice <~ a;
     );
   });
 
+  it("broadcasts communication let with fully omitted destination type (§18.6.1)", () => {
+    const src = `let a <~ 14@alice;`;
+    assert.match(
+      at(src, "alice"),
+      /let a: DynValue = dynMove\(packDynamic\(14, "alice"\), "top_0", EVERY\);/,
+    );
+    assert.match(
+      at(src, "bob"),
+      /let a: DynValue = dynMove\(packDynamic\(null, "alice"\), "top_0", EVERY\);/,
+    );
+  });
+
   it("broadcasts a dynamic communication let with omitted destination (§18.6)", () => {
     const src = `
 let x: integer@alice = 1@alice;

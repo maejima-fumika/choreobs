@@ -151,6 +151,19 @@ for (let i = 0@every; i < 3@every; i = i + 1@every) {
       }
     });
 
+    it("infers return type when body binds communication let before return (§7.14.3, §7.14.4)", () => {
+      const typed = expectTypeCheckSuccess(`
+function average@every(arr: integer[]) {
+  let sum = 0@every;
+  let len: integer@every <~ length(arr);
+  return sum / len;
+}
+`);
+      const fn = functionDecl(typed, 0);
+      assert.equal(fn.returnType.base, "integer");
+      assert.equal(fn.returnType.location.kind, "every");
+    });
+
     it("infers function return type from return expressions (§7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`
 function add@alice(a: integer, b: integer) {
@@ -248,13 +261,14 @@ function fact@alice(n: integer): integer {
   });
 
   describe("negative", () => {
-    it("rejects communication let without type annotation (§7.14.3)", () => {
-      const { program, errors } = parse("let y <~ x;");
-      assert.equal(program, null);
-      assert.ok(
-        errors.some((e) =>
-          e.message.includes("type annotation required for communication let"),
-        ),
+    it("requires type annotation for communication let in local function (§7.14.3)", () => {
+      expectTypeCheckFailure(
+        `
+function f@alice() {
+  let y <~ x;
+}
+`,
+        "type annotation required for communication let",
       );
     });
 
