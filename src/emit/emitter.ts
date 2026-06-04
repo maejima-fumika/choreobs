@@ -182,6 +182,14 @@ class BlueScriptEmitter {
         return `(${this.emitExpr(expr.expression)})`;
       case "ReceiveExpression":
         return `${receiveFunction(expr.comm)}("${expr.sourceParticipant}", "${expr.tag}")`;
+      case "DynValueExpression":
+        return `new DynValue(${this.emitExpr(expr.value)}, ${this.emitExpr(expr.location)})`;
+      case "RuntimeCallExpression":
+        return `${expr.callee}(${expr.args.map((a) => this.emitExpr(a)).join(", ")})`;
+      case "MethodCallExpression":
+        return `${this.emitExpr(expr.receiver)}.${expr.method}(${expr.args.map((a) => this.emitExpr(a)).join(", ")})`;
+      case "PropertyAccessExpression":
+        return `${this.emitExpr(expr.receiver)}.${expr.property}`;
     }
   }
 

@@ -4,7 +4,7 @@ import type { BaseType } from "../ast/syntax-types.js";
 import type { Block, Statement } from "../ast/statements.js";
 import type { Expression } from "../ast/expressions.js";
 import type { LocatedType } from "../ast/typed.js";
-import { locationsEqual, locatedType } from "../types/located.js";
+import { locationsEqual, locatedType, locationLabel } from "../types/located.js";
 
 export type InferOk<T> = { readonly ok: true; readonly value: T };
 export type InferErr = { readonly ok: false; readonly message: string };
@@ -57,8 +57,8 @@ export function lubLocation(a: Location, b: Location): InferResult<Location> {
   if (locationsEqual(a, b)) {
     return inferenceOk(a);
   }
-  const aName = a.kind === "every" ? "every" : a.name;
-  const bName = b.kind === "every" ? "every" : b.name;
+  const aName = locationLabel(a);
+  const bName = locationLabel(b);
   return inferenceError(
     `incompatible return locations: cannot compute least upper bound of ${aName} and ${bName} (spec §7.14.4)`,
   );

@@ -29,6 +29,7 @@ const KEYWORDS: Readonly<Record<string, TokenKind>> = {
   false: TokenKind.False,
   null: TokenKind.Null,
   every: TokenKind.Every,
+  dynamic: TokenKind.Dynamic,
   integer: TokenKind.Integer,
   float: TokenKind.Float,
   boolean: TokenKind.Boolean,

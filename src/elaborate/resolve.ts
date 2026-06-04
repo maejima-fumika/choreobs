@@ -18,13 +18,12 @@ export function resolveTypeAnnotation(
   let location: Location;
   if (ann.location !== undefined) {
     location = ann.location.location;
-  } else if (allowOmit && ctx.kind === "local") {
+  } else if (ctx.kind === "local") {
     location = defaultLocationForContext(ctx);
   } else {
-    throw new LocationOmitError(
-      "location annotation required in @every context (spec §8.2, §8.3)",
-      ann.span,
-    );
+    // Gradual ChoreoBS: omitted locations in global/@every contexts default
+    // to @dynamic (spec §18.4, §18.16.1).
+    location = { kind: "dynamic" };
   }
   return locatedType(ann.base, location);
 }
@@ -38,13 +37,12 @@ export function resolveLiteralType(
   let location: Location;
   if (lit.location !== undefined) {
     location = lit.location.location;
-  } else if (allowOmit && ctx.kind === "local") {
+  } else if (ctx.kind === "local") {
     location = defaultLocationForContext(ctx);
   } else {
-    throw new LocationOmitError(
-      "location annotation required on literal in @every context (spec §8.2, §8.3)",
-      lit.span,
-    );
+    // Gradual ChoreoBS: an unlocated literal in a global/@every context is a
+    // dynamic value whose runtime location is `every` (spec §18.3, §18.5).
+    location = { kind: "dynamic" };
   }
   return locatedType(base, location);
 }

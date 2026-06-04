@@ -124,6 +124,27 @@ let y: integer@bob <~ x;`;
     }
   });
 
+  it("parses the @dynamic location on types and literals (spec §18.2, §18.3)", () => {
+    const source = `let x: integer@dynamic = 1@dynamic;`;
+    const { program, errors } = parse(source);
+    assert.equal(errors.length, 0);
+    const letStmt = program?.items[0];
+    if (
+      letStmt?.kind === "TopLevelStatement" &&
+      letStmt.statement.kind === "LetStatement"
+    ) {
+      assert.equal(letStmt.statement.type?.location?.location.kind, "dynamic");
+      const lit = letStmt.statement.initializer;
+      if (lit.kind === "LiteralExpression") {
+        assert.equal(lit.literal.location?.location.kind, "dynamic");
+      } else {
+        assert.fail("expected LiteralExpression");
+      }
+    } else {
+      assert.fail("expected LetStatement");
+    }
+  });
+
   it("reports parse errors for unsupported statements", () => {
     const { program, errors } = parse("break;");
     assert.equal(program, null);

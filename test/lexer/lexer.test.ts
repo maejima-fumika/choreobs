@@ -91,6 +91,13 @@ let x /* inner */ : integer = 1;`;
     assert.equal(tokenize("async").tokens[0]?.kind, TokenKind.Async);
   });
 
+  it("reserves 'dynamic' as a keyword (spec §18.2)", () => {
+    const { tokens } = tokenize("integer@dynamic");
+    assert.equal(tokens[0]?.kind, TokenKind.Integer);
+    assert.equal(tokens[1]?.kind, TokenKind.At);
+    assert.equal(tokens[2]?.kind, TokenKind.Dynamic);
+  });
+
   it("decodes string literals", () => {
     const { tokens } = tokenize('"a\\nb"');
     const str = tokens[0];

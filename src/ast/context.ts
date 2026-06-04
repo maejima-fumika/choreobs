@@ -17,8 +17,8 @@ export const EVERY_CONTEXT: ExecutionContext = { kind: "every" };
 export function executionContextFromLocation(
   location: Location,
 ): ExecutionContext {
-  if (location.kind === "every") {
-    return EVERY_CONTEXT;
+  if (location.kind === "concrete") {
+    return { kind: "local", participant: location.name };
   }
-  return { kind: "local", participant: location.name };
+  return EVERY_CONTEXT;
 }

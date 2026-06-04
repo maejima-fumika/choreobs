@@ -27,6 +27,7 @@ export const TokenKind = {
   False: "False",
   Null: "Null",
   Every: "Every",
+  Dynamic: "Dynamic",
   Integer: "Integer",
   Float: "Float",
   Boolean: "Boolean",

@@ -14,7 +14,9 @@ export type ProjectedBaseType =
   | "void"
   | "integer[]"
   | "float[]"
-  | "boolean[]";
+  | "boolean[]"
+  /** Gradual dynamic value wrapper (spec §18.8). */
+  | "DynValue";
 
 /**
  * Projected type: present base type or internal absent (spec §12.2, §12.4).
@@ -48,7 +50,11 @@ export type ProjectedExpression =
   | PropertyLengthExpression
   | NothingExpression
   | ParenthesizedExpression
-  | ReceiveExpression;
+  | ReceiveExpression
+  | DynValueExpression
+  | RuntimeCallExpression
+  | MethodCallExpression
+  | PropertyAccessExpression;
 
 /** Internal absent expression (spec §12.4). */
 export interface AbsentExpression {
@@ -152,6 +158,39 @@ export interface ReceiveExpression {
   readonly comm: CommKind;
   readonly sourceParticipant: string;
   readonly tag: string;
+  readonly span: Span;
+}
+
+/** `new DynValue(value, location)` (spec §18.8, §18.9). */
+export interface DynValueExpression {
+  readonly kind: "DynValueExpression";
+  readonly value: ProjectedExpression;
+  readonly location: ProjectedExpression;
+  readonly span: Span;
+}
+
+/** Gradual runtime helper call, e.g. `packDynamic(v, "alice")`, `dynAdd(a, b)` (spec §18.20). */
+export interface RuntimeCallExpression {
+  readonly kind: "RuntimeCallExpression";
+  readonly callee: string;
+  readonly args: readonly ProjectedExpression[];
+  readonly span: Span;
+}
+
+/** Method call, e.g. `d.copyWrapper()` (spec §18.15). */
+export interface MethodCallExpression {
+  readonly kind: "MethodCallExpression";
+  readonly receiver: ProjectedExpression;
+  readonly method: string;
+  readonly args: readonly ProjectedExpression[];
+  readonly span: Span;
+}
+
+/** Property access, e.g. `a.location` (spec §18.13). */
+export interface PropertyAccessExpression {
+  readonly kind: "PropertyAccessExpression";
+  readonly receiver: ProjectedExpression;
+  readonly property: string;
   readonly span: Span;
 }
 

@@ -194,6 +194,28 @@ export function simplifyExpression(expr: ProjectedExpression): ProjectedExpressi
         ...expr,
         target: simplifyExpression(expr.target),
       };
+    case "DynValueExpression":
+      return {
+        ...expr,
+        value: simplifyExpression(expr.value),
+        location: simplifyExpression(expr.location),
+      };
+    case "RuntimeCallExpression":
+      return {
+        ...expr,
+        args: expr.args.map((arg) => simplifyExpression(arg)),
+      };
+    case "MethodCallExpression":
+      return {
+        ...expr,
+        receiver: simplifyExpression(expr.receiver),
+        args: expr.args.map((arg) => simplifyExpression(arg)),
+      };
+    case "PropertyAccessExpression":
+      return {
+        ...expr,
+        receiver: simplifyExpression(expr.receiver),
+      };
   }
 }
 

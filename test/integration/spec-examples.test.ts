@@ -269,9 +269,7 @@ function g@alice(): unit { h(); return; }
     assert.ok(result.errors.some((e) => e.message.includes("@every")));
   });
 
-  it("§16.4 top-level location omission", () => {
-    const result = compile(`let x: integer = 1@alice;`);
-    expectFailure(result);
-    assert.ok(result.errors.some((e) => e.message.includes("location")));
-  });
+  // §16.4 (top-level location omission) is overridden by Gradual ChoreoBS
+  // §18.4: omitted locations default to @dynamic. End-to-end gradual
+  // compilation is covered in test/integration/gradual-phase6.test.ts.
 });

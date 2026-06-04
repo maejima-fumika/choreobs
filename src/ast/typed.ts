@@ -33,6 +33,7 @@ import type { LocatedLiteral } from "./literals.js";
 import type { TypeAnnotation } from "./syntax-types.js";
 import type { ExecutionContext } from "./context.js";
 import type { Location } from "./location.js";
+import type { GradualCoercion } from "./gradual.js";
 
 /**
  * Fully resolved located type `T@L` after elaboration and type-checking (spec §7.2).
@@ -216,29 +217,35 @@ export interface TypedBinaryExpression {
   readonly choreoType: LocatedType;
   readonly left: TypedExpression;
   readonly right: TypedExpression;
+  /** Use-site gradual coercion (spec §18). */
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedUnaryExpression {
   readonly expr: UnaryExpression;
   readonly choreoType: LocatedType;
   readonly operand: TypedExpression;
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedLiteralExpression {
   readonly expr: LiteralExpression;
   readonly choreoType: LocatedType;
   readonly literal: LocatedLiteral;
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedArrayLiteralExpression {
   readonly expr: ArrayLiteralExpression;
   readonly choreoType: LocatedType;
   readonly elements: readonly TypedExpression[];
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedIdentifierExpression {
   readonly expr: IdentifierExpression;
   readonly choreoType: LocatedType;
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedCallExpression {
@@ -246,6 +253,7 @@ export interface TypedCallExpression {
   readonly choreoType: LocatedType;
   readonly callee: FunctionSymbol;
   readonly args: readonly TypedExpression[];
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedIndexExpression {
@@ -253,12 +261,14 @@ export interface TypedIndexExpression {
   readonly choreoType: LocatedType;
   readonly target: TypedExpression;
   readonly index: TypedExpression;
+  readonly gradual?: GradualCoercion;
 }
 
 export interface TypedParenthesizedExpression {
   readonly expr: ParenthesizedExpression;
   readonly choreoType: LocatedType;
   readonly expression: TypedExpression;
+  readonly gradual?: GradualCoercion;
 }
 
 /** Resolved function for calls and EPP (spec §7.12, §10, §12.11). */

@@ -150,10 +150,60 @@ function f@alice(): unit {
     assert.ok(errors.some((e) => e.message.includes("carol")));
   });
 
-  it("rejects location omission at top level (spec §16.4)", () => {
-    const { typed, errors } = checkSource(`let x: integer = 1@alice;`);
-    assert.equal(typed, null);
-    assert.ok(errors.some((e) => e.message.includes("location")));
+  it("infers an omitted let location from the initializer (spec §18.5, §18.13)", () => {
+    // `integer` omits its location; the located initializer keeps it static.
+    const { typed, errors } = checkSource(`let c: integer = 300@alice;`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    const item = typed?.items[0];
+    if (
+      item &&
+      "statement" in item &&
+      "choreoType" in item.statement &&
+      "initializer" in item.statement &&
+      item.statement.stmt.kind === "LetStatement"
+    ) {
+      assert.deepEqual(item.statement.choreoType.location, {
+        kind: "concrete",
+        name: "alice",
+      });
+      assert.equal(item.statement.initializer.gradual, undefined);
+    } else {
+      assert.fail("expected top-level LetStatement");
+    }
+  });
+
+  it("treats an unlocated literal initializer as @dynamic (spec §18.4)", () => {
+    const { typed, errors } = checkSource(`let x: integer = 1;`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    const item = typed?.items[0];
+    if (
+      item &&
+      "statement" in item &&
+      "choreoType" in item.statement &&
+      item.statement.stmt.kind === "LetStatement"
+    ) {
+      assert.equal(item.statement.choreoType.location.kind, "dynamic");
+    } else {
+      assert.fail("expected top-level LetStatement");
+    }
+  });
+
+  it("packs a located initializer when the let is explicitly @dynamic (spec §18.9)", () => {
+    const { typed, errors } = checkSource(`let x: integer@dynamic = 1@alice;`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    const item = typed?.items[0];
+    if (
+      item &&
+      "statement" in item &&
+      "choreoType" in item.statement &&
+      "initializer" in item.statement &&
+      item.statement.stmt.kind === "LetStatement"
+    ) {
+      assert.equal(item.statement.choreoType.location.kind, "dynamic");
+      assert.equal(item.statement.initializer.gradual?.kind, "pack");
+    } else {
+      assert.fail("expected top-level LetStatement");
+    }
   });
 
   it("rejects boolean@alice condition in @every context (spec §16.9)", () => {

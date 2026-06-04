@@ -245,7 +245,12 @@ class Parser {
     if (this.match(TokenKind.Every)) {
       return { kind: "every" };
     }
-    const id = this.consumeIdentifierToken("expected location name or 'every'");
+    if (this.match(TokenKind.Dynamic)) {
+      return { kind: "dynamic" };
+    }
+    const id = this.consumeIdentifierToken(
+      "expected location name, 'every', or 'dynamic'",
+    );
     return { kind: "concrete", name: id.name };
   }
 

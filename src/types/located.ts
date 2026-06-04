@@ -29,10 +29,10 @@ export function locationsEqual(a: Location, b: Location): boolean {
   if (a.kind !== b.kind) {
     return false;
   }
-  if (a.kind === "every") {
-    return true;
+  if (a.kind === "concrete") {
+    return b.kind === "concrete" && a.name === b.name;
   }
-  return b.kind === "concrete" && a.name === b.name;
+  return true;
 }
 
 /**
@@ -68,9 +68,23 @@ export function contextAsLocation(ctx: ExecutionContext): Location {
 
 export function formatLocatedType(type: LocatedType): string {
   const loc =
-    type.location.kind === "every" ? "every" : type.location.name;
+    type.location.kind === "every"
+      ? "every"
+      : type.location.kind === "dynamic"
+        ? "dynamic"
+        : type.location.name;
   const head = type.isArray ? `${type.base}[]` : type.base;
   return `${head}@${loc}`;
+}
+
+/** Whether a located type is at the Gradual `@dynamic` location (spec §18.2). */
+export function isDynamic(type: LocatedType): boolean {
+  return type.location.kind === "dynamic";
+}
+
+/** Human-readable label for a location (`every`, `dynamic`, or participant name). */
+export function locationLabel(location: Location): string {
+  return location.kind === "concrete" ? location.name : location.kind;
 }
 
 export function locatedType(

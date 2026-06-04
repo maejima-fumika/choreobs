@@ -72,12 +72,16 @@ import {
   available,
   contextAsLocation,
   formatLocatedType,
+  isDynamic,
   isSubtype,
   isArraySubtype,
   localAvailable,
   locatedType,
+  locationLabel,
   locationsEqual,
 } from "../types/located.js";
+import type { GradualCoercion } from "../ast/gradual.js";
+import { locationCoercion, requireCoercionFor } from "./coercion.js";
 import {
   LocationOmitError,
   resolveLiteralType,
@@ -132,6 +136,12 @@ class TypeChecker {
     if (this.participants.has("every")) {
       this.error(
         "'every' must not appear in participants (spec §2.2)",
+        program.span,
+      );
+    }
+    if (this.participants.has("dynamic")) {
+      this.error(
+        "'dynamic' is reserved and must not appear in participants (spec §18.2, §18.21.1)",
         program.span,
       );
     }
@@ -385,7 +395,7 @@ class TypeChecker {
                 ctx,
                 allowOmit,
                 stmt.span,
-              )
+              ).type
             : initializer.choreoType;
         this.defineLocal(stmt.name, choreoType, stmt.span);
         return undefined;
@@ -494,7 +504,7 @@ class TypeChecker {
             ctx,
             allowOmit,
             init.span,
-          )
+          ).type
         : initializer.choreoType;
     this.defineLocal(init.name, choreoType, init.span);
     return undefined;
@@ -748,13 +758,22 @@ class TypeChecker {
     if (this.isPushCallExpression(stmt.initializer)) {
       this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
     }
-    const choreoType =
-      stmt.type !== undefined
-        ? this.resolveLetType(stmt.type, initializer, ctx, allowOmit, stmt.span)
-        : initializer.choreoType;
+    let choreoType: LocatedType;
+    let coerced = initializer;
+    if (stmt.type !== undefined) {
+      const resolved = this.resolveLetType(stmt.type, initializer, ctx, allowOmit, stmt.span);
+      choreoType = resolved.type;
+      coerced =
+        resolved.coercion !== undefined
+          ? this.withGradual(initializer, resolved.coercion)
+          : this.maybeCopyWrapper(resolved.type, initializer);
+    } else {
+      choreoType = initializer.choreoType;
+      coerced = this.maybeCopyWrapper(choreoType, initializer);
+    }
     this.requireExpressionAvailable(choreoType.location, ctx, stmt.span);
     this.defineLocal(stmt.name, choreoType, stmt.span);
-    return { stmt, choreoType, initializer };
+    return { stmt, choreoType, initializer: coerced };
   }
 
   private resolveLetType(
@@ -763,8 +782,8 @@ class TypeChecker {
     ctx: ExecutionContext,
     allowOmit: boolean,
     span: Span,
-  ): LocatedType {
-    const choreoType = this.resolveType(ann, ctx, allowOmit);
+  ): { type: LocatedType; coercion?: GradualCoercion } {
+    const choreoType = this.resolveLetAnnotation(ann, initializer, ctx, allowOmit);
     this.validateLocalFunctionLocatedType(
       this.currentFunction,
       choreoType,
@@ -777,24 +796,62 @@ class TypeChecker {
           `cannot assign ${formatLocatedType(initializer.choreoType)} to ${formatLocatedType(choreoType)}`,
           span,
         );
-        return choreoType;
+        return { type: choreoType };
+      }
+      if (isDynamic(choreoType) || isDynamic(initializer.choreoType)) {
+        const coercion = this.validateAssignmentLike(
+          choreoType,
+          initializer.choreoType,
+          span,
+        );
+        return { type: choreoType, coercion };
       }
       if (initializer.expr.kind === "ArrayLiteralExpression") {
         if (initializer.expr.elements.length === 0) {
-          return choreoType;
+          return { type: choreoType };
         }
         const expectedElement = locatedType(choreoType.base, choreoType.location);
         const typedArray = initializer as TypedArrayLiteralExpression;
         for (const element of typedArray.elements) {
           this.validateAssignmentLike(expectedElement, element.choreoType, element.expr.span);
         }
-        return choreoType;
+        return { type: choreoType };
       }
       this.validateAssignmentLike(choreoType, initializer.choreoType, span);
-      return choreoType;
+      return { type: choreoType };
     }
-    this.validateAssignmentLike(choreoType, initializer.choreoType, span);
-    return choreoType;
+    const coercion = this.validateAssignmentLike(
+      choreoType,
+      initializer.choreoType,
+      span,
+    );
+    return { type: choreoType, coercion };
+  }
+
+  /**
+   * Resolve the located type of an initialized `let`.
+   *
+   * Gradual ChoreoBS infers the binding location from the initializer when the
+   * annotation omits its location in a global/`@every` context (spec §18.5,
+   * §18.13). An explicit location (including `@dynamic`) is authoritative.
+   */
+  private resolveLetAnnotation(
+    ann: import("../ast/syntax-types.js").TypeAnnotation,
+    initializer: TypedExpression,
+    ctx: ExecutionContext,
+    allowOmit: boolean,
+  ): LocatedType {
+    if (ann.location === undefined && ctx.kind !== "local") {
+      validateArrayTypeAnnotation(ann);
+      const located = locatedType(
+        ann.base,
+        initializer.choreoType.location,
+        ann.isArray === true ? true : undefined,
+      );
+      this.validateLocation(located.location, ann.span);
+      return located;
+    }
+    return this.resolveType(ann, ctx, allowOmit);
   }
 
   private checkLetReceive(
@@ -821,8 +878,8 @@ class TypeChecker {
     }
     if (stmt.target.kind === "IdentifierAssignmentTarget") {
       const targetType = this.lookupVariable(stmt.target.name, stmt.span);
-      this.validateAssignmentLike(targetType, value.choreoType, stmt.span);
-      return { stmt, target: { target: stmt.target, targetType }, value };
+      const coercedValue = this.coerceValueTo(targetType, value, stmt.span);
+      return { stmt, target: { target: stmt.target, targetType }, value: coercedValue };
     }
     const arrayType = this.lookupVariable(stmt.target.name, stmt.span);
     if (!arrayType.isArray) {
@@ -833,9 +890,24 @@ class TypeChecker {
       this.error("array index must have type integer", stmt.target.index.span);
     }
     const elementType = locatedType(arrayType.base, arrayType.location);
-    this.validateAssignmentLike(elementType, value.choreoType, stmt.span);
-    if (!available(index.choreoType.location, arrayType.location)) {
-      this.error("array index location is not available at array location (spec §16.37)", stmt.span);
+    if (
+      isDynamic(arrayType) ||
+      isDynamic(index.choreoType) ||
+      isDynamic(value.choreoType)
+    ) {
+      // Dynamic array set (spec §18.14.2): base type checked statically; the
+      // location checks become runtime InvalidDynamicArrayAccess checks.
+      if (value.choreoType.isArray || !isSubtype(value.choreoType.base, arrayType.base)) {
+        this.error(
+          `cannot assign ${formatLocatedType(value.choreoType)} to element of ${formatLocatedType(arrayType)}`,
+          stmt.span,
+        );
+      }
+    } else {
+      this.validateAssignmentLike(elementType, value.choreoType, stmt.span);
+      if (!available(index.choreoType.location, arrayType.location)) {
+        this.error("array index location is not available at array location (spec §16.37)", stmt.span);
+      }
     }
     return { stmt, target: { target: stmt.target, arrayType, index, elementType }, value };
   }
@@ -927,13 +999,22 @@ class TypeChecker {
     ) {
       this.error("cannot infer empty array element type (spec §16.32)", init.span);
     }
-    const choreoType =
-      init.type !== undefined
-        ? this.resolveLetType(init.type, initializer, ctx, allowOmit, init.span)
-        : initializer.choreoType;
+    let choreoType: LocatedType;
+    let coerced = initializer;
+    if (init.type !== undefined) {
+      const resolved = this.resolveLetType(init.type, initializer, ctx, allowOmit, init.span);
+      choreoType = resolved.type;
+      coerced =
+        resolved.coercion !== undefined
+          ? this.withGradual(initializer, resolved.coercion)
+          : this.maybeCopyWrapper(resolved.type, initializer);
+    } else {
+      choreoType = initializer.choreoType;
+      coerced = this.maybeCopyWrapper(choreoType, initializer);
+    }
     this.requireExpressionAvailable(choreoType.location, ctx, init.span);
     this.defineLocal(init.name, choreoType, init.span);
-    return { init, choreoType, initializer };
+    return { init, choreoType, initializer: coerced };
   }
 
   private checkForLetReceiveInit(
@@ -957,8 +1038,8 @@ class TypeChecker {
   ): TypedForAssignmentInit {
     const targetType = this.lookupVariable(init.name, init.span);
     const value = this.checkExpression(init.value, ctx, allowOmit);
-    this.validateAssignmentLike(targetType, value.choreoType, init.span);
-    return { init, targetType, value };
+    const coercedValue = this.coerceValueTo(targetType, value, init.span);
+    return { init, targetType, value: coercedValue };
   }
 
   private checkForUpdate(
@@ -1028,8 +1109,8 @@ class TypeChecker {
     if (this.isPushCallExpression(stmt.value)) {
       this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
     }
-    this.validateReturnLike(returnType, value.choreoType, stmt.span);
-    return { stmt, value };
+    const coercion = this.validateReturnLike(returnType, value.choreoType, stmt.span);
+    return { stmt, value: this.withGradual(value, coercion) };
   }
 
   private checkExpressionStatement(
@@ -1053,9 +1134,13 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedExpression {
     const typed = this.checkExpression(expr, ctx, allowOmit);
-    if (typed.choreoType.base !== "boolean") {
+    if (typed.choreoType.base !== "boolean" || typed.choreoType.isArray) {
       this.error("condition must have type boolean", expr.span);
       return typed;
+    }
+    if (isDynamic(typed.choreoType)) {
+      // Dynamic condition (spec §18.17): require runtime location `every`.
+      return this.withGradual(typed, { kind: "requireCondition" });
     }
     if (ctx.kind === "every") {
       if (typed.choreoType.location.kind !== "every") {
@@ -1065,10 +1150,7 @@ class TypeChecker {
         );
       }
     } else if (!localAvailable(typed.choreoType.location, ctx.participant)) {
-      const loc =
-        typed.choreoType.location.kind === "every"
-          ? "every"
-          : typed.choreoType.location.name;
+      const loc = locationLabel(typed.choreoType.location);
       this.error(
         `condition must be boolean@${ctx.participant} in local function, got boolean@${loc} (spec §7.9, §7.10)`,
         expr.span,
@@ -1179,9 +1261,14 @@ class TypeChecker {
     allowOmit: boolean,
   ): TypedUnaryExpression {
     const operand = this.checkExpression(expr.operand, ctx, allowOmit);
+    const operandDynamic = isDynamic(operand.choreoType);
     if (expr.operator === "!") {
       if (operand.choreoType.base !== "boolean") {
         this.error("operator '!' requires boolean operand", expr.span);
+      }
+      if (operandDynamic) {
+        // Dynamic unary (spec §18.12.4).
+        return { expr, choreoType: locatedType("boolean", { kind: "dynamic" }), operand };
       }
       this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
       return {
@@ -1192,6 +1279,9 @@ class TypeChecker {
     }
     if (!this.isNumeric(operand.choreoType)) {
       this.error("unary '-' requires numeric operand", expr.span);
+    }
+    if (operandDynamic) {
+      return { expr, choreoType: operand.choreoType, operand };
     }
     this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
     return { expr, choreoType: operand.choreoType, operand };
@@ -1214,12 +1304,12 @@ class TypeChecker {
   ): TypedArrayLiteralExpression {
     let location = expr.location?.location;
     if (location === undefined) {
-      if (allowOmit && ctx.kind === "local") {
-        location = { kind: "concrete", name: ctx.participant };
-      } else {
-        this.error("array literal location annotation required in @every/top-level context (spec §5.16, §16.31)", expr.span);
-        location = contextAsLocation(ctx);
-      }
+      // Gradual ChoreoBS: an unlocated array literal in a global/@every context
+      // is a dynamic array whose runtime location is `every` (spec §18.4, §18.14).
+      location =
+        ctx.kind === "local"
+          ? { kind: "concrete", name: ctx.participant }
+          : { kind: "dynamic" };
     }
     const elements = expr.elements.map((element) =>
       this.typeArrayElementExpression(element, location, ctx, allowOmit),
@@ -1323,9 +1413,13 @@ class TypeChecker {
       if (!arg.choreoType.isArray) {
         this.error("length builtin requires array argument", expr.span);
       }
+      // Dynamic array length (spec §18.14.4): result location is the array's.
+      const resultLocation = isDynamic(arg.choreoType)
+        ? ({ kind: "dynamic" } as const)
+        : arg.choreoType.location;
       return {
         expr,
-        choreoType: locatedType("integer", arg.choreoType.location),
+        choreoType: locatedType("integer", resultLocation),
         callee: this.unknownFunction(expr.callee),
         args: [arg],
       };
@@ -1346,17 +1440,30 @@ class TypeChecker {
             expr: { kind: "IdentifierExpression", name: "_", span: expr.span },
             choreoType: locatedType("integer", contextAsLocation(ctx)),
           } as TypedExpression);
+      let pushElement = v;
       if (!xs.choreoType.isArray) {
         this.error("push builtin requires array as first argument", expr.span);
+      } else if (isDynamic(xs.choreoType) || isDynamic(v.choreoType)) {
+        // Dynamic array push (spec §18.14.3): base type checked statically.
+        if (v.choreoType.isArray || !isSubtype(v.choreoType.base, xs.choreoType.base)) {
+          this.error(
+            `cannot push ${formatLocatedType(v.choreoType)} to ${formatLocatedType(xs.choreoType)}`,
+            expr.span,
+          );
+        }
       } else {
         const elementType = locatedType(xs.choreoType.base, xs.choreoType.location);
-        this.validateAssignmentLike(elementType, v.choreoType, expr.span);
+        const coercion = this.validateAssignmentLike(elementType, v.choreoType, expr.span);
+        pushElement = this.withGradual(v, coercion);
       }
+      const pushLocation = isDynamic(xs.choreoType)
+        ? ({ kind: "dynamic" } as const)
+        : xs.choreoType.location;
       return {
         expr,
-        choreoType: locatedType("unit", xs.choreoType.location),
+        choreoType: locatedType("unit", pushLocation),
         callee: this.unknownFunction(expr.callee),
-        args: [xs, v],
+        args: [xs, pushElement],
       };
     }
     const decl = this.functions.get(expr.callee);
@@ -1396,9 +1503,11 @@ class TypeChecker {
       }
       const param = params[i];
       if (param !== undefined) {
-        this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
+        const coercion = this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
+        args.push(this.withGradual(arg, coercion));
+      } else {
+        args.push(arg);
       }
-      args.push(arg);
     }
     this.requireExpressionAvailable(symbol.returnType.location, ctx, expr.span);
     return {
@@ -1421,6 +1530,15 @@ class TypeChecker {
     }
     if (index.choreoType.base !== "integer" || index.choreoType.isArray) {
       this.error("array index must have type integer", expr.index.span);
+    }
+    if (isDynamic(target.choreoType) || isDynamic(index.choreoType)) {
+      // Dynamic array get (spec §18.14.1): location checks deferred to runtime.
+      return {
+        expr,
+        choreoType: locatedType(target.choreoType.base, { kind: "dynamic" }),
+        target,
+        index,
+      };
     }
     if (!available(index.choreoType.location, target.choreoType.location)) {
       this.error("array index location is not available at array location (spec §16.37)", expr.span);
@@ -1454,7 +1572,7 @@ class TypeChecker {
     if (ctx.kind === "every") {
       return;
     }
-    if (decl.at.kind === "every") {
+    if (decl.at.kind !== "concrete") {
       this.error(
         `cannot call @every function '${decl.name}' from local context (spec §7.12, §10.3)`,
         span,
@@ -1473,16 +1591,23 @@ class TypeChecker {
     param: LocatedType,
     arg: LocatedType,
     span: Span,
-  ): void {
+  ): GradualCoercion | undefined {
     if (arg.isArray && !param.isArray) {
       this.error("array argument is not assignable to non-array parameter", span);
-      return;
+      return undefined;
     }
     if (!arg.isArray && param.isArray) {
       this.error("non-array argument is not assignable to array parameter", span);
-      return;
+      return undefined;
     }
-    if (arg.isArray && param.isArray && arg.location.kind === "every" && param.location.kind === "concrete") {
+    if (
+      !isDynamic(arg) &&
+      !isDynamic(param) &&
+      arg.isArray &&
+      param.isArray &&
+      arg.location.kind === "every" &&
+      param.location.kind === "concrete"
+    ) {
       this.error(
         "cannot pass T[]@every to T[]@P parameter (spec §7.11.1, §16.35)",
         span,
@@ -1493,12 +1618,22 @@ class TypeChecker {
         `argument type ${formatLocatedType(arg)} is not assignable to parameter type ${formatLocatedType(param)}`,
         span,
       );
+      return undefined;
     }
-    if (!available(arg.location, param.location)) {
-      this.error(
-        `argument location ${formatLocatedType(arg)} is not available at parameter location ${formatLocatedType(param)}`,
-        span,
-      );
+    const coercion = locationCoercion(param, arg);
+    switch (coercion.kind) {
+      case "none":
+        return undefined;
+      case "pack":
+        return { kind: "pack" };
+      case "require":
+        return requireCoercionFor(param);
+      case "static-mismatch":
+        this.error(
+          `argument location ${formatLocatedType(arg)} is not available at parameter location ${formatLocatedType(param)}`,
+          span,
+        );
+        return undefined;
     }
   }
 
@@ -1506,12 +1641,60 @@ class TypeChecker {
     return expr.kind === "CallExpression" && expr.callee === "push";
   }
 
+  private withGradual(
+    expr: TypedExpression,
+    coercion: GradualCoercion | undefined,
+  ): TypedExpression {
+    if (coercion === undefined) {
+      return expr;
+    }
+    return { ...expr, gradual: coercion };
+  }
+
+  /**
+   * Attach an assignment-style coercion (pack/require/copyWrapper) to a value
+   * expression for use where `target` is expected (spec §18.10, §18.15).
+   */
+  private coerceValueTo(
+    target: LocatedType,
+    value: TypedExpression,
+    span: Span,
+  ): TypedExpression {
+    const coercion = this.validateAssignmentLike(target, value.choreoType, span);
+    if (coercion !== undefined) {
+      return this.withGradual(value, coercion);
+    }
+    return this.maybeCopyWrapper(target, value);
+  }
+
+  /** Dynamic-to-dynamic binding/assignment copies the DynValue wrapper (spec §18.15). */
+  private maybeCopyWrapper(
+    target: LocatedType,
+    value: TypedExpression,
+  ): TypedExpression {
+    if (
+      isDynamic(target) &&
+      isDynamic(value.choreoType) &&
+      value.expr.kind === "IdentifierExpression"
+    ) {
+      return this.withGradual(value, { kind: "copyWrapper" });
+    }
+    return value;
+  }
+
   private validateAssignmentLike(
     target: LocatedType,
     source: LocatedType,
     span: Span,
-  ): void {
-    if (source.isArray && target.isArray && source.location.kind === "every" && target.location.kind === "concrete") {
+  ): GradualCoercion | undefined {
+    if (
+      !isDynamic(source) &&
+      !isDynamic(target) &&
+      source.isArray &&
+      target.isArray &&
+      source.location.kind === "every" &&
+      target.location.kind === "concrete"
+    ) {
       this.error(
         "cannot assign T[]@every to T[]@P (spec §7.11.1, §16.34)",
         span,
@@ -1522,33 +1705,58 @@ class TypeChecker {
         `cannot assign ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
       );
+      return undefined;
     }
-    if (!available(source.location, target.location)) {
-      this.error(
-        `invalid assignment across locations: use communication instead (spec §7.7, §16.7)`,
-        span,
-      );
+    const coercion = locationCoercion(target, source);
+    switch (coercion.kind) {
+      case "none":
+        return undefined;
+      case "pack":
+        return { kind: "pack" };
+      case "require":
+        return requireCoercionFor(target);
+      case "static-mismatch":
+        this.error(
+          `invalid assignment across locations: use communication instead (spec §7.7, §16.7)`,
+          span,
+        );
+        return undefined;
     }
   }
 
-  /** Return value vs declared/inferred return type (spec §7.13; same rules as assignment). */
+  /** Return value vs declared/inferred return type (spec §7.13, §18.10.5). */
   private validateReturnLike(
     returnType: LocatedType,
     value: LocatedType,
     span: Span,
-  ): void {
+  ): GradualCoercion | undefined {
     if (!isArraySubtype(value, returnType)) {
       this.error(
         `return type ${formatLocatedType(value)} is not compatible with ${formatLocatedType(returnType)}`,
         span,
       );
+      return undefined;
     }
-    if (!available(value.location, returnType.location)) {
-      this.error(
-        `return value ${formatLocatedType(value)} is not available at return type location ${formatLocatedType(returnType)} (spec §7.13)`,
-        span,
-      );
+    const coercion = locationCoercion(returnType, value);
+    switch (coercion.kind) {
+      case "none":
+        return undefined;
+      case "pack":
+        return { kind: "pack" };
+      case "require":
+        return requireCoercionFor(returnType);
+      case "static-mismatch":
+        this.error(
+          `return value ${formatLocatedType(value)} is not available at return type location ${formatLocatedType(returnType)} (spec §7.13)`,
+          span,
+        );
+        return undefined;
     }
+  }
+
+  /** Whether a communication involves a dynamic endpoint (spec §18.13). */
+  private isGradualComm(target: LocatedType, source: LocatedType): boolean {
+    return isDynamic(target) || isDynamic(source);
   }
 
   private validateCommunication(
@@ -1561,6 +1769,11 @@ class TypeChecker {
         `communication type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
       );
+    }
+    if (this.isGradualComm(target, source)) {
+      // Dynamic communication (spec §18.13): accepted at compile time; runtime
+      // dynMove raises InvalidDynamicCommunication for non-transferring forms.
+      return "direct";
     }
     const srcLoc = source.location;
     const dstLoc = target.location;
@@ -1615,6 +1828,11 @@ class TypeChecker {
     ctx: ExecutionContext,
     span: Span,
   ): LocatedType {
+    if (isDynamic(left) || isDynamic(right)) {
+      // Dynamic operator (spec §18.12): result is dynamic; static operands are
+      // packed during lowering. Location compatibility is a runtime check.
+      return locatedType(base, { kind: "dynamic" });
+    }
     const evalLoc = this.resolveBinaryEvaluationLocation(
       left.location,
       right.location,
@@ -1664,7 +1882,7 @@ class TypeChecker {
   private requireAvailable(valueLoc: Location, useLoc: Location, span: Span): void {
     if (!available(valueLoc, useLoc)) {
       this.error(
-        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in this context (spec §7.6)`,
+        `value at ${locationLabel(valueLoc)} is not available in this context (spec §7.6)`,
         span,
       );
     }
@@ -1680,7 +1898,7 @@ class TypeChecker {
     }
     if (!localAvailable(valueLoc, ctx.participant)) {
       this.error(
-        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in local function at ${ctx.participant}`,
+        `value at ${locationLabel(valueLoc)} is not available in local function at ${ctx.participant}`,
         span,
       );
     }
@@ -1746,7 +1964,7 @@ class TypeChecker {
   }
 
   private validateLocation(loc: Location, span: Span): void {
-    if (loc.kind === "every") {
+    if (loc.kind !== "concrete") {
       return;
     }
     if (!this.participants.has(loc.name)) {

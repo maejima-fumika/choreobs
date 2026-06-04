@@ -2,9 +2,11 @@ import { basename, dirname, extname, join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parse, type ParseError } from "../parser/index.js";
 import { typeCheck, type TypeCheckError } from "../check/index.js";
+import { lowerProgram } from "../lowering/index.js";
 import { projectAll } from "../epp/index.js";
 import { cleanupAll } from "../cleanup/index.js";
 import { emit } from "../emit/index.js";
+import { emitRuntimeModule } from "../emit/runtime.js";
 import {
   commConsistencyDiagnostics,
   verifyCommunicationConsistency,
@@ -70,7 +72,8 @@ export function compileSource(
     return { success: false, outputs: [], errors };
   }
 
-  const projected = projectAll(checked.typed, config.participants);
+  const lowered = lowerProgram(checked.typed);
+  const projected = projectAll(lowered.typed, config.participants);
   const cleaned = cleanupAll(projected);
   const stem = basename(cbsPath, extname(cbsPath));
   const outDir = dirname(cbsPath);
@@ -95,6 +98,17 @@ export function compileSource(
       outputs: [],
       errors: [...errors, ...commConsistencyDiagnostics(commCheck.errors)],
     };
+  }
+
+  if (lowered.usesGradual) {
+    // Emit the per-endpoint DynValue runtime module (spec §18.20).
+    for (const program of cleaned) {
+      outputs.push({
+        participant: program.participant,
+        path: join(outDir, `${stem}_runtime_${program.participant}.bs`),
+        source: emitRuntimeModule(program.participant),
+      });
+    }
   }
 
   return { success: true, outputs, errors };

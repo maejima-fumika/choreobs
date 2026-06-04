@@ -258,19 +258,28 @@ function fact@alice(n: integer): integer {
       );
     });
 
-    it("rejects top-level let when initializer omits location (§8.3)", () => {
-      expectTypeCheckFailure("let x = 1;", "location");
+    it("infers top-level let with omitted location as @dynamic (§18.4, §18.5)", () => {
+      const typed = expectTypeCheckSuccess("let x = 1;");
+      const item = typed.items[0];
+      if (
+        item &&
+        "statement" in item &&
+        "choreoType" in item.statement &&
+        item.statement.stmt.kind === "LetStatement"
+      ) {
+        assert.equal(item.statement.choreoType.base, "integer");
+        assert.equal(item.statement.choreoType.location.kind, "dynamic");
+      } else {
+        assert.fail("expected top-level LetStatement");
+      }
     });
 
-    it("rejects let in @every function when initializer omits location (§8.2)", () => {
-      expectTypeCheckFailure(
-        `
+    it("infers let in @every function with omitted location as @dynamic (§18.4, §18.5)", () => {
+      expectTypeCheckSuccess(`
 function f@every() {
   let x = 1;
 }
-`,
-        "location",
-      );
+`);
     });
 
     it("rejects function parameters without type annotations (§7.14.7)", () => {
