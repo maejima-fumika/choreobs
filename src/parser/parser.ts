@@ -378,25 +378,29 @@ class Parser {
   }
 
   private parseIdentifierLeadingStatement(): Statement {
+    const start = this.index;
     const nameTok = this.consumeIdentifierToken("expected identifier");
     if (this.match(TokenKind.LBracket)) {
       const index = this.parseExpression();
-      this.consume(TokenKind.RBracket, "expected ']' after assignment index");
-      this.consume(TokenKind.Assign, "expected '=' after assignment target");
-      const value = this.parseExpression();
-      this.consume(TokenKind.Semicolon, "expected ';' after assignment");
-      const target: IndexAssignmentTarget = {
-        kind: "IndexAssignmentTarget",
-        name: nameTok.name,
-        index,
-        span: spanFrom(nameTok, index),
-      };
-      return {
-        kind: "AssignmentStatement",
-        target,
-        value,
-        span: spanFrom(nameTok, value),
-      };
+      this.consume(TokenKind.RBracket, "expected ']' after index expression");
+      if (this.match(TokenKind.Assign)) {
+        const value = this.parseExpression();
+        this.consume(TokenKind.Semicolon, "expected ';' after assignment");
+        const target: IndexAssignmentTarget = {
+          kind: "IndexAssignmentTarget",
+          name: nameTok.name,
+          index,
+          span: spanFrom(nameTok, index),
+        };
+        return {
+          kind: "AssignmentStatement",
+          target,
+          value,
+          span: spanFrom(nameTok, value),
+        };
+      }
+      this.index = start;
+      return this.parseExpressionStatement();
     }
     if (this.match(TokenKind.Assign)) {
       const value = this.parseExpression();
