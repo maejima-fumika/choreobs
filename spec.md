@@ -4357,3 +4357,1615 @@ The following optimizations are not required in v0:
 * removal of empty blocks;
 * removal of empty loops;
 * side-effect analysis for ordinary function calls.
+
+### 18. Gradual ChoreoBS Extension
+
+This section defines the Gradual ChoreoBS extension built on top of ChoreoBS Core v0. Sections 1 through 17 define the explicitly located Core v0 language. This section extends Core v0 with dynamic locations, runtime location checks, and dynamic endpoint projection support.
+
+The Gradual extension is intended to preserve the Core v0 meaning of explicitly located programs while allowing programmers to replace explicit static locations with `@dynamic`. If a static location annotation is replaced by `@dynamic`, then, as long as all inserted dynamic checks succeed, the observable result is the same as the corresponding explicitly located program. Static location errors are delayed to runtime dynamic location errors.
+
+However, if a location is completely omitted, the default dynamic runtime location is `every` in global and `@every` contexts. Therefore, replacing a static location with `@dynamic` and completely omitting a location are not the same operation.
+
+#### 18.1 Design Goals
+
+Gradual ChoreoBS aims to:
+
+- allow location annotations to be weakened to `@dynamic`;
+- preserve base type checking from Core v0;
+- move selected static location checks to runtime checks;
+- keep all endpoints executing the same projected control-flow structure;
+- ensure that endpoints know the runtime location tag of dynamic values even when they do not know the payload value;
+- avoid communication mismatch deadlocks caused by dynamic locations by raising controlled runtime dynamic errors;
+- preserve explicit communication as the only source-level mechanism for transferring values between locations;
+- support dynamic scalar values and the existing mutable one-dimensional array extension.
+
+#### 18.2 Dynamic Location
+
+The Gradual extension adds a special location:
+
+```text
+Location ::= concrete node name
+           | every
+           | dynamic
+```
+
+`dynamic` is a reserved word. It must not appear as a participant name in `choreobs.json`.
+
+A type `T@dynamic` means that the value has base type `T`, but its runtime location is represented by a runtime location tag. The tag is either `every` or a concrete participant name.
+
+Examples:
+
+```ts
+let x: integer@dynamic = 1;
+let y: integer@dynamic = 1@alice;
+let z = 1@dynamic;
+```
+
+`@dynamic` is not a concrete participant. It exists only in the source type system and is represented after EPP by a runtime `DynValue` wrapper.
+
+#### 18.3 Dynamic Literals
+
+A programmer may explicitly make a literal dynamic by writing `v@dynamic`.
+
+Examples:
+
+```ts
+1@dynamic
+true@dynamic
+"hello"@dynamic
+null@dynamic
+[1, 2, 3]@dynamic
+```
+
+A literal annotated with `@dynamic` is initialized as a dynamic value whose runtime location is `every`.
+
+Example:
+
+```ts
+let x = 1@dynamic;
+```
+
+After EPP at every participant:
+
+```ts
+let x = new DynValue(1, EVERY);
+```
+
+This means `1@dynamic` is not an unknown concrete-location literal. It is a dynamic value whose initial runtime location is `every`.
+
+#### 18.4 Location Omission in Gradual ChoreoBS
+
+In global and `@every` contexts, omitted type locations default to `@dynamic`.
+
+Examples:
+
+```ts
+let x: integer = 1;
+let b: boolean = true;
+function f@every(x: integer): integer {
+  return x + 1;
+}
+```
+
+These are elaborated as:
+
+```ts
+let x: integer@dynamic = 1;
+let b: boolean@dynamic = true;
+function f@every(x: integer@dynamic): integer@dynamic {
+  return x + 1;
+}
+```
+
+In local functions, omitted type locations follow Core v0 and default to the function's own concrete location.
+
+```ts
+function add@alice(a: integer, b: integer): integer {
+  return a + b;
+}
+```
+
+This is elaborated as:
+
+```ts
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
+  return a + b;
+}
+```
+
+Local functions do not accept or return `@dynamic` values.
+
+Disallowed:
+
+```ts
+function bad@alice(x: integer@dynamic): integer {
+  return x;
+}
+
+function bad2@alice(): integer@dynamic {
+  return 1@alice;
+}
+```
+
+#### 18.5 Gradual Let Type Inference
+
+For an ordinary initialized let declaration:
+
+```ts
+let x = expr;
+```
+
+if:
+
+```text
+expr : T@L
+```
+
+then:
+
+```text
+x : T@L
+```
+
+This is the same shape as Core v0 inference. The difference is that unlocated literals in global and `@every` contexts are dynamic values with runtime location `every`.
+
+Examples:
+
+```ts
+let x = 1@alice;       // x : integer@alice
+let y = 1@dynamic;     // y : integer@dynamic, runtime location every
+let z = 1;             // z : integer@dynamic, runtime location every
+let w = x;             // w : integer@alice
+```
+
+If `expr` is a local function call returning a static value, the inferred type is the static return type.
+
+```ts
+function add@alice(a: integer, b: integer): integer {
+  return a + b;
+}
+
+let x = add(1@alice, 2@alice); // x : integer@alice
+```
+
+#### 18.6 Communication Let with Omitted Destination Location
+
+In Gradual ChoreoBS, if the destination type of a communication let is written without a location in a global or `@every` context, the destination location defaults to `@dynamic` with runtime location `every`.
+
+Example:
+
+```ts
+let x: integer@alice = 1@alice;
+let y: integer <~ x;
+```
+
+This means `y : integer@dynamic`, with destination runtime location `every`.
+
+After EPP at alice:
+
+```ts
+let x: integer = 1;
+let y = dynMove(packDynamic(x, "alice"), "top_0", EVERY);
+```
+
+After EPP at bob:
+
+```ts
+let y = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
+```
+
+#### 18.7 Base Type Checking
+
+Gradual ChoreoBS only gradualizes locations. Base type checking remains static and follows Core v0.
+
+```ts
+let x: integer = 1;
+let y: string@alice = "foo"@alice;
+x + y; // compile-time error
+```
+
+Runtime dynamic operators do not check base types. The compiler must only generate them after Core v0 base type checking succeeds.
+
+#### 18.8 Dynamic Runtime Representation
+
+A dynamic value is represented after EPP by `DynValue`.
+
+```ts
+type RuntimeLocation = string;
+
+const EVERY: RuntimeLocation = "every";
+const HERE: RuntimeLocation = "alice"; // generated per endpoint
+
+class DynValue {
+  value: any;
+  location: RuntimeLocation;
+
+  constructor(value: any, location: RuntimeLocation) {
+    this.value = value;
+    this.location = location;
+  }
+
+  copyWrapper() {
+    return new DynValue(this.value, this.location);
+  }
+}
+```
+
+Rules:
+
+- `DynValue` does not have a `hasValue` field.
+- `value = null` does not mean payload absence.
+- Payload availability is determined by `location` and `HERE`.
+- If `location == every`, every endpoint has a meaningful payload value.
+- If `location == P`, only endpoint `P` has a meaningful payload value.
+- For all endpoints, a given dynamic variable has the same `location` tag.
+- If an endpoint does not have the payload, the generated `value` must be `null`.
+
+The global location-tag invariant is:
+
+```text
+For every source variable x : T@dynamic, after EPP, every endpoint has a DynValue binding for x with the same location tag.
+Only endpoints where the value is available have a meaningful payload.
+```
+
+This invariant is preserved by packing, dynamic operators, dynamic communication, dynamic array operations, and dynamic assignment using `copyWrapper()`.
+
+#### 18.9 Packing Static Values into Dynamic Values
+
+Compiler-side packing rule:
+
+```text
+pack_P(e) =
+  if P == every:
+    DynValue(e, every) at all endpoints
+  else if HERE == P:
+    DynValue(e, P)
+  else:
+    DynValue(null, P)
+```
+
+Runtime helper:
+
+```ts
+function packDynamic(value: any, location: RuntimeLocation) {
+  return new DynValue(value, location);
+}
+```
+
+If `e : T@P` is checked against `T@dynamic`, then `e` is packed as follows:
+
+- if `P == every`, every endpoint emits `packDynamic(e, EVERY)`;
+- if `P` is concrete and `HERE == P`, emit `packDynamic(e, P)`;
+- if `P` is concrete and `HERE != P`, emit `packDynamic(null, P)`.
+
+Example:
+
+```ts
+let x: integer@dynamic = 1@alice;
+```
+
+After EPP at alice:
+
+```ts
+let x = packDynamic(1, "alice");
+```
+
+After EPP at bob:
+
+```ts
+let x = packDynamic(null, "alice");
+```
+
+#### 18.10 Requiring Dynamic Values at Static Locations
+
+Dynamic values are converted back to static values by require helpers. These helpers perform runtime location checks.
+
+##### 18.10.1 Scalar Require
+
+```ts
+function requireIntegerAt(dynamic: DynValue, location: RuntimeLocation): integer {
+  if (location === EVERY) {
+    if (dynamic.location === EVERY) {
+      return dynamic.value;
+    } else {
+      throw DynamicLocationMismatch();
+    }
+  } else {
+    if (dynamic.location === EVERY) {
+      return dynamic.value;
+    } else if (dynamic.location === location) {
+      if (location === HERE)
+        return dynamic.value;
+      else
+        return 0; // dummy value; will not be used
+    } else {
+      throw DynamicLocationMismatch();
+    }
+  }
+}
+```
+
+Similarly:
+
+```ts
+requireFloatAt(dynamic: DynValue, location: RuntimeLocation): float;
+requireBooleanAt(dynamic: DynValue, location: RuntimeLocation): boolean;
+requireStringAt(dynamic: DynValue, location: RuntimeLocation): string;
+```
+
+Meaning:
+
+```text
+requireTAt(d, every):
+  succeeds only if d.location == every.
+
+requireTAt(d, P), where P is concrete:
+  succeeds if d.location == every or d.location == P.
+  if d.location == P and HERE != P, it returns a dummy value that must not be observed.
+```
+
+##### 18.10.2 Array Require
+
+```ts
+function requireIntegerArrayAt(dynamic: DynValue, location: RuntimeLocation): integer[] {
+  if (dynamic.location === location)
+    return dynamic.value;
+  else
+    throw DynamicLocationMismatch();
+}
+```
+
+Similarly:
+
+```ts
+requireFloatArrayAt(dynamic: DynValue, location: RuntimeLocation): float[];
+requireBooleanArrayAt(dynamic: DynValue, location: RuntimeLocation): boolean[];
+```
+
+Array require uses exact location matching. Unlike scalar require, it does not allow `@every` arrays to be implicitly required at a concrete location. This preserves the Core v0 restriction that mutable arrays located at `@every` must not be implicitly converted to concrete-location arrays.
+
+Example:
+
+```ts
+let xs = [1, 2, 3];
+let ys: integer[]@every = xs;
+let zs: integer[]@alice = xs;
+```
+
+After EPP at alice:
+
+```ts
+let xs = new DynValue([1, 2, 3], EVERY);
+let ys = requireIntegerArrayAt(xs, EVERY);
+let zs = requireIntegerArrayAt(xs, "alice"); // DynamicLocationMismatch
+```
+
+After EPP at bob:
+
+```ts
+let xs = new DynValue([1, 2, 3], EVERY);
+let ys = requireIntegerArrayAt(xs, EVERY);
+let zs = requireIntegerArrayAt(xs, "alice"); // DynamicLocationMismatch
+```
+
+##### 18.10.3 Condition Require
+
+Dynamic conditions must be located at `every` at runtime.
+
+```ts
+function requireCondition(dynamic: DynValue): boolean {
+  if (dynamic.location === EVERY) {
+    return dynamic.value;
+  } else {
+    throw DynamicLocationMismatch();
+  }
+}
+```
+
+`if`, `while`, and `for` conditions use `requireCondition` when the condition is dynamic.
+
+Runtime error:
+
+```ts
+let c: boolean@dynamic = true@alice;
+if (c) {
+}
+```
+
+After EPP at alice:
+
+```ts
+let c = packDynamic(true, "alice");
+if (requireCondition(c)) { // DynamicLocationMismatch
+}
+```
+
+After EPP at bob:
+
+```ts
+let c = packDynamic(null, "alice");
+if (requireCondition(c)) { // DynamicLocationMismatch
+}
+```
+
+#### 18.11 Dynamic Runtime Errors
+
+The Gradual runtime distinguishes the following dynamic errors:
+
+```ts
+DynamicLocationMismatch
+InvalidDynamicCommunication
+InvalidDynamicArrayAccess
+```
+
+`DynamicLocationMismatch` is raised when a dynamic value is required at an incompatible location.
+
+`InvalidDynamicCommunication` is raised when a dynamic communication attempts a non-transferring communication such as `every -> every` or `P -> P`.
+
+`InvalidDynamicArrayAccess` is raised when dynamic array availability rules are violated.
+
+Ordinary runtime errors, such as array bounds errors or division by zero, are not dynamic location errors. Ordinary runtime errors are raised only at endpoints where the actual computation occurs.
+
+#### 18.12 Dynamic Operators
+
+If either operand of an operator is dynamic, all static operands are packed into `DynValue` first. The operator result is dynamic.
+
+```text
+T@dynamic op T@dynamic -> T@dynamic
+T@dynamic op T@L       -> T@dynamic
+T@L       op T@dynamic -> T@dynamic
+```
+
+Base type checking is performed statically before dynamic lowering.
+
+##### 18.12.1 Arithmetic Operators
+
+Supported dynamic arithmetic operators:
+
+```text
++ - * / %
+```
+
+Example runtime helper:
+
+```ts
+function dynAdd(a: DynValue, b: DynValue) {
+  if (a.location === EVERY && b.location === EVERY) {
+    return new DynValue(a.value + b.value, EVERY);
+  }
+  else if (a.location === EVERY) {
+    if (b.location === HERE) return new DynValue(a.value + b.value, b.location);
+    else return new DynValue(null, b.location);
+  }
+  else if (b.location === EVERY) {
+    if (a.location === HERE) return new DynValue(a.value + b.value, a.location);
+    else return new DynValue(null, a.location);
+  }
+  else {
+    if (a.location === b.location) {
+      if (a.location === HERE) return new DynValue(a.value + b.value, a.location);
+      else return new DynValue(null, a.location);
+    } else {
+      throw DynamicLocationMismatch();
+    }
+  }
+}
+```
+
+Similarly:
+
+```ts
+dynSub(a: DynValue, b: DynValue): DynValue;
+dynMul(a: DynValue, b: DynValue): DynValue;
+dynDiv(a: DynValue, b: DynValue): DynValue;
+dynMod(a: DynValue, b: DynValue): DynValue;
+```
+
+Examples:
+
+```ts
+let a: integer = 100;
+let b: integer = 200;
+
+a + b;
+a + 10@alice;
+a + 20@every;
+```
+
+After EPP at alice:
+
+```ts
+let a: DynValue = new DynValue(100, EVERY);
+let b: DynValue = new DynValue(200, EVERY);
+
+dynAdd(a, b);
+dynAdd(a, packDynamic(10, "alice"));
+dynAdd(a, packDynamic(20, EVERY));
+```
+
+After EPP at bob:
+
+```ts
+let a: DynValue = new DynValue(100, EVERY);
+let b: DynValue = new DynValue(200, EVERY);
+
+dynAdd(a, b);
+dynAdd(a, packDynamic(null, "alice"));
+dynAdd(a, packDynamic(20, EVERY));
+```
+
+A dynamic location mismatch raises an error at every endpoint:
+
+```ts
+let x: integer@dynamic = 1@alice;
+let y: integer@dynamic = 2@bob;
+x + y; // DynamicLocationMismatch
+```
+
+##### 18.12.2 Logical Operators
+
+Supported dynamic logical operators:
+
+```text
+&& ||
+```
+
+Dynamic logical operators follow the same location rules as dynamic binary arithmetic operators. Gradual ChoreoBS does not use short-circuit evaluation for dynamic logical operators.
+
+```ts
+dynAnd(a: DynValue, b: DynValue): DynValue;
+dynOr(a: DynValue, b: DynValue): DynValue;
+```
+
+##### 18.12.3 Comparison and Equality Operators
+
+Supported dynamic comparison and equality operators:
+
+```text
+< <= > >= === !==
+```
+
+Dynamic comparison and equality operators follow the same location rules as dynamic binary arithmetic operators. Array equality remains disallowed by static base type checking.
+
+```ts
+dynLt(a: DynValue, b: DynValue): DynValue;
+dynLe(a: DynValue, b: DynValue): DynValue;
+dynGt(a: DynValue, b: DynValue): DynValue;
+dynGe(a: DynValue, b: DynValue): DynValue;
+dynEq(a: DynValue, b: DynValue): DynValue;
+dynNeq(a: DynValue, b: DynValue): DynValue;
+```
+
+##### 18.12.4 Unary Operators
+
+Supported dynamic unary operators:
+
+```text
+! -
+```
+
+Example:
+
+```ts
+function dynNot(a: DynValue): DynValue {
+  if (a.location === EVERY || a.location === HERE) {
+    return new DynValue(!a.value, a.location);
+  } else {
+    return new DynValue(null, a.location);
+  }
+}
+```
+
+Similarly:
+
+```ts
+dynNeg(a: DynValue): DynValue;
+```
+
+#### 18.13 Dynamic Communication
+
+Source-level communication remains a statement. The compiler may lower it to an expression-returning runtime helper.
+
+Dynamic communication uses `dynMove`.
+
+```ts
+function dynMove(from: DynValue, tag: string, toLocation: RuntimeLocation): DynValue {
+  if (from.location === EVERY && toLocation === EVERY) {
+    throw InvalidDynamicCommunication();
+  }
+  else if (from.location === EVERY) {
+    if (toLocation === HERE)
+      return new DynValue(clonePayload(from.value), toLocation);
+    else
+      return new DynValue(null, toLocation);
+  }
+  else if (toLocation === EVERY) {
+    if (from.location === HERE) {
+      broadcastAny(tag, from.value);
+      return new DynValue(clonePayload(from.value), toLocation);
+    }
+    else
+      return new DynValue(receiveAny(from.location, tag), toLocation);
+  }
+  else {
+    if (from.location === toLocation) {
+      throw InvalidDynamicCommunication();
+    } else {
+      if (from.location === HERE) {
+        sendAny(toLocation, tag, from.value);
+        return new DynValue(null, toLocation);
+      }
+      else if (toLocation === HERE)
+        return new DynValue(receiveAny(from.location, tag), toLocation);
+      else
+        return new DynValue(null, toLocation);
+    }
+  }
+}
+```
+
+Dynamic communication modes:
+
+- `P -> Q`, where `P` and `Q` are different concrete locations: direct communication;
+- `P -> every`: broadcast;
+- `every -> P`: localization;
+- `P -> P`: `InvalidDynamicCommunication`;
+- `every -> every`: `InvalidDynamicCommunication`.
+
+For array direct communication, broadcast, and localization, the receiver obtains a fresh mutable copy. For array broadcast to `every`, every endpoint, including the sender, obtains a fresh mutable copy.
+
+If a dynamic variable is the communication destination, the destination location is the runtime location of the destination variable immediately before the communication.
+
+Example:
+
+```ts
+let a: integer = 100;
+let b: integer = 200;
+let c: integer = 300@alice;
+
+a <~ b;
+a <~ c;
+c <~ a;
+let d: integer <~ a;
+let e: integer@alice <~ a;
+```
+
+After EPP at alice:
+
+```ts
+let a: DynValue = new DynValue(100, EVERY);
+let b: DynValue = new DynValue(200, EVERY);
+let c: integer = 300;
+
+a = dynMove(b, "tag1", a.location);
+a = dynMove(packDynamic(c, "alice"), "tag2", a.location);
+c = requireIntegerAt(dynMove(a, "tag3", "alice"), "alice");
+
+let d = dynMove(a, "tag4", EVERY);
+let e = requireIntegerAt(dynMove(a, "tag5", "alice"), "alice");
+```
+
+After EPP at bob:
+
+```ts
+let a: DynValue = new DynValue(100, EVERY);
+let b: DynValue = new DynValue(200, EVERY);
+
+a = dynMove(b, "tag1", a.location);
+a = dynMove(packDynamic(null, "alice"), "tag2", a.location);
+requireIntegerAt(dynMove(a, "tag3", "alice"), "alice");
+
+let d = dynMove(a, "tag4", EVERY);
+requireIntegerAt(dynMove(a, "tag5", "alice"), "alice");
+```
+
+The following dynamic communication raises `InvalidDynamicCommunication`:
+
+```ts
+let a: integer@dynamic = 1@alice;
+let b: integer@dynamic = 2@alice;
+a <~ b; // destination is a.location, so this is alice -> alice
+```
+
+#### 18.14 Dynamic Arrays
+
+Dynamic arrays use `DynValue` wrappers. The payload is a mutable one-dimensional array.
+
+For dynamic arrays:
+
+- if `arr.location == every`, every endpoint has an independent mutable array with the same contents;
+- if `arr.location == P`, only endpoint `P` has the payload array;
+- non-owner endpoints must not access `arr.value`;
+- `arr.value` may be accessed only when `arr.location == every` or `arr.location == HERE`.
+
+##### 18.14.1 Dynamic Array Get
+
+```ts
+function dynArrayGet(arr: DynValue, index: DynValue): DynValue {
+  if (arr.location === EVERY && index.location === EVERY) {
+    return new DynValue(arr.value[index.value], EVERY);
+  }
+  else if (arr.location === EVERY) {
+    throw InvalidDynamicArrayAccess();
+  }
+  else if (index.location === EVERY) {
+    if (arr.location === HERE) return new DynValue(arr.value[index.value], arr.location);
+    else return new DynValue(null, arr.location);
+  }
+  else {
+    if (arr.location === index.location) {
+      if (arr.location === HERE) return new DynValue(arr.value[index.value], arr.location);
+      else return new DynValue(null, arr.location);
+    } else {
+      throw InvalidDynamicArrayAccess();
+    }
+  }
+}
+```
+
+Rules:
+
+```text
+arr.location == every:
+  index.location must be every.
+
+arr.location == P:
+  index.location must be every or P.
+```
+
+Examples:
+
+```ts
+let arr = [1, 3, 5];
+let arr2 = [1, 3, 5]@alice;
+let i = 0;
+
+arr[i];
+arr[0@alice];
+arr2[i];
+```
+
+After EPP at alice:
+
+```ts
+let arr = new DynValue([1, 3, 5], EVERY);
+let arr2 = [1, 3, 5];
+let i = new DynValue(0, EVERY);
+
+dynArrayGet(arr, i);
+dynArrayGet(arr, packDynamic(0, "alice")); // InvalidDynamicArrayAccess
+dynArrayGet(packDynamic(arr2, "alice"), i);
+```
+
+After EPP at bob:
+
+```ts
+let arr = new DynValue([1, 3, 5], EVERY);
+let i = new DynValue(0, EVERY);
+
+dynArrayGet(arr, i);
+dynArrayGet(arr, packDynamic(null, "alice")); // InvalidDynamicArrayAccess
+dynArrayGet(packDynamic(null, "alice"), i);
+```
+
+##### 18.14.2 Dynamic Array Set
+
+```ts
+function dynArraySet(arr: DynValue, index: DynValue, item: DynValue): void {
+  if (arr.location === EVERY) {
+    if (index.location === EVERY && item.location === EVERY) {
+      arr.value[index.value] = item.value;
+    } else {
+      throw InvalidDynamicArrayAccess();
+    }
+  }
+  else {
+    if (
+      (index.location === EVERY || index.location === arr.location) &&
+      (item.location === EVERY || item.location === arr.location)
+    ) {
+      if (arr.location === HERE) {
+        arr.value[index.value] = item.value;
+      }
+    } else {
+      throw InvalidDynamicArrayAccess();
+    }
+  }
+}
+```
+
+Rules:
+
+```text
+arr.location == every:
+  index.location == every and item.location == every are required.
+  all endpoints perform the same mutation.
+
+arr.location == P:
+  index.location must be every or P.
+  item.location must be every or P.
+  only endpoint P performs the mutation.
+  other endpoints do nothing if checks succeed.
+```
+
+Examples:
+
+```ts
+let arr = [1, 3, 5];
+let arr2 = [1, 3, 5]@alice;
+
+arr[0] = 5;
+arr[0] = 3@alice;
+arr2[0] = 3;
+arr2[0@alice] = 3;
+```
+
+After EPP at alice:
+
+```ts
+let arr = new DynValue([1, 3, 5], EVERY);
+let arr2 = [1, 3, 5];
+
+dynArraySet(arr, new DynValue(0, EVERY), new DynValue(5, EVERY));
+dynArraySet(arr, new DynValue(0, EVERY), packDynamic(3, "alice")); // InvalidDynamicArrayAccess
+dynArraySet(packDynamic(arr2, "alice"), new DynValue(0, EVERY), new DynValue(3, EVERY));
+dynArraySet(packDynamic(arr2, "alice"), packDynamic(0, "alice"), new DynValue(3, EVERY));
+```
+
+After EPP at bob:
+
+```ts
+let arr = new DynValue([1, 3, 5], EVERY);
+
+dynArraySet(arr, new DynValue(0, EVERY), new DynValue(5, EVERY));
+dynArraySet(arr, new DynValue(0, EVERY), packDynamic(null, "alice")); // InvalidDynamicArrayAccess
+dynArraySet(packDynamic(null, "alice"), new DynValue(0, EVERY), new DynValue(3, EVERY));
+dynArraySet(packDynamic(null, "alice"), packDynamic(null, "alice"), new DynValue(3, EVERY));
+```
+
+##### 18.14.3 Dynamic Array Push
+
+```ts
+function dynArrayPush(arr: DynValue, item: DynValue): void {
+  if (arr.location === EVERY) {
+    if (item.location === EVERY) {
+      arr.value.push(item.value);
+    } else {
+      throw InvalidDynamicArrayAccess();
+    }
+  } else {
+    if (item.location === EVERY || arr.location === item.location) {
+      if (arr.location === HERE) {
+        arr.value.push(item.value);
+      }
+    } else {
+      throw InvalidDynamicArrayAccess();
+    }
+  }
+}
+```
+
+Rules:
+
+```text
+arr.location == every:
+  item.location must be every.
+  all endpoints perform the same push.
+
+arr.location == P:
+  item.location must be every or P.
+  only endpoint P performs the push.
+  other endpoints do nothing if checks succeed.
+```
+
+##### 18.14.4 Dynamic Array Length
+
+```ts
+function dynArrayLength(arr: DynValue): DynValue {
+  if (arr.location === EVERY || arr.location === HERE) {
+    return new DynValue(arr.value.length, arr.location);
+  } else {
+    return new DynValue(null, arr.location);
+  }
+}
+```
+
+`dynArrayLength(arr)` returns an `integer@dynamic` whose runtime location is `arr.location`.
+
+Example:
+
+```ts
+let arr = [1, 3, 5];
+push(arr, 3);
+length(arr);
+```
+
+After EPP at every participant:
+
+```ts
+let arr = new DynValue([1, 3, 5], EVERY);
+dynArrayPush(arr, new DynValue(3, EVERY));
+dynArrayLength(arr);
+```
+
+#### 18.15 Dynamic Assignment
+
+Assignment to a `@dynamic` variable copies the `DynValue` wrapper.
+
+```ts
+let d: integer@dynamic = 1@alice;
+let c: integer@dynamic = 1;
+d = c;
+```
+
+After EPP:
+
+```ts
+d = c.copyWrapper();
+```
+
+Rules:
+
+- the `DynValue` wrapper is copied;
+- the `location` tag is copied;
+- scalar payloads are copied by value according to the host language semantics;
+- array payload references are shared within the same endpoint;
+- payload arrays are not cloned by assignment.
+
+Example:
+
+```ts
+let xs = [1, 2, 3];
+let ys = xs;
+push(xs, 4);
+```
+
+After EPP at every participant:
+
+```ts
+let xs = new DynValue([1, 2, 3], EVERY);
+let ys = xs.copyWrapper();
+dynArrayPush(xs, new DynValue(4, EVERY));
+```
+
+After the push, `ys.value` refers to the same local array payload as `xs.value`, so `ys` observes the pushed element on each endpoint.
+
+Communication is different from assignment: dynamic communication uses `clonePayload` for arrays and creates fresh mutable copies at receivers.
+
+#### 18.16 Dynamic Functions
+
+##### 18.16.1 @every Functions
+
+In an `@every` function, omitted parameter locations default to `@dynamic`.
+
+Example:
+
+```ts
+function add@every(a: integer, b: integer) {
+  return a + b;
+}
+```
+
+This is elaborated as:
+
+```ts
+function add@every(a: integer@dynamic, b: integer@dynamic) {
+  return a + b;
+}
+```
+
+After EPP at every participant:
+
+```ts
+function add(a: DynValue, b: DynValue) {
+  return dynAdd(a, b);
+}
+```
+
+##### 18.16.2 @every Function Return Types
+
+If an `@every` function return type annotation is completely omitted, the return type is inferred from return expressions using Core v0 return type inference.
+
+Example:
+
+```ts
+function f@every() {
+  return 1@alice;
+}
+```
+
+The inferred return type is `integer@alice`.
+
+After EPP at alice:
+
+```ts
+function f() {
+  return 1;
+}
+```
+
+After EPP at bob:
+
+```ts
+function f() {
+  return null;
+}
+```
+
+If an `@every` function return type annotation includes only a base type and omits the location, the return type location is `@dynamic`.
+
+Example:
+
+```ts
+function f2@every(): integer {
+  return 1@alice;
+}
+```
+
+This is treated as:
+
+```ts
+function f2@every(): integer@dynamic {
+  return 1@alice;
+}
+```
+
+After EPP at alice:
+
+```ts
+function f2() {
+  return packDynamic(1, "alice");
+}
+```
+
+After EPP at bob:
+
+```ts
+function f2() {
+  return packDynamic(null, "alice");
+}
+```
+
+If a return type is explicitly `T@dynamic`, return expressions of type `T@P` are packed into dynamic values.
+
+Allowed:
+
+```ts
+function choose@every(c: boolean@every): integer@dynamic {
+  if (c) {
+    return 1@alice;
+  } else {
+    return 2@bob;
+  }
+}
+```
+
+If the return type annotation is omitted, the same function is rejected because the inferred return locations `alice` and `bob` are incompatible under Core v0 return type inference.
+
+Disallowed:
+
+```ts
+function bad@every(c: boolean@every) {
+  if (c) {
+    return 1@alice;
+  } else {
+    return 2@bob;
+  }
+}
+```
+
+##### 18.16.3 Local Functions
+
+Local functions follow Core v0 location omission rules. Omitted parameter and return locations are elaborated to the function's concrete location.
+
+Local functions must not declare `@dynamic` parameters or return types.
+
+Disallowed:
+
+```ts
+function bad@alice(x: integer@dynamic): integer {
+  return x;
+}
+
+function bad2@alice(): integer@dynamic {
+  return 1@alice;
+}
+```
+
+##### 18.16.4 Calling Local Functions from @every Contexts
+
+When a local function is called from an `@every` context, the local function is emitted only at its owner endpoint. At non-owner endpoints, the callee itself is not called, but argument expressions containing dynamic checks must still be evaluated.
+
+Example:
+
+```ts
+function add3@alice(a: integer, b: integer) {
+  return a + b;
+}
+
+add3(1, 3);
+```
+
+After EPP at alice:
+
+```ts
+function add3(a: integer, b: integer) {
+  return a + b;
+}
+
+add3(requireIntegerAt(new DynValue(1, EVERY), "alice"),
+     requireIntegerAt(new DynValue(3, EVERY), "alice"));
+```
+
+After EPP at bob:
+
+```ts
+nothing(requireIntegerAt(new DynValue(1, EVERY), "alice"),
+        requireIntegerAt(new DynValue(3, EVERY), "alice"));
+```
+
+The `nothing(...)` call must not be removed, because its arguments contain dynamic checks.
+
+If the arguments are static-only absent expressions, the non-owner endpoint may generate `nothing(null, ..., null)`, which may be cleaned up.
+
+##### 18.16.5 Local Function Return Used as Dynamic
+
+A static local function result may be packed into a dynamic value.
+
+Example:
+
+```ts
+function add3@alice(a: integer, b: integer) {
+  return a + b;
+}
+
+let y: integer@dynamic = add3(1@alice, 2@alice);
+```
+
+After EPP at alice:
+
+```ts
+function add3(a: integer, b: integer) {
+  return a + b;
+}
+
+let y: DynValue = packDynamic(add3(1, 2), "alice");
+```
+
+After EPP at bob:
+
+```ts
+let y: DynValue = packDynamic(null, "alice");
+```
+
+#### 18.17 Dynamic Conditions
+
+If an `if`, `while`, or `for` condition has type `boolean@dynamic`, its runtime location must be `every`.
+
+The generated code uses `requireCondition`.
+
+Example:
+
+```ts
+let c = true;
+if (c) {
+  let x = 1;
+}
+```
+
+After EPP at every participant:
+
+```ts
+let c = new DynValue(true, EVERY);
+if (requireCondition(c)) {
+  let x = new DynValue(1, EVERY);
+}
+```
+
+Runtime error:
+
+```ts
+let c: boolean@dynamic = true@alice;
+if (c) {
+  let x = 1;
+}
+```
+
+After EPP at alice:
+
+```ts
+let c = packDynamic(true, "alice");
+if (requireCondition(c)) { // DynamicLocationMismatch
+  let x = new DynValue(1, EVERY);
+}
+```
+
+After EPP at bob:
+
+```ts
+let c = packDynamic(null, "alice");
+if (requireCondition(c)) { // DynamicLocationMismatch
+  let x = new DynValue(1, EVERY);
+}
+```
+
+#### 18.18 Dynamic Endpoint Projection
+
+For `T@dynamic`, EPP does not project values away as `absent`. Instead, every endpoint receives a `DynValue` expression.
+
+Rules:
+
+```text
+EPP(e : T@dynamic, P) = DynValue expression at P
+```
+
+The `location` field is the same at every endpoint. The `value` field is meaningful only where the runtime location is available.
+
+Static-only absent expressions may be finalized as `null`. Expressions containing dynamic runtime helper calls must be preserved, even on non-owner endpoints.
+
+Dynamic runtime helper calls include, but are not limited to:
+
+```text
+requireIntegerAt
+requireFloatAt
+requireBooleanAt
+requireStringAt
+requireIntegerArrayAt
+requireFloatArrayAt
+requireBooleanArrayAt
+requireCondition
+dynAdd, dynSub, dynMul, dynDiv, dynMod
+dynAnd, dynOr
+dynLt, dynLe, dynGt, dynGe, dynEq, dynNeq
+dynNot, dynNeg
+dynMove
+dynArrayGet, dynArraySet, dynArrayPush, dynArrayLength
+```
+
+These calls may raise dynamic runtime errors or perform communication, so they must not be removed by EPP cleanup.
+
+#### 18.19 Dynamic Cleanup Rules
+
+Gradual ChoreoBS refines the Core v0 cleanup rules.
+
+The only `nothing(...)` calls that may be simplified are those whose recursively simplified arguments are all exactly `null`:
+
+```text
+nothing(null, ..., null) => null
+```
+
+Then `null;` expression statements may be removed.
+
+The compiler must not remove `nothing(...)` if any argument is a dynamic runtime helper call or an expression that may contain a dynamic check.
+
+Must not be removed:
+
+```ts
+nothing(requireIntegerAt(x, "alice"));
+nothing(dynAdd(x, y));
+nothing(dynMove(x, "tag", "alice"));
+nothing(dynArrayGet(xs, i));
+```
+
+May be removed:
+
+```ts
+nothing(null, null);
+```
+
+Cleanup must remain AST-based or IR-based. It must not be implemented as string-based post-processing.
+
+#### 18.20 Dynamic BlueScript Runtime API
+
+The generated BlueScript code for Gradual ChoreoBS uses the following additional runtime support.
+
+```ts
+type RuntimeLocation = string;
+
+const EVERY: RuntimeLocation = "every";
+const HERE: RuntimeLocation = "alice"; // generated per endpoint
+
+class DynValue {
+  value: any;
+  location: RuntimeLocation;
+
+  constructor(value: any, location: RuntimeLocation);
+  copyWrapper(): DynValue;
+}
+
+sendAny(dst: RuntimeLocation, tag: string, value: any): void;
+receiveAny(src: RuntimeLocation, tag: string): any;
+broadcastAny(tag: string, value: any): void;
+clonePayload(value: any): any;
+packDynamic(value: any, location: RuntimeLocation): DynValue;
+
+requireIntegerAt(x: DynValue, location: RuntimeLocation): integer;
+requireFloatAt(x: DynValue, location: RuntimeLocation): float;
+requireBooleanAt(x: DynValue, location: RuntimeLocation): boolean;
+requireStringAt(x: DynValue, location: RuntimeLocation): string;
+requireIntegerArrayAt(x: DynValue, location: RuntimeLocation): integer[];
+requireFloatArrayAt(x: DynValue, location: RuntimeLocation): float[];
+requireBooleanArrayAt(x: DynValue, location: RuntimeLocation): boolean[];
+requireCondition(x: DynValue): boolean;
+
+dynAdd(a: DynValue, b: DynValue): DynValue;
+dynSub(a: DynValue, b: DynValue): DynValue;
+dynMul(a: DynValue, b: DynValue): DynValue;
+dynDiv(a: DynValue, b: DynValue): DynValue;
+dynMod(a: DynValue, b: DynValue): DynValue;
+dynAnd(a: DynValue, b: DynValue): DynValue;
+dynOr(a: DynValue, b: DynValue): DynValue;
+dynLt(a: DynValue, b: DynValue): DynValue;
+dynLe(a: DynValue, b: DynValue): DynValue;
+dynGt(a: DynValue, b: DynValue): DynValue;
+dynGe(a: DynValue, b: DynValue): DynValue;
+dynEq(a: DynValue, b: DynValue): DynValue;
+dynNeq(a: DynValue, b: DynValue): DynValue;
+dynNot(a: DynValue): DynValue;
+dynNeg(a: DynValue): DynValue;
+dynMove(from: DynValue, tag: string, toLocation: RuntimeLocation): DynValue;
+dynArrayGet(arr: DynValue, index: DynValue): DynValue;
+dynArraySet(arr: DynValue, index: DynValue, item: DynValue): void;
+dynArrayPush(arr: DynValue, item: DynValue): void;
+dynArrayLength(arr: DynValue): DynValue;
+```
+
+`receiveAny` returns a fresh mutable array when the transmitted payload is an array.
+
+`clonePayload` returns the value itself for scalar values and returns a fresh one-dimensional mutable copy for arrays.
+
+#### 18.21 Dynamic Compile-time Errors
+
+The following are compile-time errors in Gradual ChoreoBS.
+
+##### 18.21.1 Using dynamic as a Participant
+
+```json
+{
+  "participants": ["alice", "dynamic"]
+}
+```
+
+##### 18.21.2 Base Type Error Remains Static
+
+```ts
+let x: integer = 1;
+let s: string@alice = "foo"@alice;
+x + s;
+```
+
+##### 18.21.3 Dynamic Parameter in Local Function
+
+```ts
+function bad@alice(x: integer@dynamic): integer {
+  return x;
+}
+```
+
+##### 18.21.4 Dynamic Return in Local Function
+
+```ts
+function bad@alice(): integer@dynamic {
+  return 1@alice;
+}
+```
+
+##### 18.21.5 Incompatible Omitted Return Locations
+
+```ts
+function bad@every(c: boolean@every) {
+  if (c) {
+    return 1@alice;
+  } else {
+    return 2@bob;
+  }
+}
+```
+
+Use an explicit dynamic return type instead:
+
+```ts
+function ok@every(c: boolean@every): integer@dynamic {
+  if (c) {
+    return 1@alice;
+  } else {
+    return 2@bob;
+  }
+}
+```
+
+#### 18.22 Dynamic Runtime Error Examples
+
+##### 18.22.1 Dynamic Location Mismatch in Operator
+
+```ts
+let x: integer@dynamic = 1@alice;
+let y: integer@dynamic = 2@bob;
+x + y;
+```
+
+Runtime behavior:
+
+```text
+DynamicLocationMismatch
+```
+
+##### 18.22.2 Dynamic Condition Not Located at every
+
+```ts
+let c: boolean@dynamic = true@alice;
+if (c) {
+}
+```
+
+Runtime behavior:
+
+```text
+DynamicLocationMismatch
+```
+
+##### 18.22.3 Invalid Dynamic Communication: same concrete location
+
+```ts
+let a: integer@dynamic = 1@alice;
+let b: integer@dynamic = 2@alice;
+a <~ b;
+```
+
+Runtime behavior:
+
+```text
+InvalidDynamicCommunication
+```
+
+##### 18.22.4 Invalid Dynamic Communication: every to every
+
+```ts
+let a = 1;
+let b = 2;
+a <~ b;
+```
+
+Both `a` and `b` have dynamic runtime location `every`, so this is an invalid non-transferring dynamic communication.
+
+Runtime behavior:
+
+```text
+InvalidDynamicCommunication
+```
+
+##### 18.22.5 Invalid Dynamic Array Access
+
+```ts
+let arr = [1, 2, 3];
+arr[0@alice];
+```
+
+Runtime behavior:
+
+```text
+InvalidDynamicArrayAccess
+```
+
+##### 18.22.6 Invalid Dynamic Array Mutation
+
+```ts
+let arr = [1, 2, 3];
+arr[0] = 10@alice;
+```
+
+Runtime behavior:
+
+```text
+InvalidDynamicArrayAccess
+```
+
+#### 18.23 Dynamic Examples
+
+##### 18.23.1 Dynamic Default Location
+
+Input:
+
+```ts
+let x = 1;
+let y = x + 2;
+```
+
+After EPP at every participant:
+
+```ts
+let x = new DynValue(1, EVERY);
+let y = dynAdd(x, new DynValue(2, EVERY));
+```
+
+##### 18.23.2 Static Location Packed into Dynamic
+
+Input:
+
+```ts
+let x: integer@dynamic = 1@alice;
+let y = x + 10;
+```
+
+After EPP at alice:
+
+```ts
+let x = packDynamic(1, "alice");
+let y = dynAdd(x, new DynValue(10, EVERY));
+```
+
+After EPP at bob:
+
+```ts
+let x = packDynamic(null, "alice");
+let y = dynAdd(x, new DynValue(10, EVERY));
+```
+
+##### 18.23.3 Dynamic Broadcast via Omitted Communication Destination
+
+Input:
+
+```ts
+let x: integer@dynamic = 1@alice;
+let y: integer <~ x;
+```
+
+After EPP at alice:
+
+```ts
+let x = packDynamic(1, "alice");
+let y = dynMove(x, "top_0", EVERY);
+```
+
+After EPP at bob:
+
+```ts
+let x = packDynamic(null, "alice");
+let y = dynMove(x, "top_0", EVERY);
+```
+
+##### 18.23.4 Dynamic Assignment Shares Array Payload Reference
+
+Input:
+
+```ts
+let xs = [1, 2, 3];
+let ys = xs;
+push(xs, 4);
+length(ys);
+```
+
+After EPP at every participant:
+
+```ts
+let xs = new DynValue([1, 2, 3], EVERY);
+let ys = xs.copyWrapper();
+dynArrayPush(xs, new DynValue(4, EVERY));
+dynArrayLength(ys);
+```
+
+`ys` observes the mutation because assignment copies the wrapper but shares the payload array reference within the endpoint.
+
+##### 18.23.5 Dynamic Communication Creates Fresh Array Copy
+
+Input:
+
+```ts
+let xs = [1, 2, 3]@alice;
+let ys: integer[] <~ xs;
+```
+
+After EPP at alice:
+
+```ts
+let xs = [1, 2, 3];
+let ys = dynMove(packDynamic(xs, "alice"), "top_0", EVERY);
+```
+
+After EPP at bob:
+
+```ts
+let ys = dynMove(packDynamic(null, "alice"), "top_0", EVERY);
+```
+
+Every endpoint obtains a fresh mutable array payload for `ys` because this is an array broadcast to `every`.
