@@ -22,7 +22,7 @@ export function resolveTypeAnnotation(
     location = defaultLocationForContext(ctx);
   } else {
     // Gradual ChoreoBS: omitted locations in global/@every contexts default
-    // to @dynamic (spec §18.4, §18.16.1).
+    // to @dynamic (spec §18.4).
     location = { kind: "dynamic" };
   }
   return locatedType(ann.base, location);

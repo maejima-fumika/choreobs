@@ -176,7 +176,7 @@ class TypeChecker {
       }
       if (item.name === "length" || item.name === "push") {
         this.error(
-          `'${item.name}' is a reserved builtin function name (spec §6.2, §7.11.1)`,
+          `'${item.name}' is a reserved builtin function name (spec §6.2)`,
           item.span,
         );
         continue;
@@ -930,8 +930,9 @@ class TypeChecker {
    * Resolve the located type of an initialized `let`.
    *
    * Gradual ChoreoBS infers the binding location from the initializer when the
-   * annotation omits its location in a global/`@every` context (spec §18.5,
-   * §18.13). An explicit location (including `@dynamic`) is authoritative.
+   * annotation omits its location in a global/`@every` context (see spec §18.13
+   * example `let c: integer = 300@alice`). An explicit location (including
+   * `@dynamic`) is authoritative.
    */
   private resolveLetAnnotation(
     ann: import("../ast/syntax-types.js").TypeAnnotation,

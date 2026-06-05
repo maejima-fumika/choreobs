@@ -84,7 +84,7 @@ a <~ b;
     assert.match(bs(result, "alice"), /dynMove\(/);
   });
 
-  it("§18.22.4b omitted-type communication let every-to-every lowers to dynMove", () => {
+  it("§18.22.5 omitted-type communication let every-to-every lowers to dynMove", () => {
     const result = compile(`
 let x = 1;
 let y <~ x;
@@ -94,7 +94,7 @@ let y <~ x;
     assert.match(bs(result, "bob"), /let y: DynValue = dynMove\(x, "top_0", EVERY\)/);
   });
 
-  it("§18.22.5 dynamic array access lowers to dynArrayGet", () => {
+  it("§18.22.6 dynamic array access lowers to dynArrayGet", () => {
     const result = compile(`
 let arr = [1, 2, 3];
 arr[0@alice];
@@ -103,7 +103,7 @@ arr[0@alice];
     assert.match(bs(result, "alice"), /dynArrayGet\(/);
   });
 
-  it("§18.22.6 dynamic array mutation lowers to dynArraySet", () => {
+  it("§18.22.7 dynamic array mutation lowers to dynArraySet", () => {
     const result = compile(`
 let arr = [1, 2, 3];
 arr[0] = 10@alice;
@@ -114,7 +114,7 @@ arr[0] = 10@alice;
 });
 
 describe("§18.23 dynamic examples (exact EPP output)", () => {
-  it("§18.23.1 dynamic default location", () => {
+  it("§18.23.4 dynamic default location", () => {
     const result = compile(`let x = 1;\nlet y = x + 2;`);
     assert.equal(result.success, true, JSON.stringify(result.errors));
     for (const p of ["alice", "bob"]) {
@@ -124,7 +124,7 @@ describe("§18.23 dynamic examples (exact EPP output)", () => {
     }
   });
 
-  it("§18.23.2 static location packed into dynamic", () => {
+  it("§18.23.5 static location packed into dynamic", () => {
     const result = compile(`let x: integer@dynamic = 1@alice;\nlet y = x + 10;`);
     assert.equal(result.success, true, JSON.stringify(result.errors));
     assert.match(bs(result, "alice"), /let x: DynValue = packDynamic\(1, "alice"\);/);
@@ -134,7 +134,7 @@ describe("§18.23 dynamic examples (exact EPP output)", () => {
     }
   });
 
-  it("§18.23.3 dynamic broadcast via omitted communication destination", () => {
+  it("§18.23.6 dynamic broadcast via omitted communication destination", () => {
     const result = compile(`let x: integer@dynamic = 1@alice;\nlet y: integer <~ x;`);
     assert.equal(result.success, true, JSON.stringify(result.errors));
     assert.match(bs(result, "alice"), /let x: DynValue = packDynamic\(1, "alice"\);/);
@@ -144,7 +144,7 @@ describe("§18.23 dynamic examples (exact EPP output)", () => {
     }
   });
 
-  it("§18.23.4 dynamic assignment shares array payload reference", () => {
+  it("§18.23.9 dynamic assignment shares array payload reference", () => {
     const result = compile(`
 let xs = [1, 2, 3];
 let ys = xs;
@@ -161,7 +161,7 @@ let n = length(ys);
     }
   });
 
-  it("§18.23.5 dynamic communication creates fresh array copy", () => {
+  it("§18.23.10 dynamic communication creates fresh array copy", () => {
     const result = compile(`let xs = [1, 2, 3]@alice;\nlet ys: integer[] <~ xs;`);
     assert.equal(result.success, true, JSON.stringify(result.errors));
     const alice = bs(result, "alice");

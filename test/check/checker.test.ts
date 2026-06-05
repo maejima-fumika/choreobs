@@ -150,7 +150,7 @@ function f@alice(): unit {
     assert.ok(errors.some((e) => e.message.includes("carol")));
   });
 
-  it("infers an omitted let location from the initializer (spec §18.5, §18.13)", () => {
+  it("infers an omitted let location from the initializer (spec §18.13)", () => {
     // `integer` omits its location; the located initializer keeps it static.
     const { typed, errors } = checkSource(`let c: integer = 300@alice;`);
     assert.equal(errors.length, 0, JSON.stringify(errors));
