@@ -89,6 +89,7 @@ import {
   validateArrayTypeAnnotation,
 } from "../elaborate/resolve.js";
 import { CommTagGenerator, TOP_SCOPE } from "../comm/tags.js";
+import { isRuntimeReservedName } from "../emit/runtime-exports.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
 import {
   inferReturnTypeFromCandidates,
@@ -149,6 +150,7 @@ class TypeChecker {
 
   check(): TypeCheckResult {
     this.collectFunctions();
+    this.checkRuntimeReservedNameConflicts();
     this.checkRecursiveOmittedReturnTypes();
     this.resolveExplicitFunctionSignatures();
     this.inferOmittedReturnTypes();
@@ -189,6 +191,75 @@ class TypeChecker {
       }
       this.functions.set(item.name, item);
       this.validateLocation(item.at, item.span);
+    }
+  }
+
+  /** User bindings must not use names reserved for generated runtime modules. */
+  private checkRuntimeReservedNameConflicts(): void {
+    const bindings: { readonly name: string; readonly span: Span }[] = [];
+    for (const [name, decl] of this.functions) {
+      bindings.push({ name, span: decl.span });
+    }
+    for (const item of this.program.items) {
+      if (item.kind === "FunctionDeclaration") {
+        for (const stmt of item.body.statements) {
+          this.collectLetBindings(stmt, bindings);
+        }
+      } else {
+        this.collectLetBindings(item.statement, bindings);
+      }
+    }
+    const message =
+      (name: string) =>
+      `Name '${name}' conflicts with a compiler runtime symbol. Runtime names cannot be used for user-defined functions or variables.`;
+    for (const binding of bindings) {
+      if (!isRuntimeReservedName(binding.name)) {
+        continue;
+      }
+      const text = message(binding.name);
+      this.errors.push(typeCheckError(text, binding.span));
+    }
+  }
+
+  private collectLetBindings(
+    stmt: Statement,
+    out: { name: string; span: Span }[],
+  ): void {
+    switch (stmt.kind) {
+      case "LetStatement":
+        out.push({ name: stmt.name, span: stmt.span });
+        break;
+      case "LetReceiveStatement":
+        out.push({ name: stmt.name, span: stmt.span });
+        break;
+      case "IfStatement":
+        for (const s of stmt.then.statements) {
+          this.collectLetBindings(s, out);
+        }
+        if (stmt.else !== undefined) {
+          for (const s of stmt.else.statements) {
+            this.collectLetBindings(s, out);
+          }
+        }
+        break;
+      case "WhileStatement":
+        for (const s of stmt.body.statements) {
+          this.collectLetBindings(s, out);
+        }
+        break;
+      case "ForStatement":
+        if (stmt.init?.kind === "ForLetInit" || stmt.init?.kind === "ForLetReceiveInit") {
+          out.push({ name: stmt.init.name, span: stmt.init.span });
+        }
+        for (const s of stmt.body.statements) {
+          this.collectLetBindings(s, out);
+        }
+        break;
+      case "AssignmentStatement":
+      case "CommStatement":
+      case "ReturnStatement":
+      case "ExpressionStatement":
+        break;
     }
   }
 

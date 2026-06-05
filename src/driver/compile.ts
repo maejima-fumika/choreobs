@@ -41,6 +41,32 @@ export function compileFile(
   cbsPath: string,
   options: CompileOptions = {},
 ): CompileResult {
+  const ext = extname(cbsPath);
+  if (ext !== ".cbs") {
+    const label = ext.length > 0 ? ext : "(no extension)";
+    return {
+      success: false,
+      outputs: [],
+      errors: [
+        {
+          message: `expected a .cbs ChoreoBS source file, got '${label}'`,
+        },
+      ],
+    };
+  }
+  const stem = basename(cbsPath, ext);
+  if (stem === "runtime") {
+    return {
+      success: false,
+      outputs: [],
+      errors: [
+        {
+          message:
+            "cannot compile 'runtime.cbs': 'runtime' is reserved for compiler-generated runtime modules",
+        },
+      ],
+    };
+  }
   const source = readFileSync(cbsPath, "utf8");
   const configPath = options.configPath ?? defaultConfigPath(cbsPath);
   let config: ChoreoBSConfig;
@@ -80,7 +106,7 @@ export function compileSource(
 
   const outputs: CompileOutput[] = cleaned.map((program) => {
     const path = join(outDir, `${stem}_${program.participant}.bs`);
-    const emitted = emit(program);
+    const emitted = emit(program, { usesGradual: lowered.usesGradual });
     return {
       participant: program.participant,
       path,
@@ -101,11 +127,10 @@ export function compileSource(
   }
 
   if (lowered.usesGradual) {
-    // Emit the per-endpoint DynValue runtime module (spec §18.20).
     for (const program of cleaned) {
       outputs.push({
         participant: program.participant,
-        path: join(outDir, `${stem}_runtime_${program.participant}.bs`),
+        path: join(outDir, `runtime_${program.participant}.bs`),
         source: emitRuntimeModule(program.participant),
       });
     }

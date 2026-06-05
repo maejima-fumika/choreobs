@@ -10,18 +10,40 @@ import type {
 } from "../ir/projected.js";
 import { emitType } from "./types.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
+import {
+  collectRuntimeImports,
+  formatRuntimeImport,
+} from "./runtime-exports.js";
 
-export function emit(program: ProjectedProgram): string {
-  return new BlueScriptEmitter().emitProgram(program);
+export interface EmitOptions {
+  /** When true, prepend imports from `runtime_<participant>.bs`. */
+  readonly usesGradual?: boolean;
+}
+
+export function emit(
+  program: ProjectedProgram,
+  options: EmitOptions = {},
+): string {
+  return new BlueScriptEmitter(options).emitProgram(program);
 }
 
 class BlueScriptEmitter {
   private readonly lines: string[] = [];
   private indent = 0;
 
+  constructor(private readonly options: EmitOptions = {}) {}
+
   emitProgram(program: ProjectedProgram): string {
     this.lines.length = 0;
     this.indent = 0;
+    if (this.options.usesGradual === true) {
+      const imports = collectRuntimeImports(program);
+      const header = formatRuntimeImport(program.participant, imports);
+      if (header.length > 0) {
+        this.lines.push(header.trimEnd());
+        this.lines.push("");
+      }
+    }
     for (const fn of program.functions) {
       this.emitFunction(fn);
       this.lines.push("");

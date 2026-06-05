@@ -15,6 +15,13 @@ describe("DynValue runtime module (spec §18.20)", () => {
     assert.match(rt, /const EVERY: string = "every";/);
   });
 
+  it("exports runtime definitions for import from endpoint programs", () => {
+    const rt = emitRuntimeModule("alice");
+    assert.match(rt, /export class DynValue/);
+    assert.match(rt, /export const EVERY/);
+    assert.match(rt, /export function packDynamic/);
+  });
+
   it("defines packing, require, operator, communication, and array helpers", () => {
     const rt = emitRuntimeModule("alice");
     for (const name of [

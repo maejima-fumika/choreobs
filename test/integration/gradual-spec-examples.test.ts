@@ -184,7 +184,7 @@ let x: integer@alice = 42@alice;
 let y: integer@bob <~ x;
 `);
     assert.equal(result.success, true, JSON.stringify(result.errors));
-    assert.ok(!result.outputs.some((o) => o.path.includes("_runtime_")));
+    assert.ok(!result.outputs.some((o) => /[/\\]runtime_/.test(o.path)));
     assert.match(bs(result, "alice"), /sendInteger\("bob", "top_0", x\);/);
     assert.match(bs(result, "bob"), /receiveInteger\("alice", "top_0"\)/);
   });

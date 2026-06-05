@@ -1,9 +1,8 @@
 /**
  * Gradual ChoreoBS BlueScript runtime module (spec §18.8, §18.20).
  *
- * Emitted as a separate `index_runtime_<participant>.bs` file for each
- * participant when a program uses gradual features. `HERE` is specialized per
- * endpoint; everything else is shared.
+ * Emitted as `runtime_<participant>.bs` when a program uses gradual features.
+ * `HERE` is specialized per endpoint; everything else is shared.
  */
 
 const SCALAR_BINARY: ReadonlyArray<readonly [string, string]> = [
@@ -53,10 +52,10 @@ export function emitRuntimeModule(participant: string): string {
 
 function header(participant: string): string {
   return `// Gradual ChoreoBS runtime (spec §18.20), specialized for ${participant}.
-const EVERY: string = "every";
-const HERE: string = ${JSON.stringify(participant)};
+export const EVERY: string = "every";
+export const HERE: string = ${JSON.stringify(participant)};
 
-class DynValue {
+export class DynValue {
   value: any;
   location: string;
 
@@ -73,34 +72,34 @@ class DynValue {
 }
 
 function errorHelpers(): string {
-  return `function DynamicLocationMismatch(): any {
+  return `export function DynamicLocationMismatch(): any {
   return "DynamicLocationMismatch";
 }
 
-function InvalidDynamicCommunication(): any {
+export function InvalidDynamicCommunication(): any {
   return "InvalidDynamicCommunication";
 }
 
-function InvalidDynamicArrayAccess(): any {
+export function InvalidDynamicArrayAccess(): any {
   return "InvalidDynamicArrayAccess";
 }
 `;
 }
 
 function commHelpers(): string {
-  return `function sendAny(dst: string, tag: string, value: any): void {
+  return `export function sendAny(dst: string, tag: string, value: any): void {
   send(dst, tag, value);
 }
 
-function receiveAny(src: string, tag: string): any {
+export function receiveAny(src: string, tag: string): any {
   return receive(src, tag);
 }
 
-function broadcastAny(tag: string, value: any): void {
+export function broadcastAny(tag: string, value: any): void {
   broadcast(tag, value);
 }
 
-function clonePayload(value: any): any {
+export function clonePayload(value: any): any {
   if (Array.isArray(value)) {
     return value.slice();
   }
@@ -110,7 +109,7 @@ function clonePayload(value: any): any {
 }
 
 function packHelper(): string {
-  return `function packDynamic(value: any, location: string): DynValue {
+  return `export function packDynamic(value: any, location: string): DynValue {
   return new DynValue(value, location);
 }
 `;
@@ -123,7 +122,7 @@ function scalarRequireHelpers(): string {
 }
 
 function scalarRequire(name: string, ret: string): string {
-  return `function ${name}(dynamic: DynValue, location: string): ${ret} {
+  return `export function ${name}(dynamic: DynValue, location: string): ${ret} {
   if (location === EVERY) {
     if (dynamic.location === EVERY) {
       return dynamic.value;
@@ -148,7 +147,7 @@ function arrayRequireHelpers(): string {
 }
 
 function arrayRequire(name: string, ret: string): string {
-  return `function ${name}(dynamic: DynValue, location: string): ${ret} {
+  return `export function ${name}(dynamic: DynValue, location: string): ${ret} {
   if (dynamic.location === location) {
     return dynamic.value;
   } else {
@@ -159,7 +158,7 @@ function arrayRequire(name: string, ret: string): string {
 }
 
 function conditionRequireHelper(): string {
-  return `function requireCondition(dynamic: DynValue): boolean {
+  return `export function requireCondition(dynamic: DynValue): boolean {
   if (dynamic.location === EVERY) {
     return dynamic.value;
   } else {
@@ -174,7 +173,7 @@ function binaryHelpers(): string {
 }
 
 function binaryHelper(name: string, op: string): string {
-  return `function ${name}(a: DynValue, b: DynValue): DynValue {
+  return `export function ${name}(a: DynValue, b: DynValue): DynValue {
   if (a.location === EVERY && b.location === EVERY) {
     return new DynValue(a.value ${op} b.value, EVERY);
   } else if (a.location === EVERY) {
@@ -196,7 +195,7 @@ function binaryHelper(name: string, op: string): string {
 }
 
 function unaryHelpers(): string {
-  return `function dynNot(a: DynValue): DynValue {
+  return `export function dynNot(a: DynValue): DynValue {
   if (a.location === EVERY || a.location === HERE) {
     return new DynValue(!a.value, a.location);
   } else {
@@ -204,7 +203,7 @@ function unaryHelpers(): string {
   }
 }
 
-function dynNeg(a: DynValue): DynValue {
+export function dynNeg(a: DynValue): DynValue {
   if (a.location === EVERY || a.location === HERE) {
     return new DynValue(-a.value, a.location);
   } else {
@@ -215,7 +214,7 @@ function dynNeg(a: DynValue): DynValue {
 }
 
 function moveHelper(): string {
-  return `function dynMove(from: DynValue, tag: string, toLocation: string): DynValue {
+  return `export function dynMove(from: DynValue, tag: string, toLocation: string): DynValue {
   if (from.location === EVERY && toLocation === EVERY) {
     throw InvalidDynamicCommunication();
   } else if (from.location === EVERY) {
@@ -249,7 +248,7 @@ function moveHelper(): string {
 }
 
 function arrayHelpers(): string {
-  return `function dynArrayGet(arr: DynValue, index: DynValue): DynValue {
+  return `export function dynArrayGet(arr: DynValue, index: DynValue): DynValue {
   if (arr.location === EVERY && index.location === EVERY) {
     return new DynValue(arr.value[index.value], EVERY);
   } else if (arr.location === EVERY) {
@@ -267,7 +266,7 @@ function arrayHelpers(): string {
   }
 }
 
-function dynArraySet(arr: DynValue, index: DynValue, item: DynValue): void {
+export function dynArraySet(arr: DynValue, index: DynValue, item: DynValue): void {
   if (arr.location === EVERY) {
     if (index.location === EVERY && item.location === EVERY) {
       arr.value[index.value] = item.value;
@@ -288,7 +287,7 @@ function dynArraySet(arr: DynValue, index: DynValue, item: DynValue): void {
   }
 }
 
-function dynArrayPush(arr: DynValue, item: DynValue): void {
+export function dynArrayPush(arr: DynValue, item: DynValue): void {
   if (arr.location === EVERY) {
     if (item.location === EVERY) {
       arr.value.push(item.value);
@@ -306,7 +305,7 @@ function dynArrayPush(arr: DynValue, item: DynValue): void {
   }
 }
 
-function dynArrayLength(arr: DynValue): DynValue {
+export function dynArrayLength(arr: DynValue): DynValue {
   if (arr.location === EVERY || arr.location === HERE) {
     return new DynValue(arr.value.length, arr.location);
   } else {
