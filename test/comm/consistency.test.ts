@@ -17,7 +17,7 @@ import { compileSource } from "../../src/driver/index.js";
 import { assertCommConsistent } from "./assert-consistent.js";
 
 const span: Span = { start: 0, end: 1 };
-const config = { participants: ["alice", "bob"] };
+const config = { endpoints: ["alice", "bob"] };
 
 function ident(name: string) {
   return { kind: "IdentifierExpression" as const, name, span };
@@ -25,26 +25,26 @@ function ident(name: string) {
 
 function receive(
   comm: CommKind,
-  sourceParticipant: string,
+  sourceEndpoint: string,
   tag: string,
 ) {
   return {
     kind: "ReceiveExpression" as const,
     comm,
-    sourceParticipant,
+    sourceEndpoint,
     tag,
     span,
   };
 }
 
 function program(
-  participant: string,
+  endpoint: string,
   body: ProjectedStatement[],
   functions: ProjectedProgram["functions"] = [],
 ): ProjectedProgram {
   return {
     kind: "ProjectedProgram",
-    participant,
+    endpoint,
     functions,
     body,
     span,
@@ -56,22 +56,22 @@ function projectSource(source: string): ProjectedProgram[] {
   assert.equal(pe.length, 0);
   const { typed, errors: te } = typeCheck(parsed!, config);
   assert.equal(te.length, 0);
-  return [...projectAll(typed!, config.participants)];
+  return [...projectAll(typed!, config.endpoints)];
 }
 
 describe("communication consistency checker", () => {
   it("accepts paired direct communication", () => {
     const all = projectSource(`
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `);
     assertCommConsistent(all);
   });
 
-  it("accepts broadcast with receives on other participants", () => {
+  it("accepts broadcast with receives on other endpoints", () => {
     const all = projectSource(`
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 `);
     assertCommConsistent(all);
   });
@@ -79,11 +79,11 @@ let ok: boolean@every <~ localOk;
   it("verifyCommunicationConsistency accepts cleaned projection and emit output", () => {
     const all = projectSource(`
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `);
     const cleaned = cleanupAll(all);
     const emitted = cleaned.map((p) => ({
-      participant: p.participant,
+      endpoint: p.endpoint,
       source: emit(p),
     }));
     const result = verifyCommunicationConsistency(cleaned, emitted);
@@ -94,7 +94,7 @@ let y: integer@bob <~ x;
     const result = compileSource(
       `
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `,
       "index.cbs",
       config,
@@ -113,7 +113,7 @@ let y: integer@bob <~ x;
         {
           kind: "SendStatement",
           comm: "integer",
-          destinationParticipant: "bob",
+          destinationEndpoint: "bob",
           tag: "top_0",
           value: ident("x"),
           span,
@@ -150,7 +150,7 @@ let y: integer@bob <~ x;
         {
           kind: "SendStatement",
           comm: "integer",
-          destinationParticipant: "alice",
+          destinationEndpoint: "alice",
           tag: "top_0",
           value: ident("x"),
           span,
@@ -168,7 +168,7 @@ let y: integer@bob <~ x;
         {
           kind: "SendStatement",
           comm: "integer",
-          destinationParticipant: "bob",
+          destinationEndpoint: "bob",
           tag: "top_0",
           value: ident("x"),
           span,
@@ -176,7 +176,7 @@ let y: integer@bob <~ x;
         {
           kind: "SendStatement",
           comm: "boolean",
-          destinationParticipant: "bob",
+          destinationEndpoint: "bob",
           tag: "top_0",
           value: ident("f"),
           span,

@@ -15,11 +15,11 @@ import type {
   Block,
   Statement,
   LetStatement,
-  LetReceiveStatement,
+  LetTransferStatement,
   AssignmentStatement,
   IdentifierAssignmentTarget,
   IndexAssignmentTarget,
-  CommStatement,
+  TransferStatement,
   IfStatement,
   WhileStatement,
   ForStatement,
@@ -246,7 +246,7 @@ class Parser {
       return { kind: "every" };
     }
     const id = this.consumeIdentifierToken("expected location name or 'every'");
-    return { kind: "concrete", name: id.name };
+    return { kind: "individual", name: id.name };
   }
 
   /** Call only after `@` has been consumed with `match(TokenKind.At)`. */
@@ -310,13 +310,13 @@ class Parser {
     return this.parseExpressionStatement();
   }
 
-  private parseLetStatement(requireSemicolon: boolean): LetStatement | LetReceiveStatement {
+  private parseLetStatement(requireSemicolon: boolean): LetStatement | LetTransferStatement {
     const start = this.previous();
     const nameTok = this.consumeIdentifierToken("expected variable name after 'let'");
 
-    if (this.match(TokenKind.Receive)) {
+    if (this.match(TokenKind.Transfer)) {
       throw this.fail(
-        "type annotation required for communication let (spec §5.6, §7.14.3)",
+        "type annotation required for transfer let (spec §5.6, §7.14.3)",
       );
     }
 
@@ -352,13 +352,13 @@ class Parser {
         return stmt;
       }
 
-      if (this.match(TokenKind.Receive)) {
+      if (this.match(TokenKind.Transfer)) {
         const source = this.parseExpression();
         if (requireSemicolon) {
           this.consume(TokenKind.Semicolon, "expected ';' after let statement");
         }
-        const stmt: LetReceiveStatement = {
-          kind: "LetReceiveStatement",
+        const stmt: LetTransferStatement = {
+          kind: "LetTransferStatement",
           name: nameTok.name,
           type,
           source,
@@ -368,12 +368,12 @@ class Parser {
       }
 
       throw this.fail(
-        "expected '=' or '<~' after type in let statement; uninitialized let is not allowed (spec §5.6)",
+        "expected '=' or '<-' after type in let statement; uninitialized let is not allowed (spec §5.6)",
       );
     }
 
     throw this.fail(
-      "expected ':', '=', or '<~' after variable name in let; uninitialized let is not allowed (spec §5.6)",
+      "expected ':', '=', or '<-' after variable name in let; uninitialized let is not allowed (spec §5.6)",
     );
   }
 
@@ -417,11 +417,11 @@ class Parser {
         span: spanFrom(nameTok, value),
       };
     }
-    if (this.match(TokenKind.Receive)) {
+    if (this.match(TokenKind.Transfer)) {
       const source = this.parseExpression();
-      this.consume(TokenKind.Semicolon, "expected ';' after communication statement");
+      this.consume(TokenKind.Semicolon, "expected ';' after transfer statement");
       return {
-        kind: "CommStatement",
+        kind: "TransferStatement",
         name: nameTok.name,
         source,
         span: spanFrom(nameTok, source),

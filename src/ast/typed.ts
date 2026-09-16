@@ -4,17 +4,16 @@ import type { FunctionDeclaration, Parameter } from "./declarations.js";
 import type {
   Statement,
   LetStatement,
-  LetReceiveStatement,
+  LetTransferStatement,
   AssignmentStatement,
   AssignmentTarget,
-  CommStatement,
+  TransferStatement,
   IfStatement,
   WhileStatement,
   ForStatement,
   ReturnStatement,
   ExpressionStatement,
   ForLetInit,
-  ForLetReceiveInit,
   ForAssignmentInit,
   Block,
 } from "./statements.js";
@@ -47,8 +46,8 @@ export interface LocatedType {
 /** Communication tag assigned before EPP (spec §11.5). */
 export type CommTag = string;
 
-/** How `<~` transfers a value (spec §7.8). */
-export type CommMode = "direct" | "broadcast" | "localization";
+/** How `<-` transfers a value (spec §7.8). */
+export type TransferMode = "direct" | "broadcast" | "localCopy";
 
 // ---------------------------------------------------------------------------
 // Typed AST — mirrors syntactic nodes with `choreoType` and comm metadata.
@@ -84,9 +83,9 @@ export interface TypedParameter {
 
 export type TypedStatement =
   | TypedLetStatement
-  | TypedLetReceiveStatement
+  | TypedLetTransferStatement
   | TypedAssignmentStatement
-  | TypedCommStatement
+  | TypedTransferStatement
   | TypedIfStatement
   | TypedWhileStatement
   | TypedForStatement
@@ -99,11 +98,11 @@ export interface TypedLetStatement {
   readonly initializer: TypedExpression;
 }
 
-export interface TypedLetReceiveStatement {
-  readonly stmt: LetReceiveStatement;
+export interface TypedLetTransferStatement {
+  readonly stmt: LetTransferStatement;
   readonly choreoType: LocatedType;
   readonly source: TypedExpression;
-  readonly commMode: CommMode;
+  readonly transferMode: TransferMode;
   readonly commTag?: CommTag;
 }
 
@@ -129,11 +128,11 @@ export type TypedAssignmentTarget =
   | TypedIdentifierAssignmentTarget
   | TypedIndexAssignmentTarget;
 
-export interface TypedCommStatement {
-  readonly stmt: CommStatement;
+export interface TypedTransferStatement {
+  readonly stmt: TransferStatement;
   readonly targetType: LocatedType;
   readonly source: TypedExpression;
-  readonly commMode: CommMode;
+  readonly transferMode: TransferMode;
   readonly commTag?: CommTag;
 }
 
@@ -158,23 +157,12 @@ export interface TypedForStatement {
   readonly body: TypedBlock;
 }
 
-export type TypedForInit =
-  | TypedForLetInit
-  | TypedForLetReceiveInit
-  | TypedForAssignmentInit;
+export type TypedForInit = TypedForLetInit | TypedForAssignmentInit;
 
 export interface TypedForLetInit {
   readonly init: ForLetInit;
   readonly choreoType: LocatedType;
   readonly initializer: TypedExpression;
-}
-
-export interface TypedForLetReceiveInit {
-  readonly init: ForLetReceiveInit;
-  readonly choreoType: LocatedType;
-  readonly source: TypedExpression;
-  readonly commMode: CommMode;
-  readonly commTag?: CommTag;
 }
 
 export interface TypedForAssignmentInit {
@@ -269,8 +257,6 @@ export interface FunctionSymbol {
   readonly params: readonly LocatedType[];
   readonly returnType: LocatedType;
   readonly decl: FunctionDeclaration;
-  readonly isLocal: boolean;
-  readonly isEvery: boolean;
 }
 
 /** Narrow typed expressions by syntactic kind. */

@@ -178,8 +178,10 @@ class Lexer {
         this.pushPunctuation(TokenKind.Assign, char, start);
         return;
       case "<":
-        if (this.match("~")) {
-          this.pushPunctuation(TokenKind.Receive, "<~", start);
+        // Maximal munch on the raw character stream: `a<-b` is a transfer,
+        // while `a < -b` (with a space) stays a comparison against `-b`.
+        if (this.match("-")) {
+          this.pushPunctuation(TokenKind.Transfer, "<-", start);
           return;
         }
         if (this.match("=")) {

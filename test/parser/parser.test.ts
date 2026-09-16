@@ -6,7 +6,7 @@ import { parse } from "../../src/parser/index.js";
 describe("ChoreoBS parser", () => {
   it("parses direct communication at top level", () => {
     const source = `let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;`;
+let y: integer@bob <- x;`;
     const { program, errors } = parse(source);
     assert.equal(errors.length, 0);
     assert.ok(program);
@@ -21,7 +21,7 @@ let y: integer@bob <~ x;`;
 
     const second = program.items[1];
     if (second?.kind === "TopLevelStatement") {
-      assert.equal(second.statement.kind, "LetReceiveStatement");
+      assert.equal(second.statement.kind, "LetTransferStatement");
     }
   });
 
@@ -35,7 +35,7 @@ let y: integer@bob <~ x;`;
     assert.equal(fn?.kind, "FunctionDeclaration");
     if (fn?.kind === "FunctionDeclaration") {
       assert.equal(fn.name, "add");
-      assert.equal(fn.at.kind, "concrete");
+      assert.equal(fn.at.kind, "individual");
       assert.equal(fn.context.kind, "local");
       assert.equal(fn.params.length, 2);
       assert.equal(fn.body.statements[0]?.kind, "ReturnStatement");
@@ -60,9 +60,9 @@ let y: integer@bob <~ x;`;
     }
   });
 
-  it("parses if/while/for and communication statement", () => {
+  it("parses if/while/for and transfer statement", () => {
     const source = `if (c) {
-  x <~ y;
+  x <- y;
 } else {
   while (c) {
     for (let i: integer@every = 0@every; i < 10@every; i = i + 1@every) {
@@ -113,13 +113,13 @@ let y: integer@bob <~ x;`;
       const lit = letStmt.statement.initializer;
       if (lit.kind === "LiteralExpression") {
         assert.equal(lit.literal.literal.kind, "StringLiteral");
-        assert.equal(lit.literal.location?.location.kind, "concrete");
+        assert.equal(lit.literal.location?.location.kind, "individual");
       }
       const typeLoc = letStmt.statement.type?.location?.location;
-      if (typeLoc?.kind === "concrete") {
+      if (typeLoc?.kind === "individual") {
         assert.equal(typeLoc.name, "bob");
       } else {
-        assert.fail("expected concrete location on type");
+        assert.fail("expected individual location on type");
       }
     }
   });
@@ -133,7 +133,7 @@ let y: integer@bob <~ x;`;
   it("reports parse errors for uninitialized let", () => {
     const { program, errors } = parse("let x: integer@alice;");
     assert.equal(program, null);
-    assert.ok(errors.some((e) => e.message.includes("=") || e.message.includes("<~")));
+    assert.ok(errors.some((e) => e.message.includes("=") || e.message.includes("<-")));
   });
 
   it("parses let without type annotation (spec §5.6, §7.14.1)", () => {
@@ -183,11 +183,11 @@ let y: integer@bob <~ x;`;
     }
   });
 
-  it("rejects communication let without type annotation (spec §7.14.3)", () => {
-    const { program, errors } = parse("let y <~ x;");
+  it("rejects transfer let without type annotation (spec §7.14.3)", () => {
+    const { program, errors } = parse("let y <- x;");
     assert.equal(program, null);
     assert.ok(
-      errors.some((e) => e.message.includes("type annotation required for communication let")),
+      errors.some((e) => e.message.includes("type annotation required for transfer let")),
     );
   });
 

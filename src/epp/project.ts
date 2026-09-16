@@ -11,9 +11,9 @@ import type {
   TypedBlock,
   TypedExpression,
   TypedLetStatement,
-  TypedLetReceiveStatement,
+  TypedLetTransferStatement,
   TypedAssignmentStatement,
-  TypedCommStatement,
+  TypedTransferStatement,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
@@ -30,7 +30,7 @@ import type {
   TypedIndexExpression,
   TypedParenthesizedExpression,
 } from "../ast/typed.js";
-import { available } from "../types/located.js";
+import { residesAt } from "../types/located.js";
 import type {
   ProjectedProgram,
   ProjectedFunction,
@@ -47,26 +47,23 @@ import { cloneFunction } from "../emit/comm.js";
 
 export function projectAll(
   typed: TypedProgram,
-  participants: readonly string[],
+  endpoints: readonly string[],
 ): readonly ProjectedProgram[] {
-  return participants.map((participant) => project(typed, participant));
+  return endpoints.map((endpoint) => project(typed, endpoint));
 }
 
 export function project(
   typed: TypedProgram,
-  participant: string,
+  endpoint: string,
 ): ProjectedProgram {
-  return new Projector(participant).projectProgram(typed);
+  return new Projector(endpoint).projectProgram(typed);
 }
 
 class Projector {
-  private readonly useLocation: Location;
   private loopDepth = 0;
   private ifDepth = 0;
 
-  constructor(private readonly participant: string) {
-    this.useLocation = { kind: "concrete", name: participant };
-  }
+  constructor(private readonly endpoint: string) {}
 
   projectProgram(typed: TypedProgram): ProjectedProgram {
     const functions: ProjectedFunction[] = [];
@@ -85,7 +82,7 @@ class Projector {
 
     return {
       kind: "ProjectedProgram",
-      participant: this.participant,
+      endpoint: this.endpoint,
       functions,
       body,
       span: typed.program.span,
@@ -120,7 +117,7 @@ class Projector {
     if (decl.at.kind === "every") {
       return true;
     }
-    return decl.at.name === this.participant;
+    return decl.at.name === this.endpoint;
   }
 
   private projectTopLevelStatement(
@@ -147,12 +144,12 @@ class Projector {
     switch (stmt.stmt.kind) {
       case "LetStatement":
         return this.projectLet(stmt as TypedLetStatement);
-      case "LetReceiveStatement":
-        return this.projectLetReceive(stmt as TypedLetReceiveStatement);
+      case "LetTransferStatement":
+        return this.projectLetTransfer(stmt as TypedLetTransferStatement);
       case "AssignmentStatement":
         return this.projectAssignment(stmt as TypedAssignmentStatement);
-      case "CommStatement":
-        return this.projectComm(stmt as TypedCommStatement);
+      case "TransferStatement":
+        return this.projectComm(stmt as TypedTransferStatement);
       case "IfStatement":
         return this.projectIf(stmt as TypedIfStatement);
       case "WhileStatement":
@@ -168,7 +165,7 @@ class Projector {
 
   private projectLet(stmt: TypedLetStatement): ProjectedStatement {
     const span = stmt.stmt.span;
-    if (!this.isAvailable(stmt.choreoType.location)) {
+    if (!this.residesHere(stmt.choreoType.location)) {
       if (this.loopDepth > 0) {
         return this.absentStatement(span);
       }
@@ -189,11 +186,11 @@ class Projector {
     };
   }
 
-  private projectLetReceive(
-    stmt: TypedLetReceiveStatement,
+  private projectLetTransfer(
+    stmt: TypedLetTransferStatement,
   ): ProjectedStatement | ProjectedStatement[] {
-    if (stmt.commMode === "localization") {
-      return this.projectLocalizationLetReceive(stmt);
+    if (stmt.transferMode === "localCopy") {
+      return this.projectLocalCopyLetTransfer(stmt);
     }
 
     const span = stmt.stmt.span;
@@ -215,26 +212,26 @@ class Projector {
       );
     }
 
-    const dstParticipant = dst.name;
-    const srcParticipant = src.kind === "concrete" ? src.name : "";
+    const dstEndpoint = dst.name;
+    const srcEndpoint = src.kind === "individual" ? src.name : "";
 
-    if (this.participant === srcParticipant) {
+    if (this.endpoint === srcEndpoint) {
       return {
         kind: "SendStatement",
         comm,
-        destinationParticipant: dstParticipant,
+        destinationEndpoint: dstEndpoint,
         tag,
         value: this.projectExpression(stmt.source),
         span,
       };
     }
 
-    if (this.participant === dstParticipant) {
+    if (this.endpoint === dstEndpoint) {
       return {
         kind: "LetStatement",
         name,
         type: this.projectType(stmt.choreoType),
-        initializer: this.receiveExpr(comm, srcParticipant, tag, span),
+        initializer: this.receiveExpr(comm, srcEndpoint, tag, span),
         span,
       };
     }
@@ -251,10 +248,10 @@ class Projector {
     source: TypedExpression,
     span: Span,
   ): ProjectedStatement | ProjectedStatement[] {
-    const srcParticipant = src.kind === "concrete" ? src.name : "";
+    const srcEndpoint = src.kind === "individual" ? src.name : "";
     const projectedSource = this.projectExpression(source);
 
-    if (this.participant === srcParticipant) {
+    if (this.endpoint === srcEndpoint) {
       const senderInitializer =
         choreoType.isArray
           ? ({
@@ -286,16 +283,16 @@ class Projector {
       kind: "LetStatement",
       name,
       type: this.projectType(choreoType),
-      initializer: this.receiveExpr(comm, srcParticipant, tag, span),
+      initializer: this.receiveExpr(comm, srcEndpoint, tag, span),
       span,
     };
   }
 
   private projectComm(
-    stmt: TypedCommStatement,
+    stmt: TypedTransferStatement,
   ): ProjectedStatement | ProjectedStatement[] {
-    if (stmt.commMode === "localization") {
-      return this.projectLocalizationComm(stmt);
+    if (stmt.transferMode === "localCopy") {
+      return this.projectLocalCopyTransfer(stmt);
     }
 
     const span = stmt.stmt.span;
@@ -308,6 +305,7 @@ class Projector {
     if (dst.kind === "every") {
       return this.projectBroadcastComm(
         name,
+        stmt.targetType,
         src,
         tag,
         comm,
@@ -316,25 +314,25 @@ class Projector {
       );
     }
 
-    const dstParticipant = dst.name;
-    const srcParticipant = src.kind === "concrete" ? src.name : "";
+    const dstEndpoint = dst.name;
+    const srcEndpoint = src.kind === "individual" ? src.name : "";
 
-    if (this.participant === srcParticipant) {
+    if (this.endpoint === srcEndpoint) {
       return {
         kind: "SendStatement",
         comm,
-        destinationParticipant: dstParticipant,
+        destinationEndpoint: dstEndpoint,
         tag,
         value: this.projectExpression(stmt.source),
         span,
       };
     }
 
-    if (this.participant === dstParticipant) {
+    if (this.endpoint === dstEndpoint) {
       return {
         kind: "AssignmentStatement",
         target: { kind: "IdentifierAssignmentTarget", name },
-        value: this.receiveExpr(comm, srcParticipant, tag, span),
+        value: this.receiveExpr(comm, srcEndpoint, tag, span),
         span,
       };
     }
@@ -342,16 +340,16 @@ class Projector {
     return this.absentStatement(span);
   }
 
-  private projectLocalizationLetReceive(
-    stmt: TypedLetReceiveStatement,
+  private projectLocalCopyLetTransfer(
+    stmt: TypedLetTransferStatement,
   ): ProjectedStatement {
     const span = stmt.stmt.span;
     const dst = stmt.choreoType.location;
-    if (dst.kind !== "concrete" || this.participant !== dst.name) {
+    if (!this.residesHere(dst)) {
       return this.absentStatement(span);
     }
     const projectedSource = this.projectExpression(stmt.source);
-    const initializer = this.localizationInitializer(
+    const initializer = this.localCopyInitializer(
       stmt.choreoType,
       projectedSource,
       span,
@@ -365,16 +363,16 @@ class Projector {
     };
   }
 
-  private projectLocalizationComm(
-    stmt: TypedCommStatement,
+  private projectLocalCopyTransfer(
+    stmt: TypedTransferStatement,
   ): ProjectedStatement {
     const span = stmt.stmt.span;
     const dst = stmt.targetType.location;
-    if (dst.kind !== "concrete" || this.participant !== dst.name) {
+    if (!this.residesHere(dst)) {
       return this.absentStatement(span);
     }
     const projectedSource = this.projectExpression(stmt.source);
-    const value = this.localizationInitializer(
+    const value = this.localCopyInitializer(
       stmt.targetType,
       projectedSource,
       span,
@@ -387,7 +385,7 @@ class Projector {
     };
   }
 
-  private localizationInitializer(
+  private localCopyInitializer(
     choreoType: LocatedType,
     projectedSource: ProjectedExpression,
     span: Span,
@@ -404,19 +402,20 @@ class Projector {
     return projectedSource;
   }
 
-  /** Broadcast to `@every`: sender broadcasts; all participants assign from receive or local copy (§11.3). */
+  /** Broadcast to `@every`: sender broadcasts; all endpoints assign from receive or local copy (§11.3). */
   private projectBroadcastComm(
     name: string,
+    targetType: LocatedType,
     src: Location,
     tag: string,
     comm: CommKind,
     source: TypedExpression,
     span: Span,
   ): ProjectedStatement | ProjectedStatement[] {
-    const srcParticipant = src.kind === "concrete" ? src.name : "";
+    const srcEndpoint = src.kind === "individual" ? src.name : "";
     const projectedSource = this.projectExpression(source);
 
-    if (src.kind === "concrete" && src.name === this.participant) {
+    if (src.kind === "individual" && src.name === this.endpoint) {
       return [
         {
           kind: "BroadcastStatement",
@@ -428,7 +427,8 @@ class Projector {
         {
           kind: "AssignmentStatement",
           target: { kind: "IdentifierAssignmentTarget", name },
-          value: projectedSource,
+          // The sender keeps its own fresh copy, like every receiver does.
+          value: this.localCopyInitializer(targetType, projectedSource, span),
           span,
         },
       ];
@@ -437,7 +437,7 @@ class Projector {
     return {
       kind: "AssignmentStatement",
       target: { kind: "IdentifierAssignmentTarget", name },
-      value: this.receiveExpr(comm, srcParticipant, tag, span),
+      value: this.receiveExpr(comm, srcEndpoint, tag, span),
       span,
     };
   }
@@ -452,7 +452,7 @@ class Projector {
     } else {
       targetLocation = (stmt.target as import("../ast/typed.js").TypedIndexAssignmentTarget).arrayType.location;
     }
-    if (!this.isAvailable(targetLocation)) {
+    if (!this.residesHere(targetLocation)) {
       return this.nothingForExpression(stmt.value, span);
     }
     return {
@@ -573,7 +573,7 @@ class Projector {
     const span = stmt.stmt.span;
     const expr = stmt.expression;
 
-    if (!this.isAvailable(expr.choreoType.location)) {
+    if (!this.residesHere(expr.choreoType.location)) {
       return this.nothingForExpression(expr, span);
     }
 
@@ -589,7 +589,7 @@ class Projector {
   }
 
   private projectExpression(expr: TypedExpression): ProjectedExpression {
-    if (!this.isAvailable(expr.choreoType.location)) {
+    if (!this.residesHere(expr.choreoType.location)) {
       return this.absentExpr(expr.expr.span);
     }
 
@@ -704,7 +704,7 @@ class Projector {
   }
 
   private projectType(type: LocatedType): ProjectedType {
-    if (!this.isAvailable(type.location)) {
+    if (!this.residesHere(type.location)) {
       return { kind: "AbsentType" };
     }
     const base: import("../ir/projected.js").ProjectedBaseType = type.isArray
@@ -761,14 +761,14 @@ class Projector {
 
   private receiveExpr(
     comm: CommKind,
-    sourceParticipant: string,
+    sourceEndpoint: string,
     tag: string,
     span: Span,
   ): ReceiveExpression {
     return {
       kind: "ReceiveExpression",
       comm,
-      sourceParticipant,
+      sourceEndpoint,
       tag,
       span,
     };
@@ -796,8 +796,9 @@ class Projector {
     return this.commKind(type.base);
   }
 
-  private isAvailable(location: Location): boolean {
-    return available(location, this.useLocation);
+  /** Does this endpoint hold a copy of a value at `location`? (spec §7.6, §12.2) */
+  private residesHere(location: Location): boolean {
+    return residesAt(location, this.endpoint);
   }
 
   private absentExpr(span: Span): AbsentExpression {

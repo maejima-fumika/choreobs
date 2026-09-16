@@ -5,10 +5,10 @@ import type {
   Statement,
   Block,
   LetStatement,
-  LetReceiveStatement,
+  LetTransferStatement,
   AssignmentStatement,
   IndexAssignmentTarget,
-  CommStatement,
+  TransferStatement,
   IfStatement,
   WhileStatement,
   ForStatement,
@@ -16,7 +16,6 @@ import type {
   ExpressionStatement,
   ForInit,
   ForLetInit,
-  ForLetReceiveInit,
   ForAssignmentInit,
 } from "../ast/statements.js";
 import type {
@@ -42,15 +41,14 @@ import type {
   TypedBlock,
   TypedExpression,
   TypedLetStatement,
-  TypedLetReceiveStatement,
+  TypedLetTransferStatement,
   TypedAssignmentStatement,
-  TypedCommStatement,
+  TypedTransferStatement,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
   TypedForInit,
   TypedForLetInit,
-  TypedForLetReceiveInit,
   TypedForAssignmentInit,
   TypedReturnStatement,
   TypedExpressionStatement,
@@ -63,18 +61,16 @@ import type {
   TypedIndexExpression,
   TypedParenthesizedExpression,
   LocatedType,
-  CommMode,
+  TransferMode,
   FunctionSymbol,
 } from "../ast/typed.js";
 import type { ChoreoBSConfig } from "../config/types.js";
 import { EVERY_CONTEXT } from "../ast/context.js";
 import {
-  available,
   contextAsLocation,
   formatLocatedType,
   isSubtype,
   isArraySubtype,
-  localAvailable,
   locatedType,
   locationsEqual,
 } from "../types/located.js";
@@ -114,7 +110,7 @@ class TypeChecker {
   private readonly errors: TypeCheckError[] = [];
   private readonly functions = new Map<string, FunctionDeclaration>();
   private readonly resolvedReturnTypes = new Map<string, LocatedType>();
-  private readonly participants: Set<string>;
+  private readonly endpoints: Set<string>;
   private readonly commTags = new CommTagGenerator();
   private commScope = TOP_SCOPE;
   private currentFunction: FunctionDeclaration | undefined;
@@ -128,10 +124,10 @@ class TypeChecker {
     private readonly program: Program,
     config: ChoreoBSConfig,
   ) {
-    this.participants = new Set(config.participants);
-    if (this.participants.has("every")) {
+    this.endpoints = new Set(config.endpoints);
+    if (this.endpoints.has("every")) {
       this.error(
-        "'every' must not appear in participants (spec §2.2)",
+        "'every' must not appear in endpoints (spec §2.2)",
         program.span,
       );
     }
@@ -567,13 +563,13 @@ class TypeChecker {
         case "LetStatement":
           visitExpr(stmt.initializer);
           break;
-        case "LetReceiveStatement":
+        case "LetTransferStatement":
           visitExpr(stmt.source);
           break;
         case "AssignmentStatement":
           visitExpr(stmt.value);
           break;
-        case "CommStatement":
+        case "TransferStatement":
           visitExpr(stmt.source);
           break;
         case "IfStatement":
@@ -595,8 +591,6 @@ class TypeChecker {
         case "ForStatement":
           if (stmt.init?.kind === "ForLetInit") {
             visitExpr(stmt.init.initializer);
-          } else if (stmt.init?.kind === "ForLetReceiveInit") {
-            visitExpr(stmt.init.source);
           } else if (stmt.init?.kind === "ForAssignmentInit") {
             visitExpr(stmt.init.value);
           }
@@ -711,13 +705,13 @@ class TypeChecker {
     switch (stmt.kind) {
       case "LetStatement":
         return this.checkLet(stmt, ctx, allowOmit);
-      case "LetReceiveStatement":
-        this.assertCommAllowed(ctx, stmt.span);
+      case "LetTransferStatement":
+        this.assertTransferAllowed(ctx, stmt.span);
         return this.checkLetReceive(stmt, ctx, allowOmit);
       case "AssignmentStatement":
         return this.checkAssignment(stmt, ctx, allowOmit);
-      case "CommStatement":
-        this.assertCommAllowed(ctx, stmt.span);
+      case "TransferStatement":
+        this.assertTransferAllowed(ctx, stmt.span);
         return this.checkComm(stmt, ctx, allowOmit);
       case "IfStatement":
         return this.checkIf(stmt, ctx, allowOmit, inFunction);
@@ -798,16 +792,16 @@ class TypeChecker {
   }
 
   private checkLetReceive(
-    stmt: LetReceiveStatement,
+    stmt: LetTransferStatement,
     ctx: ExecutionContext,
     allowOmit: boolean,
-  ): TypedLetReceiveStatement {
+  ): TypedLetTransferStatement {
     const choreoType = this.resolveType(stmt.type, ctx, allowOmit);
     const source = this.checkExpression(stmt.source, ctx, allowOmit);
-    const commMode = this.validateCommunication(choreoType, source.choreoType, stmt.span);
-    const commTag = this.commTagForMode(commMode);
+    const transferMode = this.validateTransfer(choreoType, source.choreoType, stmt.span);
+    const commTag = this.transferTagForMode(transferMode);
     this.defineLocal(stmt.name, choreoType, stmt.span);
-    return { stmt, choreoType, source, commMode, commTag };
+    return { stmt, choreoType, source, transferMode, commTag };
   }
 
   private checkAssignment(
@@ -834,22 +828,22 @@ class TypeChecker {
     }
     const elementType = locatedType(arrayType.base, arrayType.location);
     this.validateAssignmentLike(elementType, value.choreoType, stmt.span);
-    if (!available(index.choreoType.location, arrayType.location)) {
-      this.error("array index location is not available at array location (spec §16.37)", stmt.span);
+    if (!locationsEqual(index.choreoType.location, arrayType.location)) {
+      this.error("array index must be at the same location as the array (spec §16.37)", stmt.span);
     }
     return { stmt, target: { target: stmt.target, arrayType, index, elementType }, value };
   }
 
   private checkComm(
-    stmt: CommStatement,
+    stmt: TransferStatement,
     ctx: ExecutionContext,
     allowOmit: boolean,
-  ): TypedCommStatement {
+  ): TypedTransferStatement {
     const targetType = this.lookupVariable(stmt.name, stmt.span);
     const source = this.checkExpression(stmt.source, ctx, allowOmit);
-    const commMode = this.validateCommunication(targetType, source.choreoType, stmt.span);
-    const commTag = this.commTagForMode(commMode);
-    return { stmt, targetType, source, commMode, commTag };
+    const transferMode = this.validateTransfer(targetType, source.choreoType, stmt.span);
+    const commTag = this.transferTagForMode(transferMode);
+    return { stmt, targetType, source, transferMode, commTag };
   }
 
   private checkIf(
@@ -907,8 +901,6 @@ class TypeChecker {
     switch (init.kind) {
       case "ForLetInit":
         return this.checkForLetInit(init, ctx, allowOmit);
-      case "ForLetReceiveInit":
-        return this.checkForLetReceiveInit(init, ctx, allowOmit);
       case "ForAssignmentInit":
         return this.checkForAssignmentInit(init, ctx, allowOmit);
     }
@@ -934,20 +926,6 @@ class TypeChecker {
     this.requireExpressionAvailable(choreoType.location, ctx, init.span);
     this.defineLocal(init.name, choreoType, init.span);
     return { init, choreoType, initializer };
-  }
-
-  private checkForLetReceiveInit(
-    init: ForLetReceiveInit,
-    ctx: ExecutionContext,
-    allowOmit: boolean,
-  ): TypedForLetReceiveInit {
-    this.assertCommAllowed(ctx, init.span);
-    const choreoType = this.resolveType(init.type, ctx, allowOmit);
-    const source = this.checkExpression(init.source, ctx, allowOmit);
-    const commMode = this.validateCommunication(choreoType, source.choreoType, init.span);
-    const commTag = this.commTagForMode(commMode);
-    this.defineLocal(init.name, choreoType, init.span);
-    return { init, choreoType, source, commMode, commTag };
   }
 
   private checkForAssignmentInit(
@@ -1064,13 +1042,13 @@ class TypeChecker {
           expr.span,
         );
       }
-    } else if (!localAvailable(typed.choreoType.location, ctx.participant)) {
+    } else if (!locationsEqual(typed.choreoType.location, contextAsLocation(ctx))) {
       const loc =
         typed.choreoType.location.kind === "every"
           ? "every"
           : typed.choreoType.location.name;
       this.error(
-        `condition must be boolean@${ctx.participant} in local function, got boolean@${loc} (spec §7.9, §7.10)`,
+        `condition must be boolean@${ctx.endpoint} in local function, got boolean@${loc} (spec §7.9, §7.10)`,
         expr.span,
       );
     }
@@ -1215,7 +1193,7 @@ class TypeChecker {
     let location = expr.location?.location;
     if (location === undefined) {
       if (allowOmit && ctx.kind === "local") {
-        location = { kind: "concrete", name: ctx.participant };
+        location = { kind: "individual", name: ctx.endpoint };
       } else {
         this.error("array literal location annotation required in @every/top-level context (spec §5.16, §16.31)", expr.span);
         location = contextAsLocation(ctx);
@@ -1254,8 +1232,8 @@ class TypeChecker {
       } as TypedLiteralExpression;
     }
     const typed = this.checkExpression(element, ctx, allowOmit);
-    if (!available(typed.choreoType.location, arrayLocation)) {
-      this.error("array element location is not available at array literal location", element.span);
+    if (!locationsEqual(typed.choreoType.location, arrayLocation)) {
+      this.error("array element must be at the same location as the array literal", element.span);
     }
     return typed;
   }
@@ -1422,8 +1400,8 @@ class TypeChecker {
     if (index.choreoType.base !== "integer" || index.choreoType.isArray) {
       this.error("array index must have type integer", expr.index.span);
     }
-    if (!available(index.choreoType.location, target.choreoType.location)) {
-      this.error("array index location is not available at array location (spec §16.37)", expr.span);
+    if (!locationsEqual(index.choreoType.location, target.choreoType.location)) {
+      this.error("array index must be at the same location as the array (spec §16.37)", expr.span);
     }
     return {
       expr,
@@ -1461,9 +1439,9 @@ class TypeChecker {
       );
       return;
     }
-    if (decl.at.name !== ctx.participant) {
+    if (decl.at.name !== ctx.endpoint) {
       this.error(
-        `cannot call function '${decl.name}' at '${decl.at.name}' from '${ctx.participant}' (spec §7.12, §10.3)`,
+        `cannot call function '${decl.name}' at '${decl.at.name}' from '${ctx.endpoint}' (spec §7.12, §10.3)`,
         span,
       );
     }
@@ -1482,21 +1460,15 @@ class TypeChecker {
       this.error("non-array argument is not assignable to array parameter", span);
       return;
     }
-    if (arg.isArray && param.isArray && arg.location.kind === "every" && param.location.kind === "concrete") {
-      this.error(
-        "cannot pass T[]@every to T[]@P parameter (spec §7.11.1, §16.35)",
-        span,
-      );
-    }
     if (!isArraySubtype(arg, param)) {
       this.error(
         `argument type ${formatLocatedType(arg)} is not assignable to parameter type ${formatLocatedType(param)}`,
         span,
       );
     }
-    if (!available(arg.location, param.location)) {
+    if (!locationsEqual(arg.location, param.location)) {
       this.error(
-        `argument location ${formatLocatedType(arg)} is not available at parameter location ${formatLocatedType(param)}`,
+        `argument ${formatLocatedType(arg)} is not at parameter location ${formatLocatedType(param)}: use a transfer instead (spec §7.12, §16.28)`,
         span,
       );
     }
@@ -1511,21 +1483,15 @@ class TypeChecker {
     source: LocatedType,
     span: Span,
   ): void {
-    if (source.isArray && target.isArray && source.location.kind === "every" && target.location.kind === "concrete") {
-      this.error(
-        "cannot assign T[]@every to T[]@P (spec §7.11.1, §16.34)",
-        span,
-      );
-    }
     if (!isArraySubtype(source, target)) {
       this.error(
         `cannot assign ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
       );
     }
-    if (!available(source.location, target.location)) {
+    if (!locationsEqual(source.location, target.location)) {
       this.error(
-        `invalid assignment across locations: use communication instead (spec §7.7, §16.7)`,
+        `invalid assignment across locations: use a transfer instead (spec §7.7, §16.7)`,
         span,
       );
     }
@@ -1543,66 +1509,53 @@ class TypeChecker {
         span,
       );
     }
-    if (!available(value.location, returnType.location)) {
+    if (!locationsEqual(value.location, returnType.location)) {
       this.error(
-        `return value ${formatLocatedType(value)} is not available at return type location ${formatLocatedType(returnType)} (spec §7.13)`,
+        `return value ${formatLocatedType(value)} is not at return type location ${formatLocatedType(returnType)} (spec §7.13)`,
         span,
       );
     }
   }
 
-  private validateCommunication(
+  private validateTransfer(
     target: LocatedType,
     source: LocatedType,
     span: Span,
-  ): CommMode {
+  ): TransferMode {
     if (!isArraySubtype(source, target)) {
       this.error(
-        `communication type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
+        `transfer type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)} (spec §7.8, §16.8)`,
         span,
       );
     }
     const srcLoc = source.location;
     const dstLoc = target.location;
 
-    if (srcLoc.kind === "every" && dstLoc.kind === "every") {
-      this.error(
-        "communication from @every to @every is invalid; use assignment instead (spec §7.8, §16.8)",
-        span,
-      );
-      return "localization";
+    // There is no restriction on the source/destination locations (spec §7.8).
+    // A transfer is a local copy exactly when every endpoint the destination
+    // resides at already holds the source payload — that is, when the source is
+    // `@every`, or when the two locations are the same.
+    if (srcLoc.kind === "every" || locationsEqual(srcLoc, dstLoc)) {
+      return "localCopy";
     }
-    if (locationsEqual(srcLoc, dstLoc)) {
-      this.error(
-        "communication source and destination must differ; use assignment instead (spec §7.8)",
-        span,
-      );
-      return "direct";
-    }
-    if (dstLoc.kind === "every" && srcLoc.kind === "concrete") {
+    // The source is an individual location from here on.
+    if (dstLoc.kind === "every") {
       return "broadcast";
     }
-    if (dstLoc.kind === "concrete" && srcLoc.kind === "every") {
-      return "localization";
-    }
-    if (dstLoc.kind === "concrete" && srcLoc.kind === "concrete") {
-      return "direct";
-    }
-    this.error("invalid communication pattern (spec §7.8)", span);
     return "direct";
   }
 
-  private commTagForMode(mode: CommMode): string | undefined {
+  private transferTagForMode(mode: TransferMode): string | undefined {
     if (mode === "direct" || mode === "broadcast") {
       return this.commTags.next(this.commScope);
     }
     return undefined;
   }
 
-  private assertCommAllowed(ctx: ExecutionContext, span: Span): void {
+  private assertTransferAllowed(ctx: ExecutionContext, span: Span): void {
     if (ctx.kind === "local") {
       this.error(
-        "communication is not allowed in local functions (spec §10.1)",
+        "transfer is not allowed in local functions (spec §10.1)",
         span,
       );
     }
@@ -1635,14 +1588,10 @@ class TypeChecker {
     span: Span,
   ): Location {
     if (ctx.kind === "local") {
-      const participant = ctx.participant;
-      if (
-        !localAvailable(left, participant) ||
-        !localAvailable(right, participant) ||
-        !locationsEqual(left, right)
-      ) {
+      const here = contextAsLocation(ctx);
+      if (!locationsEqual(left, here) || !locationsEqual(right, here)) {
         this.error(
-          `binary operands must be located at ${participant} in local function`,
+          `binary operands must be located at ${ctx.endpoint} in local function`,
           span,
         );
       }
@@ -1651,23 +1600,8 @@ class TypeChecker {
     if (locationsEqual(left, right)) {
       return left;
     }
-    if (left.kind === "every" && right.kind === "concrete") {
-      return right;
-    }
-    if (left.kind === "concrete" && right.kind === "every") {
-      return left;
-    }
-    this.error("binary operands must be at a compatible location", span);
+    this.error("binary operands must be at the same location (spec §7.11)", span);
     return left;
-  }
-
-  private requireAvailable(valueLoc: Location, useLoc: Location, span: Span): void {
-    if (!available(valueLoc, useLoc)) {
-      this.error(
-        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in this context (spec §7.6)`,
-        span,
-      );
-    }
   }
 
   private requireExpressionAvailable(
@@ -1678,9 +1612,9 @@ class TypeChecker {
     if (ctx.kind !== "local") {
       return;
     }
-    if (!localAvailable(valueLoc, ctx.participant)) {
+    if (!locationsEqual(valueLoc, contextAsLocation(ctx))) {
       this.error(
-        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not available in local function at ${ctx.participant}`,
+        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not usable in local function at ${ctx.endpoint}`,
         span,
       );
     }
@@ -1695,10 +1629,10 @@ class TypeChecker {
     if (decl === undefined || decl.context.kind !== "local") {
       return;
     }
-    const participant = decl.context.participant;
-    if (!localAvailable(type.location, participant)) {
+    const endpoint = decl.context.endpoint;
+    if (!locationsEqual(type.location, contextAsLocation(decl.context))) {
       this.error(
-        `function '${decl.name}' ${role} must be located at ${participant}, got ${formatLocatedType(type)}`,
+        `function '${decl.name}' ${role} must be located at ${endpoint}, got ${formatLocatedType(type)}`,
         span,
       );
     }
@@ -1749,9 +1683,9 @@ class TypeChecker {
     if (loc.kind === "every") {
       return;
     }
-    if (!this.participants.has(loc.name)) {
+    if (!this.endpoints.has(loc.name)) {
       this.error(
-        `unknown participant '${loc.name}' (spec §16.1)`,
+        `unknown endpoint '${loc.name}' (spec §16.1)`,
         span,
       );
     }
@@ -1784,7 +1718,7 @@ class TypeChecker {
       }
     }
     this.error(`undefined variable '${name}'`, span);
-    return locatedType("integer", { kind: "concrete", name: "_" });
+    return locatedType("integer", { kind: "individual", name: "_" });
   }
 
   private pushEnv(env: Map<string, LocatedType>): void {
@@ -1828,18 +1762,16 @@ class TypeChecker {
       params,
       returnType,
       decl,
-      isLocal: decl.at.kind === "concrete",
-      isEvery: decl.at.kind === "every",
     };
   }
 
   private unknownFunction(name: string): FunctionSymbol {
-    const fallback = locatedType("integer", { kind: "concrete", name: "_" });
+    const fallback = locatedType("integer", { kind: "individual", name: "_" });
     const stub: FunctionDeclaration = {
       kind: "FunctionDeclaration",
       name,
-      at: { kind: "concrete", name: "_" },
-      context: { kind: "local", participant: "_" },
+      at: { kind: "individual", name: "_" },
+      context: { kind: "local", endpoint: "_" },
       params: [],
       returnType: {
         kind: "TypeAnnotation",
@@ -1856,8 +1788,6 @@ class TypeChecker {
       params: [],
       returnType: fallback,
       decl: stub,
-      isLocal: true,
-      isEvery: false,
     };
   }
 

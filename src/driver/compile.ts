@@ -20,7 +20,7 @@ export type CompileDiagnostic =
   | { readonly message: string; readonly span?: { start: number; end: number } };
 
 export interface CompileOutput {
-  readonly participant: string;
+  readonly endpoint: string;
   readonly path: string;
   readonly source: string;
 }
@@ -70,16 +70,16 @@ export function compileSource(
     return { success: false, outputs: [], errors };
   }
 
-  const projected = projectAll(checked.typed, config.participants);
+  const projected = projectAll(checked.typed, config.endpoints);
   const cleaned = cleanupAll(projected);
   const stem = basename(cbsPath, extname(cbsPath));
   const outDir = dirname(cbsPath);
 
   const outputs: CompileOutput[] = cleaned.map((program) => {
-    const path = join(outDir, `${stem}_${program.participant}.bs`);
+    const path = join(outDir, `${stem}_${program.endpoint}.bs`);
     const emitted = emit(program);
     return {
-      participant: program.participant,
+      endpoint: program.endpoint,
       path,
       source: emitted,
     };
@@ -87,7 +87,7 @@ export function compileSource(
 
   const commCheck = verifyCommunicationConsistency(
     cleaned,
-    outputs.map((o) => ({ participant: o.participant, source: o.source })),
+    outputs.map((o) => ({ endpoint: o.endpoint, source: o.source })),
   );
   if (!commCheck.ok) {
     return {

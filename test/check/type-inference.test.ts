@@ -5,7 +5,7 @@ import { typeCheck } from "../../src/check/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 import type { TypedFunctionDeclaration } from "../../src/ast/typed.js";
 
-const aliceBob: ChoreoBSConfig = { participants: ["alice", "bob"] };
+const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
 
 function checkSource(source: string, config: ChoreoBSConfig = aliceBob) {
   const { program, errors: parseErrors } = parse(source);
@@ -53,7 +53,7 @@ describe("type inference (spec §7.14)", () => {
         item.statement.stmt.kind === "LetStatement"
       ) {
         assert.equal(item.statement.choreoType.base, "integer");
-        if (item.statement.choreoType.location.kind === "concrete") {
+        if (item.statement.choreoType.location.kind === "individual") {
           assert.equal(item.statement.choreoType.location.name, "alice");
         }
       }
@@ -96,7 +96,7 @@ function f@alice(): unit {
       const c = fn.body.statements[1];
       if (c && "stmt" in c && "choreoType" in c && c.stmt.kind === "LetStatement") {
         assert.equal(c.choreoType.base, "boolean");
-        if (c.choreoType.location.kind === "concrete") {
+        if (c.choreoType.location.kind === "individual") {
           assert.equal(c.choreoType.location.name, "alice");
         }
       }
@@ -119,7 +119,7 @@ function f@alice(): integer {
         letStmt.stmt.kind === "LetStatement"
       ) {
         assert.equal(letStmt.choreoType.base, "integer");
-        if (letStmt.choreoType.location.kind === "concrete") {
+        if (letStmt.choreoType.location.kind === "individual") {
           assert.equal(letStmt.choreoType.location.name, "alice");
         }
       }
@@ -128,7 +128,7 @@ function f@alice(): integer {
     it("infers for-loop let initializer type (§7.14.2)", () => {
       const typed = expectTypeCheckSuccess(`
 for (let i = 0@every; i < 3@every; i = i + 1@every) {
-  let x: integer@alice = i;
+  let x: integer@alice <- i;
 }
 `);
       const item = typed.items[0];
@@ -159,7 +159,7 @@ function add@alice(a: integer, b: integer) {
 `);
       const fn = functionDecl(typed, 0);
       assert.equal(fn.returnType.base, "integer");
-      if (fn.returnType.location.kind === "concrete") {
+      if (fn.returnType.location.kind === "individual") {
         assert.equal(fn.returnType.location.name, "alice");
       }
     });
@@ -173,7 +173,7 @@ function add@alice(a: integer, b: integer) {
 `);
       const fn = functionDecl(typed, 0);
       assert.equal(fn.returnType.base, "integer");
-      if (fn.returnType.location.kind === "concrete") {
+      if (fn.returnType.location.kind === "individual") {
         assert.equal(fn.returnType.location.name, "alice");
       }
     });
@@ -213,7 +213,7 @@ function add@every(a: integer@alice, b: integer@alice) {
 `);
       const fn = functionDecl(typed, 0);
       assert.equal(fn.returnType.base, "integer");
-      if (fn.returnType.location.kind === "concrete") {
+      if (fn.returnType.location.kind === "individual") {
         assert.equal(fn.returnType.location.name, "alice");
       }
     });
@@ -248,12 +248,12 @@ function fact@alice(n: integer): integer {
   });
 
   describe("negative", () => {
-    it("rejects communication let without type annotation (§7.14.3)", () => {
-      const { program, errors } = parse("let y <~ x;");
+    it("rejects transfer let without type annotation (§7.14.3)", () => {
+      const { program, errors } = parse("let y <- x;");
       assert.equal(program, null);
       assert.ok(
         errors.some((e) =>
-          e.message.includes("type annotation required for communication let"),
+          e.message.includes("type annotation required for transfer let"),
         ),
       );
     });
@@ -340,14 +340,14 @@ function bad@every(c: boolean@every) {
       );
     });
 
-    it("rejects @every binary with different concrete operand locations (§7.11)", () => {
+    it("rejects @every binary with different individual operand locations (§7.11)", () => {
       expectTypeCheckFailure(
         `
 function bad@every(a: integer@alice, b: integer@bob) {
   return a + b;
 }
 `,
-        "compatible location",
+        "binary operands must be at the same location",
       );
     });
 

@@ -4,9 +4,9 @@ import type { Expression } from "./expressions.js";
 
 export type Statement =
   | LetStatement
-  | LetReceiveStatement
+  | LetTransferStatement
   | AssignmentStatement
-  | CommStatement
+  | TransferStatement
   | IfStatement
   | WhileStatement
   | ForStatement
@@ -25,11 +25,11 @@ export interface LetStatement extends AstNode {
 }
 
 /**
- * Communication `let` (spec §5.6, §7.14.3).
+ * Transfer `let` (spec §5.6, §7.14.3).
  * `type` is always required; destination type/location are not inferred.
  */
-export interface LetReceiveStatement extends AstNode {
-  readonly kind: "LetReceiveStatement";
+export interface LetTransferStatement extends AstNode {
+  readonly kind: "LetTransferStatement";
   readonly name: string;
   readonly type: TypeAnnotation;
   readonly source: Expression;
@@ -55,9 +55,9 @@ export interface IndexAssignmentTarget extends AstNode {
   readonly index: Expression;
 }
 
-/** `y <~ x;` — communication statement (spec §5.8). */
-export interface CommStatement extends AstNode {
-  readonly kind: "CommStatement";
+/** `y <- x;` — transfer statement (spec §5.8). */
+export interface TransferStatement extends AstNode {
+  readonly kind: "TransferStatement";
   readonly name: string;
   readonly source: Expression;
 }
@@ -86,7 +86,7 @@ export interface ForStatement extends AstNode {
   readonly body: Block;
 }
 
-export type ForInit = ForLetInit | ForLetReceiveInit | ForAssignmentInit;
+export type ForInit = ForLetInit | ForAssignmentInit;
 
 /**
  * `let i: T = e` or `let i = e` in for-header (spec §5.11, §7.14.2).
@@ -97,14 +97,6 @@ export interface ForLetInit extends AstNode {
   readonly name: string;
   readonly type?: TypeAnnotation;
   readonly initializer: Expression;
-}
-
-/** `let y: T <~ e` in for-header (spec §5.11); `type` is always required. */
-export interface ForLetReceiveInit extends AstNode {
-  readonly kind: "ForLetReceiveInit";
-  readonly name: string;
-  readonly type: TypeAnnotation;
-  readonly source: Expression;
 }
 
 /** `i = e` in for-header (no trailing `;`). */

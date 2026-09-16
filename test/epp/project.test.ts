@@ -11,24 +11,24 @@ import type {
   IfStatement,
 } from "../../src/ir/projected.js";
 
-const config: ChoreoBSConfig = { participants: ["alice", "bob"] };
+const config: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
 
 function eppAll(
   source: string,
-  participants: ChoreoBSConfig = config,
+  endpoints: ChoreoBSConfig = config,
 ): readonly ProjectedProgram[] {
   const { program, errors: pe } = parse(source);
   assert.equal(pe.length, 0);
-  const { typed, errors: te } = typeCheck(program!, participants);
+  const { typed, errors: te } = typeCheck(program!, endpoints);
   assert.equal(te.length, 0);
-  const all = projectAll(typed!, participants.participants);
+  const all = projectAll(typed!, endpoints.endpoints);
   assertCommConsistent(all);
   return all;
 }
 
-function epp(source: string, participant: string): ProjectedProgram {
-  const hit = eppAll(source).find((p) => p.participant === participant);
-  assert.ok(hit, `missing projection for ${participant}`);
+function epp(source: string, endpoint: string): ProjectedProgram {
+  const hit = eppAll(source).find((p) => p.endpoint === endpoint);
+  assert.ok(hit, `missing projection for ${endpoint}`);
   return hit;
 }
 
@@ -76,7 +76,7 @@ describe("Endpoint Projection (EPP)", () => {
   it("projects direct communication (spec §15.1)", () => {
     const source = `
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `;
     const alice = epp(source, "alice");
     const bob = epp(source, "bob");
@@ -86,7 +86,7 @@ let y: integer@bob <~ x;
     assert.equal(findStmt(alice.body, "SendStatement")?.kind, "SendStatement");
     const send = findStmt(alice.body, "SendStatement");
     if (send?.kind === "SendStatement") {
-      assert.equal(send.destinationParticipant, "bob");
+      assert.equal(send.destinationEndpoint, "bob");
       assert.equal(send.tag, "top_0");
     }
 
@@ -95,7 +95,7 @@ let y: integer@bob <~ x;
     if (bobLet?.kind === "LetStatement") {
       assert.equal(bobLet.initializer.kind, "ReceiveExpression");
       if (bobLet.initializer.kind === "ReceiveExpression") {
-        assert.equal(bobLet.initializer.sourceParticipant, "alice");
+        assert.equal(bobLet.initializer.sourceEndpoint, "alice");
         assert.equal(bobLet.initializer.tag, "top_0");
       }
     }
@@ -105,7 +105,7 @@ let y: integer@bob <~ x;
   it("projects broadcast (spec §15.2)", () => {
     const source = `
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 `;
     const alice = epp(source, "alice");
     const bob = epp(source, "bob");
@@ -118,7 +118,7 @@ let ok: boolean@every <~ localOk;
     }
   });
 
-  it("omits local functions at other participants (spec §12.11)", () => {
+  it("omits local functions at other endpoints (spec §12.11)", () => {
     const source = `
 function add@alice(a: integer, b: integer): integer {
   return a + b;
@@ -143,7 +143,7 @@ function foo@every(a: integer@alice, b: integer@bob): integer@alice {
     assert.equal(bob.functions[0]?.returnType.kind, "AbsentType");
   });
 
-  it("omits unavailable top-level lets at other participants (spec §12.8)", () => {
+  it("omits unavailable top-level lets at other endpoints (spec §12.8)", () => {
     const source = `let x: integer@alice = 1@alice;`;
     const bob = epp(source, "bob");
     assert.ok(
@@ -157,12 +157,12 @@ function foo@every(a: integer@alice, b: integer@bob): integer@alice {
     assert.equal(findStmt(bob.body, "LetStatement"), undefined);
   });
 
-  it("projects all participants via projectAll", () => {
+  it("projects all endpoints via projectAll", () => {
     const source = `let x: integer@alice = 1@alice;`;
     const all = eppAll(source);
     assert.equal(all.length, 2);
     assert.deepEqual(
-      all.map((p) => p.participant),
+      all.map((p) => p.endpoint),
       ["alice", "bob"],
     );
   });
@@ -209,7 +209,7 @@ if (flag) {
     const source = `
 let x: integer@alice = 1@alice;
 let y: integer@bob = 0@bob;
-y <~ x;
+y <- x;
 `;
     const alice = epp(source, "alice");
     const bob = epp(source, "bob");
@@ -224,10 +224,10 @@ y <~ x;
     }
   });
 
-  it("projects scalar localization without communication APIs (spec §11.4)", () => {
+  it("projects a scalar local copy without communication APIs (spec §11.4)", () => {
     const source = `
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 `;
     const alice = epp(source, "alice");
     const bob = epp(source, "bob");
@@ -251,10 +251,10 @@ let y: integer@alice <~ x;
     );
   });
 
-  it("projects array localization with clone at destination (spec §11.4)", () => {
+  it("projects an array local copy with clone at destination (spec §11.4)", () => {
     const source = `
 let xs: float[]@every = [1.1, 2.2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 `;
     const alice = epp(source, "alice");
     const ysLet = alice.body.find(
@@ -277,7 +277,7 @@ let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
 push(xs, 20@alice);
 let n: integer@alice = length(xs);
-let ys: integer[]@bob <~ xs;
+let ys: integer[]@bob <- xs;
 `;
     const alice = epp(source, "alice");
     const bob = epp(source, "bob");

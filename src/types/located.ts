@@ -18,13 +18,14 @@ export function isArraySubtype(source: LocatedType, target: LocatedType): boolea
   return isSubtype(source.base, target.base);
 }
 
-export function locatedTypesCompatible(
-  source: LocatedType,
-  target: LocatedType,
-): boolean {
-  return isSubtype(source.base, target.base) && locationsEqual(source.location, target.location);
-}
-
+/**
+ * Location matching (spec §7.6).
+ *
+ * A value located at `a` may be used where `b` is required only when the two
+ * locations are the same. `every` and the individual locations are independent:
+ * neither subsumes the other, so moving a value between them needs an explicit
+ * `<-` transfer.
+ */
 export function locationsEqual(a: Location, b: Location): boolean {
   if (a.kind !== b.kind) {
     return false;
@@ -32,38 +33,28 @@ export function locationsEqual(a: Location, b: Location): boolean {
   if (a.kind === "every") {
     return true;
   }
-  return b.kind === "concrete" && a.name === b.name;
+  return b.kind === "individual" && a.name === b.name;
 }
 
 /**
- * `available(Lvalue, Luse)` (spec §7.6).
+ * `residesAt(L, P)` (spec §7.6) — does endpoint `P` hold a copy of a value
+ * located at `L`?
  *
- * `Luse` is the location of the current execution context.
+ * This is the EPP presence relation and is deliberately *not* the typing rule
+ * above: a `T@every` value does reside at every endpoint, which is why it is
+ * projected rather than made absent, but that does not make it usable as a
+ * `T@alice` value. Only EPP may use this.
  */
-export function available(valueLoc: Location, useLoc: Location): boolean {
-  if (locationsEqual(valueLoc, useLoc)) {
-    return true;
-  }
-  if (valueLoc.kind === "every" && useLoc.kind === "concrete") {
-    return true;
-  }
-  return false;
+export function residesAt(location: Location, endpoint: string): boolean {
+  return location.kind === "every" || location.name === endpoint;
 }
 
-/** `localAvailable(L, P)` — values in `function@P` may only use location `P`. */
-export function localAvailable(
-  valueLoc: Location,
-  participant: string,
-): boolean {
-  return valueLoc.kind === "concrete" && valueLoc.name === participant;
-}
-
-/** Execution context as the `Luse` location for availability checks. */
+/** Execution context as the location that its statements must be located at. */
 export function contextAsLocation(ctx: ExecutionContext): Location {
   if (ctx.kind === "every") {
     return { kind: "every" };
   }
-  return { kind: "concrete", name: ctx.participant };
+  return { kind: "individual", name: ctx.endpoint };
 }
 
 export function formatLocatedType(type: LocatedType): string {

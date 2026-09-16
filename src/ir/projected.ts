@@ -150,7 +150,7 @@ export interface ParenthesizedExpression {
 export interface ReceiveExpression {
   readonly kind: "ReceiveExpression";
   readonly comm: CommKind;
-  readonly sourceParticipant: string;
+  readonly sourceEndpoint: string;
   readonly tag: string;
   readonly span: Span;
 }
@@ -167,7 +167,7 @@ export type ProjectedStatement =
   | ReturnStatement
   | ExpressionStatement;
 
-/** Statement with no runtime meaning at this participant (spec §12.4). */
+/** Statement with no runtime meaning at this endpoint (spec §12.4). */
 export interface AbsentStatement {
   readonly kind: "AbsentStatement";
   readonly span: Span;
@@ -206,7 +206,7 @@ export interface ProjectedIndexAssignmentTarget {
 export interface SendStatement {
   readonly kind: "SendStatement";
   readonly comm: CommKind;
-  readonly destinationParticipant: string;
+  readonly destinationEndpoint: string;
   readonly tag: string;
   readonly value: ProjectedExpression;
   readonly span: Span;
@@ -296,10 +296,10 @@ export interface ProjectedFunction {
   readonly span: Span;
 }
 
-/** Per-participant projected program (spec §12.1, §12.15). */
+/** Per-endpoint projected program (spec §12.1, §12.15). */
 export interface ProjectedProgram {
   readonly kind: "ProjectedProgram";
-  readonly participant: string;
+  readonly endpoint: string;
   readonly functions: readonly ProjectedFunction[];
   readonly body: readonly ProjectedStatement[];
   readonly span: Span;

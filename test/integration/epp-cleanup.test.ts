@@ -3,21 +3,21 @@ import { describe, it } from "node:test";
 import { compileSource } from "../../src/driver/index.js";
 import type { CompileResult } from "../../src/driver/index.js";
 
-const aliceBob: { participants: string[] } = { participants: ["alice", "bob"] };
-const aliceBobCarol: { participants: string[] } = {
-  participants: ["alice", "bob", "carol"],
+const aliceBob: { endpoints: string[] } = { endpoints: ["alice", "bob"] };
+const aliceBobCarol: { endpoints: string[] } = {
+  endpoints: ["alice", "bob", "carol"],
 };
 
 function compile(
   source: string,
-  config: { participants: string[] } = aliceBob,
+  config: { endpoints: string[] } = aliceBob,
 ): CompileResult {
   return compileSource(source, "index.cbs", config);
 }
 
-function bs(result: CompileResult, participant: string): string {
-  const hit = result.outputs.find((o) => o.participant === participant);
-  assert.ok(hit, `missing output for ${participant}`);
+function bs(result: CompileResult, endpoint: string): string {
+  const hit = result.outputs.find((o) => o.endpoint === endpoint);
+  assert.ok(hit, `missing output for ${endpoint}`);
   return hit.source.trimEnd();
 }
 
@@ -40,7 +40,7 @@ describe("EPP and cleanup — full pipeline (spec §13.9, §15)", () => {
       assert.doesNotMatch(bs(result, "bob"), /nothing|null/);
     });
 
-    it("removes nested nothing statement at uninvolved participant", () => {
+    it("removes nested nothing statement at uninvolved endpoint", () => {
       const source = `
 let a: integer@alice = 1@alice;
 let b: integer@bob = 2@bob;
@@ -87,7 +87,7 @@ let x: integer@alice = choose(c);
     it("removes nothing from empty if branches on alice after cleanup", () => {
       const source = `
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 
 if (ok) {
   let msg: string@bob = "ok"@bob;
@@ -106,7 +106,7 @@ if (ok) {
     it("keeps bob-side bindings inside if branches", () => {
       const source = `
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 
 if (ok) {
   let msg: string@bob = "ok"@bob;
@@ -123,11 +123,11 @@ if (ok) {
     });
   });
 
-  describe("multi-participant broadcast (spec §11.3)", () => {
-    it("emits broadcast on sender and receive on all other participants", () => {
+  describe("multi-endpoint broadcast (spec §11.3)", () => {
+    it("emits broadcast on sender and receive on all other endpoints", () => {
       const source = `
 let x: boolean@alice = true@alice;
-let ok: boolean@every <~ x;
+let ok: boolean@every <- x;
 `;
       const result = compile(source, aliceBobCarol);
       expectSuccess(result);
@@ -157,8 +157,8 @@ for (
   i < 2@every;
   i = i + 1@every
 ) {
-  let x: integer@alice = i;
-  let y: integer@bob <~ x;
+  let x: integer@alice <- i;
+  let y: integer@bob <- x;
 }
 `;
       const result = compile(source);

@@ -4,13 +4,13 @@ import type { CommConsistencyError, CommConsistencyResult } from "./consistency.
 import { checkCommunicationConsistency } from "./consistency.js";
 import {
   checkEmittedCommunicationConsistency,
-  type EmittedParticipantOutput,
+  type EmittedEndpointOutput,
 } from "./emitted.js";
 
 /** Verifies projected AST and generated BlueScript communication APIs (spec §11–§12). */
 export function verifyCommunicationConsistency(
   projected: readonly ProjectedProgram[],
-  emitted: readonly EmittedParticipantOutput[],
+  emitted: readonly EmittedEndpointOutput[],
 ): CommConsistencyResult {
   const projectedResult = checkCommunicationConsistency(projected);
   if (!projectedResult.ok) {

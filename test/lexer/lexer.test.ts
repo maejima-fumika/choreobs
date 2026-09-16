@@ -13,12 +13,32 @@ function lexemes(source: string): string[] {
 describe("ChoreoBS lexer", () => {
   it("tokenizes a minimal communication snippet", () => {
     const source = `let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;`;
+let y: integer@bob <- x;`;
     const { tokens, errors } = tokenize(source);
     assert.equal(errors.length, 0);
-    assert.ok(tokens.some((t) => t.kind === TokenKind.Receive && t.lexeme === "<~"));
+    assert.ok(tokens.some((t) => t.kind === TokenKind.Transfer && t.lexeme === "<-"));
     assert.ok(tokens.some((t) => t.kind === TokenKind.At));
     assert.equal(tokens.at(-1)?.kind, TokenKind.EOF);
+  });
+
+  it("distinguishes `<-` from `<` followed by unary minus (spec §4.6)", () => {
+    // Maximal munch on the raw character stream, as in Go: the character
+    // immediately after `<` decides, so whitespace disambiguates.
+    assert.deepEqual(
+      kinds("a<-b").slice(0, 3),
+      [TokenKind.Identifier, TokenKind.Transfer, TokenKind.Identifier],
+    );
+    assert.deepEqual(
+      kinds("a < -b").slice(0, 4),
+      [
+        TokenKind.Identifier,
+        TokenKind.Less,
+        TokenKind.Minus,
+        TokenKind.Identifier,
+      ],
+    );
+    assert.deepEqual(lexemes("a <- b").slice(0, 3), ["a", "<-", "b"]);
+    assert.deepEqual(lexemes("a <= -1").slice(0, 4), ["a", "<=", "-", "1"]);
   });
 
   it("assigns 1-based line/column spans", () => {

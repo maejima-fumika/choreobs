@@ -61,7 +61,7 @@ export const TokenKind = {
   BarBar: "BarBar",
   Bang: "Bang",
   Assign: "Assign",
-  Receive: "Receive",
+  Transfer: "Transfer",
   At: "At",
   Colon: "Colon",
   Semicolon: "Semicolon",
@@ -135,7 +135,7 @@ export type PunctuationToken = TokenBase & {
     | typeof TokenKind.BarBar
     | typeof TokenKind.Bang
     | typeof TokenKind.Assign
-    | typeof TokenKind.Receive
+    | typeof TokenKind.Transfer
     | typeof TokenKind.At
     | typeof TokenKind.Colon
     | typeof TokenKind.Semicolon

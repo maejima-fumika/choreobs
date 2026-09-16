@@ -11,7 +11,7 @@ import {
 } from "../../src/driver/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 
-const aliceBob: ChoreoBSConfig = { participants: ["alice", "bob"] };
+const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
 
 function compile(
   source: string,
@@ -21,9 +21,9 @@ function compile(
   return compileSource(source, cbsPath, config);
 }
 
-function bs(result: CompileResult, participant: string): string {
-  const hit = result.outputs.find((o) => o.participant === participant);
-  assert.ok(hit, `missing output for ${participant}`);
+function bs(result: CompileResult, endpoint: string): string {
+  const hit = result.outputs.find((o) => o.endpoint === endpoint);
+  assert.ok(hit, `missing output for ${endpoint}`);
   return hit.source.trimEnd();
 }
 
@@ -50,9 +50,9 @@ describe("integration — compile pipeline", () => {
     it("assigns increasing top-level comm tags (top_0, top_1, …)", () => {
       const result = compile(`
 let a: integer@alice = 1@alice;
-let b: integer@bob <~ a;
+let b: integer@bob <- a;
 let c: integer@alice = 0@alice;
-c <~ b;
+c <- b;
 `);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /sendInteger\("bob", "top_0", a\)/);
@@ -65,7 +65,7 @@ c <~ b;
       const result = compile(`
 let x: integer@alice = 1@alice;
 let y: integer@bob = 0@bob;
-y <~ x;
+y <- x;
 `);
       expectSuccess(result);
       assert.equal(
@@ -84,7 +84,7 @@ y = receiveInteger("alice", "top_0");`,
       const result = compile(`
 function worker@every(): unit@every {
   let x: integer@alice = 1@alice;
-  let y: integer@bob <~ x;
+  let y: integer@bob <- x;
   return;
 }
 worker();
@@ -98,9 +98,9 @@ worker();
     it("emits type-specific APIs for float and string", () => {
       const result = compile(`
 let f: float@alice = 1.0@alice;
-let g: float@bob <~ f;
+let g: float@bob <- f;
 let m: string@alice = "hi"@alice;
-let n: string@bob <~ m;
+let n: string@bob <- m;
 `);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /sendFloat\("bob", "top_0", f\)/);
@@ -112,13 +112,89 @@ let n: string@bob <~ m;
     });
   });
 
+  describe("transfer operator (spec §7.8, §11)", () => {
+    it("makes a scalar transfer between the same individual location a local copy", () => {
+      const result = compile(`
+let x: integer@alice = 1@alice;
+let y: integer@alice <- x;
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /let y: integer = x;/);
+      assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
+      assert.equal(bs(result, "bob"), "");
+    });
+
+    it("makes an array transfer between the same individual location a fresh copy", () => {
+      const result = compile(`
+let xs: float[]@alice = [1.1, 2.2]@alice;
+let ys: float[]@alice <- xs;
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /let ys: float\[\] = cloneFloatArray\(xs\);/);
+      assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
+    });
+
+    it("emits an @every to @every transfer as a local copy at every endpoint", () => {
+      const result = compile(`
+let a: integer@every = 1@every;
+let b: integer@every <- a;
+`);
+      expectSuccess(result);
+      for (const endpoint of ["alice", "bob"]) {
+        assert.match(bs(result, endpoint), /let b: integer = a;/);
+        assert.doesNotMatch(bs(result, endpoint), /send|receive|broadcast/);
+      }
+    });
+
+    it("gives the broadcast sender its own fresh array copy (spec §11.3)", () => {
+      const result = compile(`
+let ys: float[]@every = [0.0]@every;
+let xs: float[]@alice = [1.1, 2.2]@alice;
+ys <- xs;
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      assert.match(alice, /broadcastFloatArray\("top_0", xs\);/);
+      // The sender must not alias `xs`; it clones like every receiver does.
+      assert.match(alice, /ys = cloneFloatArray\(xs\);/);
+      assert.match(bs(result, "bob"), /ys = receiveFloatArray\("alice", "top_0"\);/);
+    });
+
+    it("widens integer to float across a transfer (spec §7.8)", () => {
+      const result = compile(`
+let n: integer@alice = 3@alice;
+let m: float@bob <- n;
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /sendFloat\("bob", "top_0", n\);/);
+      assert.match(bs(result, "bob"), /let m: float = receiveFloat\("alice", "top_0"\);/);
+    });
+  });
+
+  describe("@every residency vs location matching (spec §7.6, §12.2)", () => {
+    it("projects an @every value to every endpoint even though it is not usable as @alice", () => {
+      const result = compile(`
+let c: boolean@every = true@every;
+let d: boolean@alice <- c;
+`);
+      expectSuccess(result);
+      // residesAt: the @every binding is emitted at both endpoints...
+      assert.match(bs(result, "alice"), /let c: boolean = true;/);
+      assert.match(bs(result, "bob"), /let c: boolean = true;/);
+      // ...but the copy to @alice is a local copy, only at alice, with no tag.
+      assert.match(bs(result, "alice"), /let d: boolean = c;/);
+      assert.doesNotMatch(bs(result, "bob"), /let d/);
+      assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
+    });
+  });
+
   describe("functions and scoping", () => {
-    it("emits alice call and empty bob after cleanup for add(10@every) (spec §10.2, §13.9)", () => {
+    it("emits alice call and empty bob after cleanup for add(10@alice) (spec §10.2, §13.9)", () => {
       const result = compile(`
 function add@alice(a: integer) {
   return a;
 }
-add(10@every);
+add(10@alice);
 `);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /function add\(a: integer\): integer/);
@@ -151,15 +227,15 @@ let x: integer@alice = 2@alice;
   });
 
   describe("config and output files", () => {
-    it("emits one .bs file per configured participant", () => {
+    it("emits one .bs file per configured endpoint", () => {
       const result = compile(
         `let x: integer@alice = 1@alice;`,
-        { participants: ["alice", "bob", "carol"] },
+        { endpoints: ["alice", "bob", "carol"] },
       );
       expectSuccess(result);
       assert.equal(result.outputs.length, 3);
       assert.deepEqual(
-        result.outputs.map((o) => o.participant).sort(),
+        result.outputs.map((o) => o.endpoint).sort(),
         ["alice", "bob", "carol"],
       );
       assert.match(bs(result, "alice"), /let x: integer = 1/);
@@ -167,10 +243,10 @@ let x: integer@alice = 2@alice;
       assert.equal(bs(result, "carol"), "");
     });
 
-    it("names outputs index_<participant>.bs next to the source file", () => {
+    it("names outputs index_<endpoint>.bs next to the source file", () => {
       const result = compile(`let x: integer@alice = 1@alice;`, aliceBob, "prog.cbs");
       expectSuccess(result);
-      const alice = result.outputs.find((o) => o.participant === "alice");
+      const alice = result.outputs.find((o) => o.endpoint === "alice");
       assert.ok(alice?.path.endsWith("prog_alice.bs"));
     });
 
@@ -181,12 +257,12 @@ let x: integer@alice = 2@alice;
         const configPath = join(dir, "choreobs.json");
         writeFileSync(
           cbsPath,
-          `let x: integer@alice = 1@alice;\nlet y: integer@bob <~ x;\n`,
+          `let x: integer@alice = 1@alice;\nlet y: integer@bob <- x;\n`,
           "utf8",
         );
         writeFileSync(
           configPath,
-          JSON.stringify({ participants: ["alice", "bob"] }),
+          JSON.stringify({ endpoints: ["alice", "bob"] }),
           "utf8",
         );
 
@@ -218,9 +294,9 @@ let x: integer@alice = 2@alice;
   });
 
   describe("invalid programs — full pipeline", () => {
-    it("§16.2 rejects every as a config participant", () => {
+    it("§16.2 rejects every as a config endpoint", () => {
       const result = compile(`let x: integer@alice = 1@alice;`, {
-        participants: ["alice", "every"],
+        endpoints: ["alice", "every"],
       });
       expectFailure(result);
       assert.ok(result.errors.some((e) => e.message.includes("every")));
@@ -304,15 +380,18 @@ function f@every(): unit@every {
       assert.ok(result.errors.some((e) => e.message.includes("boolean@every")));
     });
 
-    it("§10.1 rejects communication inside local functions", () => {
+    it("§10.1 rejects transfers inside local functions", () => {
       const result = compile(`
 function f@alice(): unit {
-  let y: integer@bob <~ x;
+  let y: integer@bob <- x;
   return;
 }
 `);
       expectFailure(result);
-      assert.ok(result.errors.some((e) => e.message.includes("communication")));
+      assert.ok(
+        result.errors.some((e) => e.message.includes("transfer is not allowed")),
+        JSON.stringify(result.errors),
+      );
     });
 
     it("stops before EPP when parse fails", () => {
@@ -348,7 +427,7 @@ let b: integer@every = a;
       assert.doesNotMatch(bs(result, "alice"), /sendInteger|receiveInteger/);
     });
 
-    it("while with false@every condition projects on all participants", () => {
+    it("while with false@every condition projects on all endpoints", () => {
       const result = compile(`
 let n: integer@every = 0@every;
 while (false@every) {
@@ -370,20 +449,25 @@ let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
 push(xs, 20@alice);
 let n: integer@alice = length(xs);
-let ys: integer[]@bob <~ xs;
+let ys: integer[]@bob <- xs;
 `);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /sendIntegerArray\("bob", "top_0", xs\)/);
       assert.match(bs(result, "bob"), /receiveIntegerArray\("alice", "top_0"\)/);
     });
 
-    it("rejects assigning @every array to concrete array", () => {
+    it("rejects assigning @every array to individual-location array", () => {
       const result = compile(`
 let xs: integer[]@every = [1, 2, 3]@every;
 let ys: integer[]@alice = xs;
 `);
       expectFailure(result);
-      assert.ok(result.errors.some((e) => e.message.includes("T[]@every")));
+      assert.ok(
+        result.errors.some((e) =>
+          e.message.includes("invalid assignment across locations"),
+        ),
+        JSON.stringify(result.errors),
+      );
     });
   });
 });

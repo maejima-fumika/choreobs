@@ -19,10 +19,10 @@ This specification defines the initial core language for implementing the first 
 
 ChoreoBS Core v0 aims to:
 
-- describe communication among multiple nodes as a single choreography;
+- describe communication among multiple endpoints as a single choreography;
 - statically track where values are located using explicit location annotations;
 - reduce annotation burden through simple local type inference;
-- generate BlueScript endpoint programs for each participant;
+- generate BlueScript endpoint programs for each endpoint;
 - reduce send/receive mismatches through syntax, typing, and EPP rules;
 - serve as the foundation for future Gradual Choreographic Programming.
 
@@ -30,7 +30,7 @@ ChoreoBS Core v0 aims to:
 
 ```ts
 let x: integer@alice = 10@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 This program infers `x` as `integer@alice`, sends the value `x` located at `alice` to `bob`, and stores it in `y`.
@@ -69,21 +69,21 @@ project/
 
 ### 2.2 `choreobs.json`
 
-`choreobs.json` specifies the list of participants.
+`choreobs.json` specifies the list of endpoints.
 
 ```json
 {
-  "participants": ["alice", "bob"]
+  "endpoints": ["alice", "bob"]
 }
 ```
 
 #### Rules
 
-* `participants` must be an array of strings.
-* Each string in `participants` defines a concrete location.
-* `every` is a reserved word and must not appear in `participants`.
-* Every concrete location used in a `.cbs` source file must be listed in `participants`.
-* The compiler generates a `.bs` file for every participant listed in `participants`, even if the participant is not used in the source.
+* `endpoints` must be an array of strings.
+* Each string in `endpoints` names one endpoint and defines an individual location.
+* `every` is a reserved word and must not appear in `endpoints`.
+* Every individual location used in a `.cbs` source file must be listed in `endpoints`. The location `every` is never listed.
+* The compiler generates a `.bs` file for each endpoint listed in `endpoints`, even if that endpoint is not used in the source.
 * By default, the compiler reads `choreobs.json` from the same directory as the input `.cbs` file.
 * Implementations may provide a CLI option to override the config path.
 
@@ -101,7 +101,7 @@ choreobs compile index.cbs --config path/to/choreobs.json
 
 ### 2.3 Output Files
 
-The compiler emits one `.bs` file per participant.
+The compiler emits one `.bs` file per endpoint.
 
 Input:
 
@@ -113,7 +113,7 @@ index.cbs
 
 ```json
 {
-  "participants": ["alice", "bob"]
+  "endpoints": ["alice", "bob"]
 }
 ```
 
@@ -126,17 +126,35 @@ index_bob.bs
 
 ***
 
-## 3. Participants and Locations
+## 3. Endpoints and Locations
 
-### 3.1 Locations
+### 3.1 Endpoints
 
-ChoreoBS has the following kinds of locations:
+An **endpoint** is an agent that executes a program. The endpoints taking part in a
+choreography are declared by the `endpoints` field of `choreobs.json` (spec §2.2).
+
+A choreography is a single global program. The compiler projects it, by Endpoint
+Projection (spec §12), into one BlueScript program per endpoint.
+
+### 3.2 Locations
+
+A location denotes where a value is placed. ChoreoBS has the following kinds of
+locations:
 
 ```text
-Location ::= concrete node name | every
+Location         ::= ConcreteLocation
+ConcreteLocation ::= IndividualLocation | every
+IndividualLocation ::= endpoint name
 ```
 
-Examples:
+An **individual location** names exactly one endpoint. A **concrete location** is
+either an individual location or `every`. In Core v0 every location is a concrete
+location; location abstraction is deferred to §17.1.
+
+`every` and the individual locations are independent kinds of location. `every` is
+not an individual location, and it does not name any particular endpoint.
+
+Examples of concrete locations:
 
 ```text
 alice
@@ -146,17 +164,20 @@ Controller
 every
 ```
 
-### 3.2 Concrete Locations
+Of these, `alice`, `bob`, `sensor1`, and `Controller` are individual locations, and
+`every` is not.
 
-Concrete locations are defined by the `participants` field in `choreobs.json`.
+### 3.3 Individual Locations
+
+Individual locations are defined by the `endpoints` field in `choreobs.json`.
 
 ```json
 {
-  "participants": ["alice", "bob", "sensor"]
+  "endpoints": ["alice", "bob", "sensor"]
 }
 ```
 
-In this example, the concrete locations are:
+In this example, the individual locations are:
 
 ```text
 alice
@@ -164,15 +185,17 @@ bob
 sensor
 ```
 
-### 3.3 `every`
+### 3.4 `every`
 
 `every` is a special location.
 
 A value of type `T@every` means:
 
-> Every participant locally has the same value of type `T`.
+> All endpoints locally hold the same value of type `T`.
 
-For immutable scalar values, a value of type `T@every` can be used as a local value at any concrete location.
+A `T@every` value is not a value at any individual location. It cannot be used
+where a `T@alice` value is required; use `<-` to copy it to `alice` (spec §7.6,
+§11.4).
 
 Example:
 
@@ -180,17 +203,17 @@ Example:
 let c: boolean@every = true@every;
 ```
 
-This means every participant locally has `c = true`.
+This means all endpoints locally hold `c = true`.
 
-For mutable arrays, `T[]@every` means that each participant has an independent local mutable array with the same contents. It is not shared memory.
+For mutable arrays, `T[]@every` means that each endpoint has an independent local mutable array with the same contents. It is not shared memory.
 
-A mutable array located at `@every` must not be implicitly assigned to, or passed as, a mutable array at a concrete location. To obtain a concrete-location mutable array from an `@every` array, use explicit localization with `<~`, which creates a fresh mutable copy at the destination.
+A local copy of an `@every` array with `<-` creates a fresh mutable array at the destination (spec §11.4).
 
-### 3.4 Location Names
+### 3.5 Location Names
 
 * Location names follow the same lexical rules as ordinary identifiers.
 * Location names may contain uppercase letters.
-* A node name may be the same as a variable name or a function name.
+* An individual location name may be the same as a variable name or a function name.
 * `every` is reserved.
 
 ***
@@ -340,7 +363,7 @@ The lexer recognizes the following tokens:
 ||
 !
 =
-<~
+<-
 @
 :
 ;
@@ -355,6 +378,18 @@ The lexer recognizes the following tokens:
 ```
 
 `==` and `!=` are not supported in v0.
+
+#### Maximal Munch and `<-`
+
+Tokens are formed by maximal munch over the raw character stream, so the
+character immediately following `<` decides the token. `a<-b` is therefore a
+a transfer, not a comparison against `-b`. Write a space to compare against a
+negated operand:
+
+```ts
+a <- b      // transfer
+a < -b      // comparison with -b
+```
 
 ***
 
@@ -478,7 +513,7 @@ Block ::= "{" Statement* "}"
 ```ebnf
 Statement ::= LetStatement
             | AssignmentStatement
-            | CommunicationStatement
+            | TransferStatement
             | IfStatement
             | WhileStatement
             | ForStatement
@@ -490,7 +525,7 @@ Statement ::= LetStatement
 
 ```ebnf
 LetStatement ::= "let" Identifier TypeAnnotation? "=" Expression ";"
-               | "let" Identifier ":" Type "<~" Expression ";"
+               | "let" Identifier ":" Type "<-" Expression ";"
 TypeAnnotation ::= ":" Type
 ```
 
@@ -498,21 +533,21 @@ Uninitialized `let` declarations are not allowed in v0.
 
 For ordinary initialized `let` declarations using `=`, the type annotation may be omitted and inferred from the right-hand side according to Section 7.14.
 
-For communication declarations using `<~`, the type annotation is still required. Core v0 does not infer the destination type or destination location of a communication declaration.
+For transfer declarations using `<-`, the type annotation is still required. Core v0 does not infer the destination type or destination location of a transfer declaration.
 
 Allowed:
 
 ```ts
 let x: integer@alice = 1@alice;
 let y = x + 1@alice;
-let z: integer@bob <~ x;
+let z: integer@bob <- x;
 ```
 
 Disallowed:
 
 ```ts
 let x: integer@alice;
-let y <~ x;
+let y <- x;
 ```
 
 ### 5.7 Assignment Statement
@@ -535,14 +570,14 @@ x = y + 1@alice;
 xs[0@alice] = 10@alice;
 ```
 
-### 5.8 Communication Statement
+### 5.8 Transfer Statement
 
 ```ebnf
-CommunicationStatement ::= Identifier "<~" Expression ";"
+TransferStatement ::= Identifier "<-" Expression ";"
 ```
 
 ```ts
-y <~ x;
+y <- x;
 ```
 
 ### 5.9 If Statement
@@ -762,7 +797,7 @@ Disallowed at top level:
 let arr: integer[]@alice = [1, 3, 5];
 ```
 
-Inside a local function declared at concrete location `P`, omitted locations in array literals are elaborated to `@P`, following the ordinary local function location omission rule.
+Inside a local function declared at individual location `P`, omitted locations in array literals are elaborated to `@P`, following the ordinary local function location omission rule.
 
 ***
 
@@ -772,12 +807,12 @@ Inside a local function declared at concrete location `P`, omitted locations in 
 
 ChoreoBS has the following namespaces:
 
-* participant / location names;
+* location names;
 * variable names;
 * function names;
 * type names / keywords.
 
-Participant names may be the same as variable names or function names.
+Location names may be the same as variable names or function names.
 
 Example:
 
@@ -842,7 +877,7 @@ Example:
 
 ```ts
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 Conceptually, this is similar to:
@@ -850,7 +885,7 @@ Conceptually, this is similar to:
 ```ts
 function __top@every(): unit@every {
     let x: integer@alice = 1@alice;
-    let y: integer@bob <~ x;
+    let y: integer@bob <- x;
 }
 ```
 
@@ -940,9 +975,9 @@ ys[0@alice] = 99@alice;
 
 After the element assignment, `xs[0]` is also `99` at `alice`.
 
-Communication and broadcast transfer array contents by serialized value transfer. The receiver obtains a fresh mutable array that does not share identity with the sender's array. For broadcast to `@every`, the sender-side binding is also a fresh mutable array copy.
+A transfer moves array contents by serialized value. The receiver obtains a fresh mutable array that does not share identity with the sender's array. For broadcast to `@every`, the sender-side binding is also a fresh mutable array copy.
 
-A value of type `T[]@every` means that every participant has an independent local mutable array with the same contents. It is not shared memory.
+A value of type `T[]@every` means that each endpoint has an independent local mutable array with the same contents. It is not shared memory.
 
 ### 7.2 Located Types
 
@@ -1013,56 +1048,64 @@ T <: T
 
 There are no other base type subtyping relations.
 
-### 7.6 Location Availability
+### 7.6 Location Matching and Residency
 
-Define `available(Lvalue, Luse)` as follows:
+Two distinct relations are used in this specification. They must not be confused.
+
+#### Location Matching (type system)
+
+A value located at `Lvalue` may be used where a value at `Luse` is required only
+when the two locations are the same:
 
 ```text
-available(L, L) = true
-available(every, P) = true  where P is a concrete location
-available(every, every) = true
-available(P, every) = false where P is a concrete location
-available(P, Q) = false where P != Q
+match(L, L) = true
+match(every, P) = false  where P is an individual location
+match(P, every) = false  where P is an individual location
+match(P, Q) = false      where P and Q are individual locations and P != Q
 ```
 
-Meaning:
-
-> A value located at `Lvalue` can be used locally in context `Luse`.
+`every` and the individual locations are independent (spec §3.2): neither
+subsumes the other. In particular, a value of type `T@every` may **not** be used
+as a `T@P` value, and a value of type `T@P` may **not** be used as a `T@every`
+value. To move a value between two different locations, use the transfer
+operator `<-` (spec §7.8).
 
 Examples:
 
 ```text
-integer@alice is available at alice
-integer@alice is not available at bob
-integer@every is available at alice and bob
-integer@alice is not available in an every context
+integer@alice matches alice
+integer@alice does not match bob
+integer@every does not match alice
+integer@alice does not match an every context
 ```
 
-For mutable arrays, the general `available` relation only describes where an array value exists. It is not sufficient by itself to allow implicit conversion from `T[]@every` to `T[]@P`, where `P` is a concrete location. Such implicit assignment and function argument passing are prohibited; use explicit localization with `<~` to create a fresh concrete-location mutable array.
+This rule applies uniformly to scalars and to mutable arrays, and it is the only
+location rule used by assignment (§7.7), function arguments (§7.12), and return
+values (§7.13). It also subsumes the local function discipline: inside
+`function f@P` the required location is `P`, so a value at `every` or at another
+individual location is rejected by the same rule. The additional restrictions
+specific to local function declarations are stated in §8.1.1.
 
-#### Local Function Strict Availability
+#### Location Residency (endpoint projection)
 
-Local functions use a stricter availability rule than the general `available` relation.
-
-For a local function declared at a concrete location `P`, only values located exactly at `P` may be used inside the function.
-
-Define `localAvailable(Lvalue, P)` as follows:
+Endpoint Projection needs a different question answered: which endpoints
+physically hold a copy of a value? Define `residesAt(L, P)`, where `P` is an
+endpoint:
 
 ```text
-localAvailable(P, P) = true
-localAvailable(every, P) = false
-localAvailable(Q, P) = false where Q is a concrete location and Q != P
+residesAt(P, P) = true
+residesAt(every, P) = true
+residesAt(Q, P) = false  where Q is an individual location and Q != P
 ```
 
-Meaning:
+A value at `every` resides at every endpoint, because every endpoint holds its
+own copy (spec §3.4). This is why `T@every` declarations are projected into every
+endpoint program rather than becoming `absent` (spec §12.2).
 
-- A value of type `T@P` may be used inside `function f@P`.
-- A value of type `T@Q`, where `Q != P`, must not be used inside `function f@P`.
-- A value of type `T@every` must not be used inside any local function.
-
-This rule is intentionally stricter than `available(every, P) = true`. Although `T@every` values are generally available at concrete locations in choreographic contexts, Core v0 local functions are purely endpoint-local computations and do not accept, create, or use `@every` values.
-
-This strict rule applies only to local functions. It does not apply to `@every` choreographic functions.
+Residency does **not** imply matching. That an endpoint `alice` holds a copy of a
+`T@every` value does not make that value usable as a `T@alice` value; an explicit
+`<-` transfer is still required. `residesAt` is used only by §12 and must
+never be used as a typing rule.
 
 ### 7.7 Assignment Typing
 
@@ -1079,25 +1122,16 @@ a : T1@L1
 b : T2@L2
 
 T2 <: T1
-available(L2, L1)
+match(L2, L1)
 ```
 
 For mutable arrays, compatibility is checked by array invariance as defined in Section 7.11.1. Therefore, `T1[]` and `T2[]` are compatible only when `T1` and `T2` are the same element type.
-
-Additionally, assignment from `T[]@every` to `T[]@P`, where `P` is a concrete location, is invalid. Use explicit localization with `<~` instead.
 
 Example:
 
 ```ts
 let x: integer@alice = 1@alice;
 let y: integer@alice = x;
-```
-
-Example:
-
-```ts
-let c: boolean@every = true@every;
-let d: boolean@alice = c;
 ```
 
 Disallowed:
@@ -1107,92 +1141,127 @@ let x: integer@alice = 1@alice;
 let y: integer@bob = x;
 ```
 
-Communication must be used instead.
-
 Disallowed:
 
 ```ts
+let c: boolean@every = true@every;
+let d: boolean@alice = c;
+```
+
+A transfer must be used instead. `every` and `alice` are different locations,
+so the copy has to be explicit:
+
+```ts
+let d: boolean@alice <- c;
+```
+
+The same applies to mutable arrays, by the same rule:
+
+```ts
 let xs: float[]@every = [1.1, 2.2]@every;
-let ys: float[]@alice = xs;
+let ys: float[]@alice = xs;      // invalid
+let ys: float[]@alice <- xs;     // valid: local copy
 ```
 
-Use explicit localization instead:
+### 7.8 Transfer Typing
+
+The transfer operator:
 
 ```ts
-let ys: float[]@alice <~ xs;
+a <- b;
 ```
 
-### 7.8 Communication Typing
+evaluates `b` at its own location and copies the resulting value to the location
+of `a`, storing it in `a`.
 
-Communication:
+#### Base Type Rule
+
+For `a : T1@p` and `b : T2@q`, the transfer is well typed only when
+
+```text
+T2 <: T1
+```
+
+that is, the source base type must be a subtype of the destination base type
+(spec §7.5). Locations play no part in this rule.
+
+Allowed — `integer <: float`:
 
 ```ts
-a <~ b;
+let y: integer@alice = 1@alice;
+let x: float@bob <- y;
 ```
 
-moves a value from the location of `b` to the location of `a`. Depending on the source and destination locations, `<~` has one of the following modes.
+Disallowed — `float` is not a subtype of `integer`:
 
-#### Direct Communication
-
-```text
-a : Tdst@Q
-b : Tsrc@P
-P and Q are concrete locations
-P != Q
-Tsrc is compatible with Tdst
+```ts
+let y: float@alice = 1.5@alice;
+let x: integer@bob <- y;
 ```
 
-This is direct network communication from `P` to `Q`.
+Disallowed — unrelated base types:
 
-#### Broadcast
-
-```text
-a : Tdst@every
-b : Tsrc@P
-P is a concrete location
-Tsrc is compatible with Tdst
+```ts
+let y: float@alice = 1.5@alice;
+let x: string@bob <- y;
 ```
 
-This is broadcast from `P` to every participant.
-
-#### Localization
-
-```text
-a : Tdst@P
-b : Tsrc@every
-P is a concrete location
-Tsrc is compatible with Tdst
-```
-
-This is explicit localization from `@every` to the concrete location `P`. It does not perform network communication.
-
-For scalar values, localization is equivalent to local initialization or assignment at the destination.
-
-For mutable arrays, localization creates a fresh mutable copy at the destination.
-
-For array communication, broadcast, and localization, the array element type must match exactly because arrays are invariant. There is no array element type conversion.
+Arrays remain invariant: for `T[]`, the element types must be exactly the same.
+There is no element type conversion.
 
 Disallowed:
 
 ```ts
 let xs: integer[]@every = [1, 2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 ```
 
-The following forms are invalid:
+#### Location Rule
 
-```text
-@every -> @every
-P -> P where P is the same concrete location
+There is none. Any concrete location may appear as the source or the
+destination, in any combination. What the locations decide is not whether the
+transfer is legal, but how it is carried out:
+
+| source | destination | behaviour |
+|---|---|---|
+| `p` | `p` | local copy |
+| `p` | `q`, `q != p` | endpoint-to-endpoint communication |
+| `p` | `every` | broadcast; the sender also makes a local copy |
+| `every` | `p` | local copy |
+| `every` | `every` | local copy at every endpoint |
+
+The unifying rule is residency (spec §7.6). At an endpoint `E` that the
+destination resides at, the transfer is a local copy when the source also
+resides at `E`, and a receive otherwise. A transfer is therefore a pure local
+copy exactly when every endpoint the destination resides at already holds the
+source payload — that is, when the source is `@every`, or when the source and
+destination locations are the same.
+
+A transfer that performs no communication is ordinary and expected; it is not an
+error.
+
+#### Local Copy Is Always a Fresh Copy
+
+Whenever a transfer results in a local copy, the destination receives a **fresh**
+value, for scalars and for mutable arrays alike. For a mutable array this means
+the destination does not share identity with the source.
+
+This is what distinguishes `<-` from `=` at one and the same location:
+
+```ts
+let xs: float[]@alice = [1.1, 2.2]@alice;
+let alias: float[]@alice = xs;   // same array
+let copy: float[]@alice <- xs;   // fresh array
 ```
 
-Use ordinary assignment for those cases.
+For scalars the two are equivalent, since a scalar assignment already copies the
+value.
 
 Example:
 
 ```ts
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 This is direct communication from `alice` to `bob`.
@@ -1201,20 +1270,20 @@ Example:
 
 ```ts
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 ```
 
-This is localization at `alice`.
+This is a local copy at `alice`.
 
 ### 7.9 If Condition Typing
 
-An `if` condition must be a `boolean` available in the current context.
+An `if` condition must be a `boolean` located at the current context's location.
 
 Let the current context be `C`.
 
 ```text
 cond : boolean@L
-available(L, C)
+match(L, C)
 ```
 
 #### `@every` Context
@@ -1232,7 +1301,7 @@ if (c) {
 
 Inside `function@alice`, the condition must be `boolean@alice`.
 
-A condition of type `boolean@every` is not allowed inside a local function, because local functions use the stricter `localAvailable` relation.
+A condition of type `boolean@every` is not allowed inside a local function: `every` does not match `alice` (spec §7.6).
 
 Allowed:
 
@@ -1284,7 +1353,9 @@ float   op integer => float
 float   op float   => float
 ```
 
-The result is located at the operand location.
+Both operands must be located at the same location (spec §7.6); the result is
+located there too. Mixing an `@every` operand with an individual-location operand
+is a compile-time error.
 
 #### String Concatenation
 
@@ -1367,7 +1438,7 @@ This is allowed because each integer element is checked against the expected `fl
 
 #### Array Literal Typing
 
-For an array literal `[e1, ..., en]@L`, each element must be available at `L`. Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types.
+For an array literal `[e1, ..., en]@L`, each element must be located at `L`. Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types.
 
 The inferred element type of a non-empty array literal is computed from the element base types. `integer` and `float` elements have LUB `float`. Other mixed element types are invalid.
 
@@ -1412,7 +1483,7 @@ For an index expression `xs[i]`:
 ```text
 xs : T[]@L
 i  : integer@M
-available(M, L)
+match(M, L)
 ```
 
 then:
@@ -1432,8 +1503,8 @@ xs : T[]@L
 i  : integer@Li
 v  : S@Lv
 S <: T
-available(Li, L)
-available(Lv, L)
+match(Li, L)
+match(Lv, L)
 ```
 
 then the assignment is valid.
@@ -1466,7 +1537,7 @@ During BlueScript code generation, `length(xs)` is emitted as `xs.length`.
 xs : T[]@L
 v  : S@M
 S <: T
-available(M, L)
+match(M, L)
 ```
 
 then:
@@ -1481,7 +1552,7 @@ During BlueScript code generation, `push(xs, v)` is emitted as `xs.push(v)`.
 
 #### `@every` Array Restrictions
 
-Mutable arrays located at `@every` must not be implicitly converted to concrete-location arrays.
+Mutable arrays located at `@every` must not be implicitly converted to individual-location arrays.
 
 Disallowed:
 
@@ -1490,7 +1561,7 @@ let xs: integer[]@every = [1, 2, 3]@every;
 let ys: integer[]@alice = xs;
 ```
 
-Similarly, a value of type `T[]@every` must not be passed to a function parameter of type `T[]@P` where `P` is a concrete location. This restriction applies to all functions, not only local functions.
+Similarly, a value of type `T[]@every` must not be passed to a function parameter of type `T[]@P` where `P` is an individual location. This restriction applies to all functions, not only local functions.
 
 Disallowed:
 
@@ -1502,20 +1573,20 @@ let xs: integer[]@every = [1, 2, 3]@every;
 f(xs);
 ```
 
-To create a concrete-location mutable array from an `@every` array, use explicit localization with `<~`:
+To create an individual-location mutable array from an `@every` array, transfer it with `<-`:
 
 ```ts
 let xs: integer[]@every = [1, 2, 3]@every;
-let ys: integer[]@alice <~ xs;
+let ys: integer[]@alice <- xs;
 ```
 
 This creates a fresh mutable copy at `alice`.
 
-To create an `@every` array from a concrete-location array, use broadcast:
+To create an `@every` array from an individual-location array, use broadcast:
 
 ```ts
 let xs: integer[]@alice = [1, 2, 3]@alice;
-let ys: integer[]@every <~ xs;
+let ys: integer[]@every <- xs;
 ```
 
 #### Array Equality
@@ -1566,27 +1637,16 @@ Each argument is valid if:
 
 ```text
 Si <: Ti
-available(Mi, Li)
+match(Mi, Li)
 ```
 
-The argument location does not need to be syntactically equal to the parameter location.
+The argument location must be the same as the parameter location. A value of
+type `T@every` is therefore **not** accepted by a parameter of type `T@P`, where
+`P` is an individual location; copy it first with `<-` (spec §7.6).
 
-In particular, a value of type `T@every` may be passed to a parameter of type `T@P`, where `P` is a concrete location, because:
-
-```text
-available(every, P) = true
-```
 For mutable array parameters, array invariance applies. A parameter of type `T[]@L` accepts an argument of type `T[]@M` only when the element types are exactly the same and the location rule is satisfied.
 
-Additionally, a value of type `T[]@every` must not be passed to a parameter of type `T[]@P`, where `P` is a concrete location. Use explicit localization with `<~` to create a fresh `T[]@P` value first.
-
-```ts
-let arr: float[]@every = [1.1, 2.2]@every;
-let arrAlice: float[]@alice <~ arr;
-average(arrAlice);
-```
-
-Example:
+Disallowed:
 
 ```cbs
 function add@alice(a: integer): integer {
@@ -1596,11 +1656,22 @@ function add@alice(a: integer): integer {
 add(10@every);
 ```
 
-This is valid. The parameter `a` is treated inside the local function as `integer@alice`, not as `integer@every`.
+Use an argument already located at `alice`:
 
-For calls to local functions, argument checking is performed at the call boundary using the general `available` relation. If an argument of type `T@every` is passed to a parameter of type `T@P`, the parameter is bound as a local value of type `T@P` inside the local function. This does not violate the Local Function Strict Location Rule, because the local function body only sees the parameter as `T@P`.
+```cbs
+add(10@alice);
+```
 
-The Local Function Strict Location Rule still applies to the local function declaration and body. Therefore, a local function parameter explicitly declared as `T@every` remains invalid.
+Or, when the value only exists at `every`, localize it first:
+
+```ts
+let arr: float[]@every = [1.1, 2.2]@every;
+let arrAlice: float[]@alice <- arr;
+average(arrAlice);
+```
+
+A local function parameter explicitly declared as `T@every` is invalid for a
+separate reason, stated in §8.1.1.
 
 #### In an `@every` Context
 
@@ -1615,7 +1686,7 @@ Inside `function@alice`, only `@alice` local functions may be called.
 
 The following are disallowed:
 
-* calls to local functions at other nodes;
+* calls to local functions at other endpoints;
 * calls to `@every` functions.
 
 ### 7.13 Return Typing
@@ -1701,18 +1772,18 @@ then:
 i : T@L
 ```
 
-#### 7.14.3 Communication Let Does Not Infer Destination Type
+#### 7.14.3 Transfer Let Does Not Infer Destination Type
 
-Communication declarations keep the existing syntax:
+Transfer declarations keep the existing syntax:
 
 ```ts
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 The type annotation is required. The following remains invalid:
 
 ```ts
-let y <~ x;
+let y <- x;
 ```
 
 #### 7.14.4 Function Return Type Inference
@@ -1872,7 +1943,7 @@ function add@alice(a: integer@alice, b: integer@alice): integer@alice {
 
 ### 8.1.1 Local Function Strict Location Rule
 
-For a local function declared at a concrete location `P`:
+For a local function declared at an individual location `P`:
 
 ```cbs
 function f@P(...) {
@@ -1886,15 +1957,15 @@ Rules:
 
 - Every parameter type must be located at `P` after location elaboration.
 - If a parameter type omits its location, it is elaborated to `@P`.
-- A parameter type explicitly located at another concrete location `Q`, where `Q != P`, is a compile-time error.
+- A parameter type explicitly located at another individual location `Q`, where `Q != P`, is a compile-time error.
 - A parameter type explicitly located at `every` is a compile-time error.
 - The explicit or inferred return type of a local function must be located at `P`, except that `unit` with an omitted location is elaborated to `unit@P`.
-- A return type explicitly or implicitly located at another concrete location `Q`, where `Q != P`, is a compile-time error.
+- A return type explicitly or implicitly located at another individual location `Q`, where `Q != P`, is a compile-time error.
 - A return type explicitly or implicitly located at `every` is a compile-time error.
 - Every expression evaluated inside the local function body must have a type located at `P`.
 - Values located at `every` are not allowed inside local function bodies.
-- Values located at another concrete location are not allowed inside local function bodies.
-- Communication is not allowed inside local functions.
+- Values located at another individual location are not allowed inside local function bodies.
+- Transfers are not allowed inside local functions.
 
 Allowed:
 
@@ -2060,10 +2131,10 @@ Only initialized `let` declarations are allowed.
 let x: integer@alice = 1@alice;
 ```
 
-Communication declarations are also allowed.
+Transfer declarations are also allowed.
 
 ```ts
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 ### 9.3 Assignment Statements
@@ -2076,15 +2147,15 @@ x = y;
 
 Assignments do not produce values.
 
-### 9.4 Communication Statements
+### 9.4 Transfer Statements
 
-Communication is a statement only.
+A transfer is a statement only.
 
 ```ts
-y <~ x;
+y <- x;
 ```
 
-Communication statements do not produce values.
+Transfer statements do not produce values.
 
 ### 9.5 If Statements
 
@@ -2134,7 +2205,7 @@ for (let i = 0@every; i < 10@every; i = i + 1@every) {
 
 Expression statements are allowed.
 
-After EPP, expressions unrelated to the current node may be transformed into `nothing(...)` or `null`.
+After EPP, expressions unrelated to the current endpoint may be transformed into `nothing(...)` or `null`.
 
 These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in Section 13.9.
 
@@ -2165,8 +2236,8 @@ function f@every(...) {
 ```
 
 - Describes choreography.
-- May contain communication.
-- Is projected to every participant.
+- May contain transfers.
+- Is projected to all endpoints.
 - Does not allow location omission.
 - Allows return type inference.
 - Recursion is not supported in v0.
@@ -2187,9 +2258,9 @@ function f@alice(...) {
 }
 ```
 
-- Runs on a single node.
-- Must not contain communication.
-- Is generated only for the corresponding node.
+- Runs on a single endpoint.
+- Must not contain transfers.
+- Is generated only for the corresponding endpoint.
 - Allows location omission.
 - Allows return type inference.
 - Recursion is allowed only when the recursive function has an explicit return type.
@@ -2228,7 +2299,8 @@ EPP at `bob` after cleanup:
 // removed
 ```
 
-When calling a local function from an `@every` context, a mutable `T[]@every` value must not be passed directly to a `T[]@P` parameter. Use explicit localization with `<~` first.
+An argument must already be located at the parameter's location. A value at
+`@every` — a mutable array or otherwise — must be localized with `<-` first.
 
 ```ts
 function average@alice(arr: float[]): float {
@@ -2236,7 +2308,7 @@ function average@alice(arr: float[]): float {
 }
 
 let arr: float[]@every = [1.1, 2.2]@every;
-let arrAlice: float[]@alice <~ arr;
+let arrAlice: float[]@alice <- arr;
 let avg: float@alice = average(arrAlice);
 ```
 
@@ -2323,29 +2395,30 @@ function loop@every(n: integer@every): unit@every {
 
 ***
 
-## 11. Communication Semantics
+## 11. Transfer Semantics
 
-### 11.1 Communication Operator
+### 11.1 Transfer Operator
 
 ```ts
-a <~ b;
+a <- b;
 ```
 
 means:
 
-> Move the value of `b` to the location of `a`, then store it in `a`.
+> Copy the value of `b` to the location of `a`, then store it in `a`.
 
 Depending on the source and destination locations, this is one of:
 
-* direct communication from one concrete location to another concrete location;
-* broadcast from one concrete location to `@every`;
-* localization from `@every` to one concrete location.
+* direct communication between two different individual locations;
+* broadcast from one individual location to `@every`;
+* a local copy, when the destination already holds the source payload
+  (spec §11.4).
 
 Example:
 
 ```ts
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 Meaning:
@@ -2356,11 +2429,11 @@ alice -> bob: x
 
 ### 11.2 Direct Communication
 
-If the source and destination are different concrete locations, direct communication is used.
+If the source and destination are different individual locations, direct communication is used.
 
 ```ts
 let x: integer@alice = 10@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 EPP at `alice`:
@@ -2378,11 +2451,11 @@ let y: integer = receiveInteger("alice", "top_0");
 
 ### 11.3 Broadcast Communication
 
-If the destination is `@every` and the source is a concrete location, the communication is treated as a broadcast.
+If the destination is `@every` and the source is an individual location, the communication is treated as a broadcast.
 
 ```ts
 let x: boolean@alice = true@alice;
-let c: boolean@every <~ x;
+let c: boolean@every <- x;
 ```
 
 EPP at `alice`:
@@ -2405,7 +2478,7 @@ For array broadcast, the sender-side `@every` binding must be a fresh mutable co
 
 ```ts
 let xs: float[]@alice = [1.1, 2.2]@alice;
-let ys: float[]@every <~ xs;
+let ys: float[]@every <- xs;
 ```
 
 EPP at `alice`:
@@ -2416,17 +2489,23 @@ broadcastFloatArray("top_0", xs);
 let ys: float[] = cloneFloatArray(xs);
 ```
 
-### 11.4 Localization from `@every`
+### 11.4 Local Copy
 
-A value located at `@every` already exists locally at every participant. Therefore, `<~` from `@every` to a concrete location does not perform network communication.
+When the destination already holds the source payload, `<-` performs no network
+communication. It is a local copy instead. This covers three cases (spec §7.8):
 
-Instead, it is treated as explicit localization.
+* `every -> P` — the value already exists at every endpoint, so `P` has it;
+* `P -> P` — source and destination are the same individual location;
+* `every -> every` — a local copy at every endpoint.
 
-For scalar values, localization is equivalent to local initialization or assignment at the destination.
+A local copy always produces a **fresh** value at the destination.
+
+For scalar values, a local copy is ordinary local initialization or assignment,
+which already copies the value.
 
 ```ts
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 ```
 
 EPP at `alice`:
@@ -2436,11 +2515,12 @@ let x: integer = 1;
 let y: integer = x;
 ```
 
-For mutable arrays, localization creates a fresh mutable copy at the destination.
+For mutable arrays, a local copy creates a fresh mutable array at the
+destination, so the two do not share identity.
 
 ```ts
 let xs: float[]@every = [1.1, 2.2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 ```
 
 EPP at `alice`:
@@ -2450,11 +2530,26 @@ let xs: float[] = [1.1, 2.2];
 let ys: float[] = cloneFloatArray(xs);
 ```
 
-No `send`, `receive`, `broadcast`, or communication tag is generated for localization.
+An `every -> every` local copy is emitted at every endpoint:
+
+```ts
+let a: integer@every = 1@every;
+let b: integer@every <- a;
+```
+
+EPP at `alice` and at `bob`:
+
+```ts
+let a: integer = 1;
+let b: integer = a;
+```
+
+No `send`, `receive`, `broadcast`, or communication tag is generated for a local
+copy.
 
 ### 11.5 Communication Tags
 
-Each communication statement is assigned a static tag.
+Each transfer that performs communication — that is, each `direct` or `broadcast` transfer — is assigned a static tag. A local copy performs no communication and is given no tag (spec §11.4).
 
 Tags have the following properties:
 
@@ -2483,20 +2578,20 @@ foo_1
 
 ### 12.1 Definition
 
-Endpoint Projection, EPP, transforms a ChoreoBS program into a BlueScript program for each participant.
+Endpoint Projection, EPP, transforms a ChoreoBS program into a BlueScript program for each endpoint.
 
 ```text
-EPP(program, participant) -> BlueScript program
+EPP(program, endpoint) -> BlueScript program
 ```
 
 Before EPP, all inferred types must be elaborated into explicit located types in the internal AST.
 
 ### 12.2 Type Projection
 
-Projection of type `T@L` to participant `P` is:
+Projection of type `T@L` to endpoint `P` is:
 
 ```text
-if available(L, P):
+if residesAt(L, P):
     T
 else:
     absent
@@ -2515,10 +2610,10 @@ unit@alice projected to alice    -> void
 
 ### 12.3 Expression Projection
 
-Projection of expression `e : T@L` to participant `P` is:
+Projection of expression `e : T@L` to endpoint `P` is:
 
 ```text
-if available(L, P):
+if residesAt(L, P):
     preserve expression
 else:
     absent
@@ -2561,10 +2656,10 @@ true
 
 ### 12.6 Identifier Projection
 
-For variable `x : T@L`, projection to participant `P` is:
+For variable `x : T@L`, projection to endpoint `P` is:
 
 ```text
-if available(L, P):
+if residesAt(L, P):
     x
 else:
     absent
@@ -2628,12 +2723,12 @@ EPP at `bob` after cleanup:
 // removed
 ```
 
-### 12.9 Communication Projection
+### 12.9 Transfer Projection
 
 #### Direct Communication
 
 ```ts
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 where `x : integer@alice`.
@@ -2652,13 +2747,13 @@ let y: integer = receiveInteger("alice", "top_0");
 
 #### Broadcast
 
-For concrete-to-`@every` communication, EPP generates a broadcast at the sender and a receive at every other participant.
+For individual-to-`@every` communication, EPP generates a broadcast at the sender and a receive at all other endpoints.
 
 For array broadcast, the sender-side `@every` binding is a fresh mutable copy.
 
 ```ts
 let xs: integer[]@alice = [1, 2]@alice;
-let ys: integer[]@every <~ xs;
+let ys: integer[]@every <- xs;
 ```
 
 EPP at `alice`:
@@ -2675,15 +2770,15 @@ EPP at `bob`:
 let ys: integer[] = receiveIntegerArray("alice", "top_0");
 ```
 
-#### Localization
+#### Local Copy
 
-If the source is `@every` and the destination is a concrete location `P`, the communication is projected as localization. No `send`, `receive`, `broadcast`, or communication tag is generated.
+When the destination already holds the source payload (spec §11.4), the transfer is projected as a local copy at each endpoint the destination resides at. No `send`, `receive`, `broadcast`, or communication tag is generated.
 
-For scalar values, localization generates local initialization or assignment at `P`.
+For scalar values, a local copy generates local initialization or assignment.
 
 ```ts
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 ```
 
 EPP at `alice`:
@@ -2693,11 +2788,11 @@ let x: integer = 1;
 let y: integer = x;
 ```
 
-For array values, localization generates a fresh mutable copy at `P`.
+For array values, a local copy generates a fresh mutable array.
 
 ```ts
 let xs: float[]@every = [1.1, 2.2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 ```
 
 EPP at `alice`:
@@ -2713,12 +2808,12 @@ let ys: float[] = cloneFloatArray(xs);
 x = y;
 ```
 
-EPP to participant `P`:
+EPP to endpoint `P`:
 
-* If `x` is available at `P`, generate the assignment.
+* If `x` resides at `P`, generate the assignment.
 * Otherwise, generate `nothing(...)` or `null`, which may be removed by the cleanup pass.
 
-For array element assignment `xs[i] = v;`, projection is generated only at participants where `xs` is available. If `xs` is not available at participant `P`, the entire statement is projected to an absent/nothing artifact. The compiler must not generate invalid code such as `null[null] = null`.
+For array element assignment `xs[i] = v;`, projection is generated only at endpoints where `xs` resides. If `xs` does not reside at endpoint `P`, the entire statement is projected to an absent/nothing artifact. The compiler must not generate invalid code such as `null[null] = null`.
 
 ### 12.11 Function Projection
 
@@ -2788,7 +2883,7 @@ if (c) {
 
 where `c : boolean@every` in an `@every` context.
 
-EPP at each participant:
+EPP at each endpoint:
 
 ```ts
 if (c) {
@@ -2806,7 +2901,7 @@ while (c) {
 }
 ```
 
-EPP at each relevant participant:
+EPP at each relevant endpoint:
 
 ```ts
 while (c) {
@@ -2822,7 +2917,7 @@ for (let i: integer@every = 0@every; i < 10@every; i = i + 1@every) {
 }
 ```
 
-EPP at each participant:
+EPP at each endpoint:
 
 ```ts
 for (let i: integer = 0; i < 10; i = i + 1) {
@@ -2864,13 +2959,13 @@ nothing(null, null);
 nothing(null);
 ```
 
-Array communication sends the current contents of the array at the communication statement and produces a fresh mutable array at the receiver.
+An array transfer sends the current contents of the array at the transfer statement and produces a fresh mutable array at the receiver.
 
 Example:
 
 ```ts
 let xs: integer[]@alice = [1, 2]@alice;
-let ys: integer[]@bob <~ xs;
+let ys: integer[]@bob <- xs;
 ```
 
 EPP at `alice`:
@@ -2886,13 +2981,13 @@ EPP at `bob`:
 let ys: integer[] = receiveIntegerArray("alice", "top_0");
 ```
 
-Broadcast to `@every` uses a fresh copy at every participant, including the sender.
+Broadcast to `@every` uses a fresh copy at all endpoints, including the sender.
 
 Example:
 
 ```ts
 let xs: integer[]@alice = [1, 2]@alice;
-let ys: integer[]@every <~ xs;
+let ys: integer[]@every <- xs;
 ```
 
 EPP at `alice`:
@@ -2911,13 +3006,13 @@ let ys: integer[] = receiveIntegerArray("alice", "top_0");
 
 ### 12.15 Top-Level Projection
 
-Top-level non-function statements are projected as the entry program for each participant.
+Top-level non-function statements are projected as the entry program for each endpoint.
 
 Input:
 
 ```ts
 let x: integer@alice = 10@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 EPP at `alice`:
@@ -3003,11 +3098,11 @@ Input:
 index.cbs
 ```
 
-participants:
+endpoints:
 
 ```json
 {
-  "participants": ["alice", "bob"]
+  "endpoints": ["alice", "bob"]
 }
 ```
 
@@ -3020,11 +3115,11 @@ index_bob.bs
 
 ### 13.5 Local Functions
 
-A local function is emitted only for the corresponding node.
+A local function is emitted only for the corresponding endpoint.
 
 ### 13.6 `@every` Functions
 
-An `@every` function is emitted for every node.
+An `@every` function is emitted for all endpoints.
 
 ### 13.7 Absent Finalization
 
@@ -3082,7 +3177,7 @@ broadcastBooleanArray(tag: string, value: boolean[]): void;
 Array clone helper APIs used by generated code for:
 
 * sender-side fresh copies in array broadcast;
-* localization copies from `T[]@every` to `T[]@P`.
+* local copies produced by a transfer (spec §11.4).
 
 APIs:
 
@@ -3246,7 +3341,7 @@ More advanced dead-code elimination may be added in future versions.
 
 ### 14.1 `nothing`
 
-`nothing` is a compiler-generated helper expression used to make projected code syntactically valid when some source expression has no runtime meaning for the current node.
+`nothing` is a compiler-generated helper expression used to make projected code syntactically valid when some source expression has no runtime meaning for the current endpoint.
 
 Conceptually:
 
@@ -3340,7 +3435,7 @@ Input:
 
 ```ts
 let x: integer@alice = 42@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
 EPP at `alice`:
@@ -3364,7 +3459,7 @@ Input:
 
 ```ts
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 
 if (ok) {
     let msg: string@bob = "ok"@bob;
@@ -3517,7 +3612,7 @@ Note: `nothing(choose(c))` is not simplified because its argument is not exactly
 
 ***
 
-### 15.5 While with Communication
+### 15.5 While with Transfer
 
 Input:
 
@@ -3526,10 +3621,10 @@ let cont: boolean@every = true@every;
 
 while (cont) {
     let x: integer@alice = 1@alice;
-    let y: integer@bob <~ x;
+    let y: integer@bob <- x;
 
     let nextLocal: boolean@bob = false@bob;
-    cont <~ nextLocal;
+    cont <- nextLocal;
 }
 ```
 
@@ -3572,8 +3667,8 @@ for (
     i < 3@every;
     i = i + 1@every
 ) {
-    let x: integer@alice = i;
-    let y: integer@bob <~ x;
+    let x: integer@alice <- i;
+    let y: integer@bob <- x;
 }
 ```
 
@@ -3701,7 +3796,7 @@ let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
 push(xs, 20@alice);
 let n: integer@alice = length(xs);
-let ys: integer[]@bob <~ xs;
+let ys: integer[]@bob <- xs;
 ```
 
 EPP at `alice`:
@@ -3727,7 +3822,7 @@ let xs: integer[]@every = [1, 2, 3]@every;
 xs[0@every] = 10@every;
 ```
 
-EPP at every participant:
+EPP at all endpoints:
 
 ```ts
 let xs: integer[] = [1, 2, 3];
@@ -3738,7 +3833,7 @@ xs[0] = 10;
 
 The following are compile-time errors.
 
-### 16.1 Unknown Participant
+### 16.1 Unknown Endpoint
 
 ```ts
 let x: integer@carol = 1@carol;
@@ -3746,11 +3841,11 @@ let x: integer@carol = 1@carol;
 
 This is an error if `carol` is not listed in `choreobs.json`.
 
-### 16.2 Using `every` as a Participant
+### 16.2 Using `every` as an Endpoint
 
 ```json
 {
-  "participants": ["alice", "every"]
+  "endpoints": ["alice", "every"]
 }
 ```
 
@@ -3789,41 +3884,54 @@ let x: integer@alice = 1@alice;
 let y: integer@bob = x;
 ```
 
-Use communication instead:
+Use a transfer instead:
 
 ```ts
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 ```
 
-### 16.8 Invalid Non-Transferring Communication
-
-`<~` must represent direct communication, broadcast, or localization. It must not be used when source and destination are both `@every`, or when source and destination are the same concrete location.
-
-Disallowed:
+The same applies between `@every` and an individual location, which are
+independent (§7.6):
 
 ```ts
-let x: integer@every = 1@every;
-let y: integer@every <~ x;
+let c: boolean@every = true@every;
+let d: boolean@alice = c;
 ```
 
-Use assignment instead:
+Use a transfer instead:
 
 ```ts
-let y: integer@every = x;
+let d: boolean@alice <- c;
 ```
 
-Disallowed:
+### 16.8 Invalid Transfer Base Type
+
+For `a <- b` with `a : T1@p` and `b : T2@q`, the source base type must be a
+subtype of the destination base type: `T2 <: T1` (spec §7.8).
+
+Disallowed — `float` is not a subtype of `integer`:
 
 ```ts
-let a: integer@alice = 1@alice;
-let b: integer@alice <~ a;
+let y: float@alice = 1.5@alice;
+let x: integer@bob <- y;
 ```
 
-Use assignment instead:
+Disallowed — unrelated base types:
 
 ```ts
-let b: integer@alice = a;
+let y: float@alice = 1.5@alice;
+let x: string@bob <- y;
 ```
+
+Disallowed — arrays are invariant, so the element types must match exactly:
+
+```ts
+let xs: integer[]@every = [1, 2]@every;
+let ys: float[]@alice <- xs;
+```
+
+Note that the locations are unconstrained: a transfer whose source and
+destination share a location is valid and denotes a local copy (spec §11.4).
 
 ### 16.9 Invalid If Condition
 
@@ -3858,7 +3966,7 @@ function f@every(): unit@every {
 }
 ```
 
-### 16.12 Calling Another Node's Local Function
+### 16.12 Calling Another Endpoint's Local Function
 
 ```ts
 function f@bob(): integer {
@@ -3930,13 +4038,13 @@ x === y;
 x !== y;
 ```
 
-### 16.18 Communication Let Without Type Annotation
+### 16.18 Transfer Let Without Type Annotation
 
 ```ts
-let y <~ x;
+let y <- x;
 ```
 
-Communication declarations require an explicit destination type.
+Transfer declarations require an explicit destination type.
 
 ### 16.19 Cannot Infer Function Return Type
 
@@ -4011,7 +4119,7 @@ Parameter types are not inferred in Core v0.
 
 ### 16.25 Invalid Local Function Parameter Location
 
-A local function parameter must be located at the function's own concrete location after location elaboration.
+A local function parameter must be located at the function's own individual location after location elaboration.
 
 Disallowed:
 
@@ -4041,7 +4149,7 @@ This is elaborated to parameters located at `bob`.
 
 ### 16.26 Invalid Local Function Return Location
 
-A local function return type must be located at the function's own concrete location after location elaboration.
+A local function return type must be located at the function's own individual location after location elaboration.
 
 Disallowed:
 
@@ -4071,7 +4179,7 @@ This is elaborated to `integer@bob`.
 
 ### 16.27 Invalid Value Used Inside Local Function
 
-Inside a local function declared at concrete location `P`, every evaluated expression must be located at `P`.
+Inside a local function declared at individual location `P`, every evaluated expression must be located at `P`.
 
 Disallowed:
 
@@ -4102,9 +4210,11 @@ function ok@bob(): integer {
 
 ### 16.28 Invalid Function Argument Location
 
-A function argument must be compatible with the corresponding parameter type using base type subtyping and the general `available` relation.
+A function argument must be compatible with the corresponding parameter type
+using base type subtyping, and must be located at the parameter's location
+(spec §7.6).
 
-Allowed:
+Disallowed:
 
 ```cbs
 function add@alice(a: integer): integer {
@@ -4114,7 +4224,12 @@ function add@alice(a: integer): integer {
 add(10@every);
 ```
 
-This is valid because `available(every, alice) = true`.
+This is invalid because `match(every, alice) = false`. `every` and `alice` are
+independent locations. Pass a value already at `alice`:
+
+```cbs
+add(10@alice);
+```
 
 Disallowed:
 
@@ -4126,7 +4241,7 @@ function add@alice(a: integer): integer {
 add(10@bob);
 ```
 
-This is invalid because `available(bob, alice) = false`.
+This is invalid because `match(bob, alice) = false`.
 
 Disallowed:
 
@@ -4203,9 +4318,11 @@ let xs: integer[]@alice = [1, 2]@alice;
 let ys: float[]@alice = xs;
 ```
 
-### 16.34 Invalid `@every` Array Assignment to Concrete Location
+### 16.34 Invalid `@every` Array Assignment to Individual Location
 
-A mutable array located at `@every` cannot be assigned to a concrete-location array variable.
+A mutable array located at `@every` cannot be assigned to an individual-location
+array variable. This is an instance of the general location rule (§7.6, §16.7),
+not an array-specific restriction; use `<-` to localize.
 
 Disallowed:
 
@@ -4214,9 +4331,11 @@ let xs: integer[]@every = [1, 2, 3]@every;
 let ys: integer[]@alice = xs;
 ```
 
-### 16.35 Invalid `@every` Array Argument to Concrete Location Parameter
+### 16.35 Invalid `@every` Array Argument to Individual Location Parameter
 
-A mutable array located at `@every` cannot be passed to a function parameter located at a concrete location.
+A mutable array located at `@every` cannot be passed to a function parameter
+located at an individual location. This is an instance of the general location
+rule (§7.6, §16.28), not an array-specific restriction; localize with `<-` first.
 
 Disallowed:
 
@@ -4241,7 +4360,7 @@ xs === xs;
 
 ### 16.37 Invalid Array Index Location
 
-The index expression must be available at the array location.
+The index expression must be located at the array location.
 
 Disallowed:
 

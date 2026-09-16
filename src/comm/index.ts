@@ -7,7 +7,7 @@ export {
 } from "./consistency.js";
 export {
   checkEmittedCommunicationConsistency,
-  type EmittedParticipantOutput,
+  type EmittedEndpointOutput,
 } from "./emitted.js";
 export {
   verifyCommunicationConsistency,

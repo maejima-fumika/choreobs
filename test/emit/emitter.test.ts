@@ -9,12 +9,12 @@ import { project } from "../../src/epp/index.js";
 import { emit } from "../../src/emit/index.js";
 import { compileFile, compileSource, writeOutputs } from "../../src/driver/index.js";
 
-const config = { participants: ["alice", "bob"] };
+const config = { endpoints: ["alice", "bob"] };
 
-function pipeline(source: string, participant: string): string {
+function pipeline(source: string, endpoint: string): string {
   const { program } = parse(source);
   const { typed } = typeCheck(program!, config);
-  const projected = project(typed!, participant);
+  const projected = project(typed!, endpoint);
   return emit(projected);
 }
 
@@ -23,7 +23,7 @@ describe("BlueScript emitter", () => {
     const code = pipeline(
       `
 let x: integer@alice = 42@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `,
       "alice",
     );
@@ -36,7 +36,7 @@ let y: integer@bob <~ x;
     const code = pipeline(
       `
 let x: integer@alice = 42@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `,
       "bob",
     );
@@ -47,7 +47,7 @@ let y: integer@bob <~ x;
     const alice = pipeline(
       `
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 `,
       "alice",
     );
@@ -57,7 +57,7 @@ let ok: boolean@every <~ localOk;
     const bob = pipeline(
       `
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 `,
       "bob",
     );
@@ -75,21 +75,21 @@ let x: integer@alice = add(1@alice, 2@alice);
     assert.match(bob, /nothing\(null, null\);/);
   });
 
-  it("removes bob output after cleanup when top level calls alice with integer@every (spec §10.2, §13.9)", () => {
+  it("removes bob output after cleanup when top level calls alice (spec §10.2, §13.9)", () => {
     const result = compileSource(
       `
 function add@alice(a: integer) {
   return a;
 }
-add(10@every);
+add(10@alice);
 `,
       "index.cbs",
       config,
     );
     assert.equal(result.success, true, JSON.stringify(result.errors));
-    const bob = result.outputs.find((o) => o.participant === "bob")?.source.trimEnd();
+    const bob = result.outputs.find((o) => o.endpoint === "bob")?.source.trimEnd();
     assert.equal(bob, "");
-    const alice = result.outputs.find((o) => o.participant === "alice")?.source.trimEnd();
+    const alice = result.outputs.find((o) => o.endpoint === "alice")?.source.trimEnd();
     assert.match(alice!, /add\(10\);/);
   });
 
@@ -112,19 +112,19 @@ add(10@every);
     assert.match(code, /return a \+ b;/);
   });
 
-  it("compile writes index_<participant>.bs files", () => {
+  it("compile writes index_<endpoint>.bs files", () => {
     const dir = mkdtempSync(join(tmpdir(), "choreobs-test-"));
     try {
       const cbsPath = join(dir, "index.cbs");
       const configPath = join(dir, "choreobs.json");
       const source = `
 let x: integer@alice = 10@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `;
       writeFileSync(cbsPath, source, "utf8");
       writeFileSync(
         configPath,
-        JSON.stringify({ participants: ["alice", "bob"] }),
+        JSON.stringify({ endpoints: ["alice", "bob"] }),
         "utf8",
       );
 
@@ -146,11 +146,11 @@ let y: integer@bob <~ x;
     }
   });
 
-  it("emits scalar localization as local assignment (spec §11.4)", () => {
+  it("emits a scalar local copy as local assignment (spec §11.4)", () => {
     const alice = pipeline(
       `
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 `,
       "alice",
     );
@@ -161,11 +161,11 @@ let y: integer@alice <~ x;
     assert.doesNotMatch(alice, /broadcastInteger/);
   });
 
-  it("emits array localization with clone helper (spec §11.4)", () => {
+  it("emits an array local copy with clone helper (spec §11.4)", () => {
     const alice = pipeline(
       `
 let xs: float[]@every = [1.1, 2.2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 `,
       "alice",
     );
@@ -187,7 +187,7 @@ function average@alice(arr: float[]): float {
   return sum / length(arr);
 }
 let arr: float[]@every = [1.1, 2.2, 4.5]@every;
-let arrAlice: float[]@alice <~ arr;
+let arrAlice: float[]@alice <- arr;
 let avg: float@alice = average(arrAlice);
 `,
       "alice",
@@ -204,7 +204,7 @@ let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
 push(xs, 20@alice);
 let n: integer@alice = length(xs);
-let ys: integer[]@bob <~ xs;
+let ys: integer[]@bob <- xs;
 `,
       "alice",
     );
@@ -217,7 +217,7 @@ let ys: integer[]@bob <~ xs;
     const bob = pipeline(
       `
 let xs: integer[]@alice = [1, 2, 3]@alice;
-let ys: integer[]@bob <~ xs;
+let ys: integer[]@bob <- xs;
 `,
       "bob",
     );

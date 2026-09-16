@@ -15,7 +15,7 @@ import {
   type ExprTypeResolver,
 } from "../../src/check/inference.js";
 
-const alice = { kind: "concrete" as const, name: "alice" };
+const alice = { kind: "individual" as const, name: "alice" };
 const every = { kind: "every" as const };
 
 function parseFunctionBody(bodySource: string): Block {
@@ -90,12 +90,12 @@ describe("return inference utilities (spec §7.14.4)", () => {
       }
     });
 
-    it("rejects different concrete locations", () => {
-      const bob = { kind: "concrete" as const, name: "bob" };
+    it("rejects different individual locations", () => {
+      const bob = { kind: "individual" as const, name: "bob" };
       assert.equal(lubLocation(alice, bob).ok, false);
     });
 
-    it("rejects every with concrete", () => {
+    it("rejects every with individual", () => {
       assert.equal(lubLocation(every, alice).ok, false);
     });
   });
@@ -114,7 +114,7 @@ describe("return inference utilities (spec §7.14.4)", () => {
     });
 
     it("fails when locations differ", () => {
-      const bob = { kind: "concrete" as const, name: "bob" };
+      const bob = { kind: "individual" as const, name: "bob" };
       assert.equal(
         lubLocatedType(locatedType("integer", alice), locatedType("integer", bob)).ok,
         false,

@@ -8,18 +8,18 @@ export function loadConfig(path: string): ChoreoBSConfig {
   if (typeof data !== "object" || data === null) {
     throw new Error(`${path}: config must be a JSON object`);
   }
-  const participants = (data as { participants?: unknown }).participants;
-  if (!Array.isArray(participants)) {
-    throw new Error(`${path}: "participants" must be an array of strings`);
+  const endpoints = (data as { endpoints?: unknown }).endpoints;
+  if (!Array.isArray(endpoints)) {
+    throw new Error(`${path}: "endpoints" must be an array of strings`);
   }
   const names: string[] = [];
-  for (const entry of participants) {
+  for (const entry of endpoints) {
     if (typeof entry !== "string") {
-      throw new Error(`${path}: each participant must be a string`);
+      throw new Error(`${path}: each endpoint must be a string`);
     }
     names.push(entry);
   }
-  return { participants: names };
+  return { endpoints: names };
 }
 
 export function defaultConfigPath(cbsPath: string): string {

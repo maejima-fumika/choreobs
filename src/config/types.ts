@@ -1,3 +1,3 @@
 export interface ChoreoBSConfig {
-  readonly participants: readonly string[];
+  readonly endpoints: readonly string[];
 }

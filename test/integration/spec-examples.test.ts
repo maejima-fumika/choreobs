@@ -3,15 +3,15 @@ import { describe, it } from "node:test";
 import { compileSource } from "../../src/driver/index.js";
 import type { CompileResult } from "../../src/driver/index.js";
 
-const config = { participants: ["alice", "bob"] };
+const config = { endpoints: ["alice", "bob"] };
 
 function compile(source: string): CompileResult {
   return compileSource(source, "index.cbs", config);
 }
 
-function bs(result: CompileResult, participant: string): string {
-  const hit = result.outputs.find((o) => o.participant === participant);
-  assert.ok(hit, `missing output for ${participant}`);
+function bs(result: CompileResult, endpoint: string): string {
+  const hit = result.outputs.find((o) => o.endpoint === endpoint);
+  assert.ok(hit, `missing output for ${endpoint}`);
   return hit.source.trimEnd();
 }
 
@@ -33,7 +33,7 @@ describe("spec.md examples — generated .bs output", () => {
   it("§15.1 direct communication", () => {
     const result = compile(`
 let x: integer@alice = 42@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `);
     expectSuccess(result);
     assert.equal(
@@ -50,7 +50,7 @@ sendInteger("bob", "top_0", x);`,
   it("§15.2 broadcast", () => {
     const result = compile(`
 let localOk: boolean@alice = true@alice;
-let ok: boolean@every <~ localOk;
+let ok: boolean@every <- localOk;
 
 if (ok) {
     let msg: string@bob = "ok"@bob;
@@ -106,7 +106,7 @@ function add@alice(a: integer, b: integer) {
 }
 
 let x = add(1@alice, 2@alice);
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `);
     expectSuccess(result);
     assert.equal(
@@ -170,10 +170,10 @@ let cont: boolean@every = true@every;
 
 while (cont) {
     let x: integer@alice = 1@alice;
-    let y: integer@bob <~ x;
+    let y: integer@bob <- x;
 
     let nextLocal: boolean@bob = false@bob;
-    cont <~ nextLocal;
+    cont <- nextLocal;
 }
 `);
     expectSuccess(result);
@@ -205,8 +205,8 @@ for (
     i < 3@every;
     i = i + 1@every
 ) {
-    let x: integer@alice = i;
-    let y: integer@bob <~ x;
+    let x: integer@alice <- i;
+    let y: integer@bob <- x;
 }
 `);
     expectSuccess(result);
@@ -227,7 +227,7 @@ for (
 });
 
 describe("spec.md §16 — invalid programs", () => {
-  it("§16.1 unknown participant", () => {
+  it("§16.1 unknown endpoint", () => {
     const result = compile(`let x: integer@carol = 1@carol;`);
     expectFailure(result);
     assert.ok(result.errors.some((e) => e.message.includes("carol")));
@@ -239,16 +239,21 @@ let x: integer@alice = 1@alice;
 let y: integer@bob = x;
 `);
     expectFailure(result);
-    assert.ok(result.errors.some((e) => e.message.includes("communication")));
+    assert.ok(
+      result.errors.some((e) => e.message.includes("use a transfer instead")),
+    );
   });
 
-  it("§16.8 invalid communication from @every to @every", () => {
+  it("§16.8 invalid transfer base type", () => {
     const result = compile(`
-let x: integer@every = 1@every;
-let y: integer@every <~ x;
+let x: float@alice = 1.5@alice;
+let y: integer@bob <- x;
 `);
     expectFailure(result);
-    assert.ok(result.errors.some((e) => e.message.includes("@every")));
+    assert.ok(
+      result.errors.some((e) => e.message.includes("transfer type mismatch")),
+      JSON.stringify(result.errors),
+    );
   });
 
   it("§16.12 cross-node local function call", () => {

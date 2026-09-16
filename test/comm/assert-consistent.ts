@@ -28,7 +28,7 @@ export function assertCommConsistent(programs: readonly ProjectedProgram[]): voi
   );
 }
 
-/** Type-checks and projects all participants (EPP-only tests). */
+/** Type-checks and projects all endpoints (EPP-only tests). */
 export function assertSourceCommConsistent(
   source: string,
   config: ChoreoBSConfig,
@@ -39,7 +39,7 @@ export function assertSourceCommConsistent(
   const { typed, errors: te } = typeCheck(program, config);
   assert.equal(te.length, 0, JSON.stringify(te));
   assert.ok(typed);
-  const all = projectAll(typed, config.participants);
+  const all = projectAll(typed, config.endpoints);
   assertCommConsistent(all);
   return all;
 }

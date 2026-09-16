@@ -9,7 +9,7 @@ import type { Location } from "./location.js";
  */
 export type ExecutionContext =
   | { readonly kind: "every" }
-  | { readonly kind: "local"; readonly participant: string };
+  | { readonly kind: "local"; readonly endpoint: string };
 
 /** Implicit context for top-level statements (spec §6.5). */
 export const EVERY_CONTEXT: ExecutionContext = { kind: "every" };
@@ -20,5 +20,5 @@ export function executionContextFromLocation(
   if (location.kind === "every") {
     return EVERY_CONTEXT;
   }
-  return { kind: "local", participant: location.name };
+  return { kind: "local", endpoint: location.name };
 }

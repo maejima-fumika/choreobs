@@ -3,8 +3,8 @@ import type { CommConsistencyResult } from "./consistency.js";
 import { checkCommunicationConsistency } from "./consistency.js";
 import type { ProjectedProgram, ProjectedStatement } from "../ir/projected.js";
 
-export interface EmittedParticipantOutput {
-  readonly participant: string;
+export interface EmittedEndpointOutput {
+  readonly endpoint: string;
   readonly source: string;
 }
 
@@ -37,14 +37,14 @@ const BROADCAST_RE = new RegExp(
  * reconstructing a projected view from emitted API calls.
  */
 export function checkEmittedCommunicationConsistency(
-  outputs: readonly EmittedParticipantOutput[],
+  outputs: readonly EmittedEndpointOutput[],
 ): CommConsistencyResult {
   const programs = outputs.map(emittedToProjectedProgram);
   return checkCommunicationConsistency(programs);
 }
 
 function emittedToProjectedProgram(
-  output: EmittedParticipantOutput,
+  output: EmittedEndpointOutput,
 ): ProjectedProgram {
   const span = { start: 0, end: 1 };
   const body: ProjectedStatement[] = [];
@@ -55,7 +55,7 @@ function emittedToProjectedProgram(
     body.push({
       kind: "SendStatement",
       comm,
-      destinationParticipant: match[2]!,
+      destinationEndpoint: match[2]!,
       tag: match[3]!,
       value: { kind: "IdentifierExpression", name: "_", span },
       span,
@@ -89,7 +89,7 @@ function emittedToProjectedProgram(
       initializer: {
         kind: "ReceiveExpression",
         comm,
-        sourceParticipant: match[2]!,
+        sourceEndpoint: match[2]!,
         tag: match[3]!,
         span,
       },
@@ -99,7 +99,7 @@ function emittedToProjectedProgram(
 
   return {
     kind: "ProjectedProgram",
-    participant: output.participant,
+    endpoint: output.endpoint,
     functions: [],
     body,
     span,

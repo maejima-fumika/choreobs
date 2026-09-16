@@ -30,8 +30,8 @@ export function checkCommunicationConsistency(
 }
 
 class CommConsistencyChecker {
-  private readonly participants: Set<string>;
-  private readonly byParticipant = new Map<string, ProjectedProgram>();
+  private readonly endpoints: Set<string>;
+  private readonly byEndpoint = new Map<string, ProjectedProgram>();
   private readonly errors: CommConsistencyError[] = [];
 
   private readonly sends: SendRecord[] = [];
@@ -41,9 +41,9 @@ class CommConsistencyChecker {
   private readonly tagCommByScope = new Map<string, CommKind>();
 
   constructor(programs: readonly ProjectedProgram[]) {
-    this.participants = new Set(programs.map((p) => p.participant));
+    this.endpoints = new Set(programs.map((p) => p.endpoint));
     for (const program of programs) {
-      this.byParticipant.set(program.participant, program);
+      this.byEndpoint.set(program.endpoint, program);
     }
     for (const program of programs) {
       this.collectFromProgram(program);
@@ -62,40 +62,40 @@ class CommConsistencyChecker {
   }
 
   private collectFromProgram(program: ProjectedProgram): void {
-    this.walkStatements(program.participant, TOP_SCOPE, program.body);
+    this.walkStatements(program.endpoint, TOP_SCOPE, program.body);
     for (const fn of program.functions) {
-      this.walkStatements(program.participant, fn.name, fn.body.statements);
+      this.walkStatements(program.endpoint, fn.name, fn.body.statements);
     }
   }
 
   private walkStatements(
-    participant: string,
+    endpoint: string,
     scope: CommScopeId,
     statements: readonly ProjectedStatement[],
   ): void {
     for (const stmt of statements) {
-      this.walkStatement(participant, scope, stmt);
+      this.walkStatement(endpoint, scope, stmt);
     }
   }
 
   private walkStatement(
-    participant: string,
+    endpoint: string,
     scope: CommScopeId,
     stmt: ProjectedStatement,
   ): void {
     switch (stmt.kind) {
       case "SendStatement": {
         this.registerTag(scope, stmt.tag, stmt.comm, stmt.span);
-        if (stmt.destinationParticipant === participant) {
+        if (stmt.destinationEndpoint === endpoint) {
           this.error(
-            `send to self at ${participant} (tag ${stmt.tag}, scope ${scope})`,
+            `send to self at ${endpoint} (tag ${stmt.tag}, scope ${scope})`,
             stmt.span,
           );
         }
         this.sends.push({
           scope,
-          src: participant,
-          dst: stmt.destinationParticipant,
+          src: endpoint,
+          dst: stmt.destinationEndpoint,
           tag: stmt.tag,
           comm: stmt.comm,
           span: stmt.span,
@@ -106,7 +106,7 @@ class CommConsistencyChecker {
         this.registerTag(scope, stmt.tag, stmt.comm, stmt.span);
         this.broadcasts.push({
           scope,
-          sender: participant,
+          sender: endpoint,
           tag: stmt.tag,
           comm: stmt.comm,
           span: stmt.span,
@@ -116,46 +116,46 @@ class CommConsistencyChecker {
       case "LetStatement": {
         const recv = asReceive(stmt.initializer);
         if (recv !== undefined) {
-          this.registerReceive(participant, scope, recv);
+          this.registerReceive(endpoint, scope, recv);
         }
         break;
       }
       case "AssignmentStatement": {
         const recv = asReceive(stmt.value);
         if (recv !== undefined) {
-          this.registerReceive(participant, scope, recv);
+          this.registerReceive(endpoint, scope, recv);
         }
         break;
       }
       case "IfStatement":
-        this.walkStatements(participant, scope, stmt.then.statements);
+        this.walkStatements(endpoint, scope, stmt.then.statements);
         if (stmt.else !== undefined) {
-          this.walkStatements(participant, scope, stmt.else.statements);
+          this.walkStatements(endpoint, scope, stmt.else.statements);
         }
         break;
       case "WhileStatement":
-        this.walkStatements(participant, scope, stmt.body.statements);
+        this.walkStatements(endpoint, scope, stmt.body.statements);
         break;
       case "ForStatement": {
         if (stmt.init?.kind === "ForLetInit") {
           const recv = asReceive(stmt.init.initializer);
           if (recv !== undefined) {
-            this.registerReceive(participant, scope, recv);
+            this.registerReceive(endpoint, scope, recv);
           }
         } else if (stmt.init?.kind === "ForAssignmentInit") {
           const recv = asReceive(stmt.init.value);
           if (recv !== undefined) {
-            this.registerReceive(participant, scope, recv);
+            this.registerReceive(endpoint, scope, recv);
           }
         }
-        this.walkStatements(participant, scope, stmt.body.statements);
+        this.walkStatements(endpoint, scope, stmt.body.statements);
         break;
       }
       case "ReturnStatement":
         if (stmt.value !== undefined) {
           const recv = asReceive(stmt.value);
           if (recv !== undefined) {
-            this.registerReceive(participant, scope, recv);
+            this.registerReceive(endpoint, scope, recv);
           }
         }
         break;
@@ -167,33 +167,33 @@ class CommConsistencyChecker {
   }
 
   private registerReceive(
-    participant: string,
+    endpoint: string,
     scope: CommScopeId,
     recv: ReceiveExpression,
   ): void {
     this.registerTag(scope, recv.tag, recv.comm, recv.span);
-    if (recv.sourceParticipant === participant) {
+    if (recv.sourceEndpoint === endpoint) {
       this.error(
-        `receive from self at ${participant} (tag ${recv.tag}, scope ${scope})`,
+        `receive from self at ${endpoint} (tag ${recv.tag}, scope ${scope})`,
         recv.span,
       );
     }
-    if (!this.participants.has(recv.sourceParticipant)) {
+    if (!this.endpoints.has(recv.sourceEndpoint)) {
       this.error(
-        `receive from unknown participant '${recv.sourceParticipant}' at ${participant}`,
+        `receive from unknown endpoint '${recv.sourceEndpoint}' at ${endpoint}`,
         recv.span,
       );
     }
-    if (recv.sourceParticipant === "every") {
+    if (recv.sourceEndpoint === "every") {
       this.error(
-        `receive from @every source at ${participant} (tag ${recv.tag}, scope ${scope})`,
+        `receive from @every source at ${endpoint} (tag ${recv.tag}, scope ${scope})`,
         recv.span,
       );
     }
     this.receives.push({
       scope,
-      dst: participant,
-      src: recv.sourceParticipant,
+      dst: endpoint,
+      src: recv.sourceEndpoint,
       tag: recv.tag,
       comm: recv.comm,
       span: recv.span,
@@ -268,8 +268,8 @@ class CommConsistencyChecker {
 
   private validateBroadcasts(): void {
     for (const b of this.broadcasts) {
-      for (const participant of this.participants) {
-        if (participant === b.sender) {
+      for (const endpoint of this.endpoints) {
+        if (endpoint === b.sender) {
           if (!this.senderHasBroadcastLocalHandling(b)) {
             this.error(
               `broadcast sender ${b.sender} missing local let/assignment without receive for tag ${b.tag} (scope ${b.scope})`,
@@ -281,14 +281,14 @@ class CommConsistencyChecker {
         const match = this.receives.find(
           (r) =>
             r.scope === b.scope &&
-            r.dst === participant &&
+            r.dst === endpoint &&
             r.src === b.sender &&
             r.tag === b.tag &&
             r.comm === b.comm,
         );
         if (match === undefined) {
           this.error(
-            `missing receive${capitalize(b.comm)}("${b.sender}", "${b.tag}") at ${participant} for broadcast from ${b.sender} (scope ${b.scope})`,
+            `missing receive${capitalize(b.comm)}("${b.sender}", "${b.tag}") at ${endpoint} for broadcast from ${b.sender} (scope ${b.scope})`,
             b.span,
           );
         }
@@ -297,7 +297,7 @@ class CommConsistencyChecker {
   }
 
   private senderHasBroadcastLocalHandling(b: BroadcastRecord): boolean {
-    const program = this.byParticipant.get(b.sender);
+    const program = this.byEndpoint.get(b.sender);
     if (program === undefined) {
       return false;
     }

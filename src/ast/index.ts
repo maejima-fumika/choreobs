@@ -1,6 +1,12 @@
 export type { Span, AstNode } from "./span.js";
 
-export type { Location, LocationAnnotation } from "./location.js";
+export type {
+  Location,
+  ConcreteLocation,
+  IndividualLocation,
+  EveryLocation,
+  LocationAnnotation,
+} from "./location.js";
 export {
   EVERY_CONTEXT,
   executionContextFromLocation,
@@ -43,18 +49,17 @@ export type {
 export type {
   Statement,
   LetStatement,
-  LetReceiveStatement,
+  LetTransferStatement,
   AssignmentStatement,
   AssignmentTarget,
   IdentifierAssignmentTarget,
   IndexAssignmentTarget,
-  CommStatement,
+  TransferStatement,
   IfStatement,
   WhileStatement,
   ForStatement,
   ForInit,
   ForLetInit,
-  ForLetReceiveInit,
   ForAssignmentInit,
   ForUpdate,
   ReturnStatement,
@@ -69,7 +74,7 @@ export type { Program, TopLevelItem, TopLevelStatement } from "./program.js";
 export type {
   LocatedType,
   CommTag,
-  CommMode,
+  TransferMode,
   TypedProgram,
   TypedTopLevelItem,
   TypedTopLevelStatement,
@@ -77,15 +82,14 @@ export type {
   TypedParameter,
   TypedStatement,
   TypedLetStatement,
-  TypedLetReceiveStatement,
+  TypedLetTransferStatement,
   TypedAssignmentStatement,
-  TypedCommStatement,
+  TypedTransferStatement,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
   TypedForInit,
   TypedForLetInit,
-  TypedForLetReceiveInit,
   TypedForAssignmentInit,
   TypedForUpdate,
   TypedReturnStatement,

@@ -66,7 +66,7 @@ class BlueScriptEmitter {
         return;
       case "SendStatement":
         this.line(
-          `${sendFunction(stmt.comm)}("${stmt.destinationParticipant}", "${stmt.tag}", ${this.emitExpr(stmt.value)});`,
+          `${sendFunction(stmt.comm)}("${stmt.destinationEndpoint}", "${stmt.tag}", ${this.emitExpr(stmt.value)});`,
         );
         return;
       case "BroadcastStatement":
@@ -181,7 +181,7 @@ class BlueScriptEmitter {
       case "ParenthesizedExpression":
         return `(${this.emitExpr(expr.expression)})`;
       case "ReceiveExpression":
-        return `${receiveFunction(expr.comm)}("${expr.sourceParticipant}", "${expr.tag}")`;
+        return `${receiveFunction(expr.comm)}("${expr.sourceEndpoint}", "${expr.tag}")`;
     }
   }
 

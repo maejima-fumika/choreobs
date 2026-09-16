@@ -21,12 +21,12 @@ import type {
 import type { Span } from "../../src/ast/span.js";
 
 const span: Span = { start: 0, end: 1 };
-const config = { participants: ["alice", "bob"] };
+const config = { endpoints: ["alice", "bob"] };
 
 function program(body: ProjectedStatement[]): ProjectedProgram {
   return {
     kind: "ProjectedProgram",
-    participant: "bob",
+    endpoint: "bob",
     functions: [],
     body,
     span,
@@ -187,7 +187,7 @@ describe("Projected AST cleanup (spec §13.9)", () => {
       const send: SendStatement = {
         kind: "SendStatement",
         comm: "integer",
-        destinationParticipant: "bob",
+        destinationEndpoint: "bob",
         tag: "top_0",
         value: ident("x"),
         span,
@@ -199,7 +199,7 @@ describe("Projected AST cleanup (spec §13.9)", () => {
         initializer: {
           kind: "ReceiveExpression",
           comm: "integer",
-          sourceParticipant: "alice",
+          sourceEndpoint: "alice",
           tag: "top_0",
           span,
         },
@@ -232,7 +232,7 @@ nothing(null@alice);
         config,
       );
       assert.equal(result.success, true, JSON.stringify(result.errors));
-      const alice = result.outputs.find((o) => o.participant === "alice")?.source.trimEnd();
+      const alice = result.outputs.find((o) => o.endpoint === "alice")?.source.trimEnd();
       assert.equal(
         alice,
         `function nothing(a: null): null {

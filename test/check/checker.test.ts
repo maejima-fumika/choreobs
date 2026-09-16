@@ -4,7 +4,7 @@ import { parse } from "../../src/parser/index.js";
 import { typeCheck } from "../../src/check/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 
-const aliceBob: ChoreoBSConfig = { participants: ["alice", "bob"] };
+const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
 
 function checkSource(source: string, config: ChoreoBSConfig = aliceBob) {
   const { program, errors: parseErrors } = parse(source);
@@ -17,7 +17,7 @@ describe("ChoreoBS type checker", () => {
   it("accepts direct communication (spec §15.1)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
-let y: integer@bob <~ x;
+let y: integer@bob <- x;
 `);
     assert.equal(errors.length, 0);
     assert.equal(typed?.items.length, 2);
@@ -36,8 +36,8 @@ function add@alice(a: integer, b: integer): integer {
     assert.equal(errors.length, 0);
     const fn = typed?.items[0];
     if (fn && "decl" in fn) {
-      assert.equal(fn.params[0]?.type.location.kind, "concrete");
-      if (fn.params[0]?.type.location.kind === "concrete") {
+      assert.equal(fn.params[0]?.type.location.kind, "individual");
+      if (fn.params[0]?.type.location.kind === "individual") {
         assert.equal(fn.params[0].type.location.name, "alice");
       }
     }
@@ -49,48 +49,57 @@ let x: integer@alice = 1@alice;
 let y: integer@bob = x;
 `);
     assert.equal(typed, null);
-    assert.ok(errors.some((e) => e.message.includes("communication")));
+    assert.ok(errors.some((e) => e.message.includes("use a transfer instead")));
   });
 
-  it("accepts scalar localization from @every (spec §7.8)", () => {
+  it("accepts a scalar local copy from @every (spec §7.8)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@every = 1@every;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 `);
     assert.equal(errors.length, 0);
     const recv = typed?.items[2];
-    if (recv && "statement" in recv && "commMode" in recv.statement) {
-      assert.equal(recv.statement.commMode, "localization");
+    if (recv && "statement" in recv && "transferMode" in recv.statement) {
+      assert.equal(recv.statement.transferMode, "localCopy");
       assert.equal(recv.statement.commTag, undefined);
     }
   });
 
-  it("accepts scalar localization from @every literals with subtyping", () => {
+  it("accepts a scalar local copy from @every literals with subtyping", () => {
     const { errors } = checkSource(`
-let y: float@alice <~ 1@every;
-let b: boolean@bob <~ true@every;
+let y: float@alice <- 1@every;
+let b: boolean@bob <- true@every;
 `);
     assert.equal(errors.length, 0);
   });
 
-  it("rejects @every to @every communication (spec §16.8)", () => {
+  it("accepts @every to @every transfer as a local copy (spec §7.8)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@every = 1@every;
-let y: integer@every <~ x;
+let y: integer@every <- x;
 `);
-    assert.equal(typed, null);
-    assert.ok(errors.some((e) => e.message.includes("@every to @every")));
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
+    const recv = typed?.items[1];
+    assert.ok(recv && "statement" in recv && "transferMode" in recv.statement);
+    if (recv && "statement" in recv && "transferMode" in recv.statement) {
+      assert.equal(recv.statement.transferMode, "localCopy");
+      assert.equal(recv.statement.commTag, undefined);
+    }
   });
 
-  it("rejects communication when source and destination share a location (spec §7.8)", () => {
+  it("accepts a transfer whose source and destination share a location (spec §7.8)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
-let y: integer@alice <~ x;
+let y: integer@alice <- x;
 `);
-    assert.equal(typed, null);
-    assert.ok(
-      errors.some((e) => e.message.includes("must differ")),
-    );
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
+    const recv = typed?.items[1];
+    if (recv && "statement" in recv && "transferMode" in recv.statement) {
+      assert.equal(recv.statement.transferMode, "localCopy");
+      assert.equal(recv.statement.commTag, undefined);
+    }
   });
 
   it("rejects references to top-level let from local functions (spec §6.5)", () => {
@@ -136,15 +145,47 @@ function loop@every(): unit@every {
   it("rejects communication in local functions (spec §10.1)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(): unit {
-  let y: integer@bob <~ x;
+  let y: integer@bob <- x;
   return;
 }
 `);
     assert.equal(typed, null);
-    assert.ok(errors.some((e) => e.message.includes("communication")));
+    assert.ok(errors.some((e) => e.message.includes("transfer is not allowed")));
   });
 
-  it("rejects unknown participant (spec §16.1)", () => {
+  it("accepts a transfer widening integer to float (spec §7.8)", () => {
+    const { errors } = checkSource(`
+let y: integer@alice = 1@alice;
+let x: float@bob <- y;
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+  });
+
+  it("rejects a transfer narrowing float to integer (spec §16.8)", () => {
+    const { typed, errors } = checkSource(`
+let y: float@alice = 1.5@alice;
+let x: integer@bob <- y;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("transfer type mismatch")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects a transfer between unrelated base types (spec §16.8)", () => {
+    const { typed, errors } = checkSource(`
+let y: float@alice = 1.5@alice;
+let x: string@bob <- y;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("transfer type mismatch")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects unknown endpoint (spec §16.1)", () => {
     const { typed, errors } = checkSource(`let x: integer@carol = 1@carol;`);
     assert.equal(typed, null);
     assert.ok(errors.some((e) => e.message.includes("carol")));
@@ -232,7 +273,7 @@ function f@bob(): integer@bob {
       assert.equal(errors.length, 0);
     });
 
-    it("rejects parameter at a different concrete location", () => {
+    it("rejects parameter at a different individual location", () => {
       const { typed, errors } = checkSource(`
 function add@bob(a: integer@alice, b: integer@bob) {
   return a;
@@ -266,12 +307,12 @@ function f@bob() {
       assert.equal(typed, null);
       assert.ok(
         errors.some((e) =>
-          e.message.includes("not available in local function at bob"),
+          e.message.includes("not usable in local function at bob"),
         ),
       );
     });
 
-    it("rejects literal at a different concrete location in body", () => {
+    it("rejects literal at a different individual location in body", () => {
       const { typed, errors } = checkSource(`
 function f@bob() {
   let x = 1@alice;
@@ -281,12 +322,12 @@ function f@bob() {
       assert.equal(typed, null);
       assert.ok(
         errors.some((e) =>
-          e.message.includes("not available in local function at bob"),
+          e.message.includes("not usable in local function at bob"),
         ),
       );
     });
 
-    it("rejects binary operands at different concrete locations (spec §8.1.1)", () => {
+    it("rejects binary operands at different individual locations (spec §8.1.1)", () => {
       const { typed, errors } = checkSource(`
 function f@alice(): integer {
   return 1@bob + 2@alice;
@@ -300,7 +341,7 @@ function f@alice(): integer {
       );
     });
 
-    it("rejects explicit return type at a different concrete location", () => {
+    it("rejects explicit return type at a different individual location", () => {
       const { typed, errors } = checkSource(`
 function f@bob(): integer@alice {
   return 1@alice;
@@ -336,7 +377,7 @@ function f@bob() {
       );
     });
 
-    it("rejects inferred return at a different concrete location", () => {
+    it("rejects inferred return at a different individual location", () => {
       const { typed, errors } = checkSource(`
 function f@bob() {
   return 1@alice;
@@ -364,37 +405,47 @@ function caller@alice(): integer {
       const ret = caller.body.statements[0];
       if (ret && "value" in ret && ret.value && "callee" in ret.value) {
         assert.equal(ret.value.choreoType.base, "integer");
-        if (ret.value.choreoType.location.kind === "concrete") {
+        if (ret.value.choreoType.location.kind === "individual") {
           assert.equal(ret.value.choreoType.location.name, "alice");
         }
       }
     }
   });
 
-  describe("call argument location availability", () => {
-    it("allows passing integer@every to integer@alice parameter", () => {
+  describe("call argument location matching", () => {
+    it("rejects passing integer@every to integer@alice parameter (spec §16.28)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: integer) {
   return a;
 }
 add(10@every);
 `);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-      assert.ok(typed);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("is not at parameter location integer@alice"),
+        ),
+        JSON.stringify(errors),
+      );
     });
 
-    it("allows integer@every argument to float@alice parameter", () => {
+    it("rejects integer@every argument to float@alice parameter (spec §16.28)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: float) {
   return a;
 }
 add(10@every);
 `);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-      assert.ok(typed);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("is not at parameter location float@alice"),
+        ),
+        JSON.stringify(errors),
+      );
     });
 
-    it("rejects argument at unavailable concrete location", () => {
+    it("rejects argument at a different individual location", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: integer) {
   return a;
@@ -403,11 +454,11 @@ add(10@bob);
 `);
       assert.equal(typed, null);
       assert.ok(
-        errors.some((e) => e.message.includes("not available at parameter location")),
+        errors.some((e) => e.message.includes("is not at parameter location")),
       );
     });
 
-    it("still rejects local function parameter at @every", () => {
+    it("rejects local function parameter at @every", () => {
       const { typed, errors } = checkSource(`
 function f@alice(x: integer@every) {
   return x;
@@ -431,7 +482,7 @@ function g@alice(): integer {
       assert.equal(typed, null);
       assert.ok(
         errors.some((e) =>
-          e.message.includes("not available in local function at alice"),
+          e.message.includes("not usable in local function at alice"),
         ),
       );
     });
@@ -450,7 +501,7 @@ function f@alice(): unit {
       assert.ok(
         errors.some(
           (e) =>
-            e.message.includes("not available in local function at alice") ||
+            e.message.includes("not usable in local function at alice") ||
             e.message.includes("boolean@alice in local function"),
         ),
       );
@@ -468,7 +519,7 @@ function f@alice(): unit {
       assert.ok(
         errors.some(
           (e) =>
-            e.message.includes("not available in local function at alice") ||
+            e.message.includes("not usable in local function at alice") ||
             e.message.includes("boolean@alice in local function"),
         ),
       );
@@ -521,6 +572,76 @@ function f@alice(): integer@bob {
     });
   });
 
+  describe("@every and individual locations are independent (spec §7.6)", () => {
+    it("rejects assigning an @every value to an individual-location variable", () => {
+      const { typed, errors } = checkSource(`
+let c: boolean@every = true@every;
+let d: boolean@alice = c;
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("invalid assignment across locations"),
+        ),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("accepts the same program when the copy is explicit", () => {
+      const { typed, errors } = checkSource(`
+let c: boolean@every = true@every;
+let d: boolean@alice <- c;
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("rejects returning an @every value from an individual-location return type", () => {
+      const { typed, errors } = checkSource(`
+function f@every(): integer@alice {
+  return 1@every;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("is not at return type location integer@alice"),
+        ),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects mixing an @every operand with an individual-location operand", () => {
+      const { typed, errors } = checkSource(`
+function f@every(a: integer@alice) {
+  return a + 1@every;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("binary operands must be at the same location"),
+        ),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects mixing in the other operand order too", () => {
+      const { typed, errors } = checkSource(`
+function f@every(a: integer@alice) {
+  return 1@every + a;
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("binary operands must be at the same location"),
+        ),
+        JSON.stringify(errors),
+      );
+    });
+  });
+
   describe("mutable arrays", () => {
     it("accepts array literal, index, assignment, push, and length", () => {
       const { typed, errors } = checkSource(`
@@ -546,24 +667,24 @@ let ys: float[]@alice = xs;
       assert.ok(errors.some((e) => e.message.includes("cannot assign")));
     });
 
-    it("accepts array localization from @every", () => {
+    it("accepts an array local copy from @every", () => {
       const { errors } = checkSource(`
 let xs: float[]@every = [1.1, 2.2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 `);
       assert.equal(errors.length, 0);
     });
 
-    it("rejects array element type conversion during localization", () => {
+    it("rejects array element type conversion in a transfer", () => {
       const { typed, errors } = checkSource(`
 let xs: integer[]@every = [1, 2]@every;
-let ys: float[]@alice <~ xs;
+let ys: float[]@alice <- xs;
 `);
       assert.equal(typed, null);
-      assert.ok(errors.some((e) => e.message.includes("communication type mismatch")));
+      assert.ok(errors.some((e) => e.message.includes("transfer type mismatch")));
     });
 
-    it("rejects passing @every array directly to concrete array parameter", () => {
+    it("rejects passing @every array directly to individual-location array parameter", () => {
       const { typed, errors } = checkSource(`
 function average@alice(arr: float[]): float {
   return 0.0;
@@ -573,17 +694,25 @@ average(arr);
 `);
       assert.equal(typed, null);
       assert.ok(
-        errors.some((e) => e.message.includes("cannot pass T[]@every")),
+        errors.some((e) =>
+          e.message.includes("is not at parameter location float[]@alice"),
+        ),
+        JSON.stringify(errors),
       );
     });
 
-    it("rejects assigning @every array to concrete array variable", () => {
+    it("rejects assigning @every array to individual-location array variable", () => {
       const { typed, errors } = checkSource(`
 let arr: float[]@every = [1.1, 2.2]@every;
 let arrAlice: float[]@alice = arr;
 `);
       assert.equal(typed, null);
-      assert.ok(errors.some((e) => e.message.includes("cannot assign")));
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("invalid assignment across locations"),
+        ),
+        JSON.stringify(errors),
+      );
     });
   });
 });

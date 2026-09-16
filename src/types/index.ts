@@ -1,9 +1,8 @@
 export {
   isSubtype,
   isArraySubtype,
-  locatedTypesCompatible,
   locationsEqual,
-  available,
+  residesAt,
   contextAsLocation,
   formatLocatedType,
   locatedType,
