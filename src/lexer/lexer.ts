@@ -33,7 +33,7 @@ const KEYWORDS: Readonly<Record<string, TokenKind>> = {
   float: TokenKind.Float,
   boolean: TokenKind.Boolean,
   string: TokenKind.String,
-  unit: TokenKind.Unit,
+  void: TokenKind.Void,
   break: TokenKind.Break,
   continue: TokenKind.Continue,
   const: TokenKind.Const,

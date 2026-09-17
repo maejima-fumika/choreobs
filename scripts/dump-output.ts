@@ -18,14 +18,14 @@ if (ok) {
 }
 `,
   "15.3": `
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
 }
 
 let x: integer@alice = add(1@alice, 2@alice);
 `,
   "15.4": `
-function choose@every(c: boolean@every): integer@alice {
+function choose(c: boolean@every): integer@alice {
     if (c) {
         return 1@alice;
     } else {

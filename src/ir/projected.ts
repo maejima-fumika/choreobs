@@ -8,7 +8,7 @@ import type {
   UnaryOperator,
 } from "../ast/operators.js";
 
-/** ChoreoBS `unit` projects to `void` (spec §12.2). */
+/** ChoreoBS `void` projects to `void` at every endpoint (spec §12.2). */
 export type ProjectedBaseType =
   | BaseType
   | "void"

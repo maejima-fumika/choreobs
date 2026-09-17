@@ -81,7 +81,7 @@ if (ok) {
 
   it("§15.3 local function", () => {
     const result = compile(`
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
 }
 
@@ -100,7 +100,7 @@ let x: integer = add(1, 2);`,
 
   it("§7.14 type inference — add, inferred let, and communication", () => {
     const result = compile(`
-function add@alice(a: integer, b: integer) {
+function add@alice(a: integer@alice, b: integer@alice) {
   let c = a + b;
   return c;
 }
@@ -124,9 +124,9 @@ sendInteger("bob", "top_0", x);`,
     );
   });
 
-  it("§15.4 @every function", () => {
+  it("§15.4 choreography function", () => {
     const result = compile(`
-function choose@every(c: boolean@every): integer@alice {
+function choose(c: boolean@every): integer@alice {
     if (c) {
         return 1@alice;
     } else {
@@ -258,25 +258,39 @@ let y: integer@bob <- x;
 
   it("§16.12 cross-node local function call", () => {
     const result = compile(`
-function f@bob(): integer { return 1; }
-function g@alice(): integer { return f(); }
+function f@bob(): integer@bob { return 1@bob; }
+function g@alice(): integer@alice { return f(); }
 `);
     expectFailure(result);
     assert.ok(result.errors.some((e) => e.message.includes("cannot call")));
   });
 
-  it("§16.13 @every function from local function", () => {
+  it("§16.13 choreography function from local function", () => {
     const result = compile(`
-function h@every(): unit@every { return; }
-function g@alice(): unit { h(); return; }
+function h(): void { return; }
+function g@alice(): void { h(); return; }
 `);
     expectFailure(result);
-    assert.ok(result.errors.some((e) => e.message.includes("@every")));
+    assert.ok(
+      result.errors.some((e) =>
+        e.message.includes("cannot call choreography function"),
+      ),
+      JSON.stringify(result.errors),
+    );
   });
 
-  it("§16.4 top-level location omission", () => {
-    const result = compile(`let x: integer = 1@alice;`);
+  it("§16.3 location omission with nothing to infer from", () => {
+    const result = compile(`
+function f@alice(a: integer): integer@alice {
+  return a;
+}
+`);
     expectFailure(result);
-    assert.ok(result.errors.some((e) => e.message.includes("location")));
+    assert.ok(
+      result.errors.some((e) =>
+        e.message.includes("location annotation required on type"),
+      ),
+      JSON.stringify(result.errors),
+    );
   });
 });

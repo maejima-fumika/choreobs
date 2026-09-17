@@ -2,7 +2,7 @@ import type { Span } from "../ast/span.js";
 import type { BaseType, TypeAnnotation } from "../ast/syntax-types.js";
 import type { Location, LocationAnnotation } from "../ast/location.js";
 import {
-  EVERY_CONTEXT,
+  CHOREOGRAPHY_CONTEXT,
   executionContextFromLocation,
 } from "../ast/context.js";
 import type {
@@ -72,18 +72,17 @@ export interface ParseResult {
 
 export function parse(source: string): ParseResult {
   const lexed = tokenize(source);
-  const result = parseTokens(lexed.tokens);
-  if (lexed.errors.length === 0) {
-    return result;
-  }
   const lexicalAsParse: ParseError[] = lexed.errors.map((e) => ({
     message: e.message,
     span: { start: e.span.start.offset, end: e.span.end.offset },
   }));
-  return {
-    program: result.program,
-    errors: [...lexicalAsParse, ...result.errors],
-  };
+  // The lexer substitutes a placeholder token when it recovers, so a token
+  // stream that failed to lex cannot be parsed meaningfully. Report the
+  // lexical errors — which are independent of each other — and stop.
+  if (lexicalAsParse.length > 0) {
+    return { program: null, errors: lexicalAsParse };
+  }
+  return parseTokens(lexed.tokens);
 }
 
 export function parseTokens(tokens: readonly Token[]): ParseResult {
@@ -109,7 +108,9 @@ class Parser {
           items.push(this.topLevelStatement());
         }
       } catch {
-        this.synchronizeTopLevel();
+        // Parsing stops at the first syntax error: once a construct has failed
+        // to parse, any later diagnostic is a guess about where it ended.
+        break;
       }
     }
 
@@ -138,9 +139,11 @@ class Parser {
   private functionDeclaration(): FunctionDeclaration {
     const start = this.consume(TokenKind.Function, "expected 'function'");
     const nameTok = this.consumeIdentifierToken("expected function name");
-    this.consume(TokenKind.At, "expected '@' after function name");
-    const at = this.parseLocation();
-    this.consume(TokenKind.LParen, "expected '(' after function location");
+    // A location names the one endpoint that runs the function, making it a
+    // local function; a choreography function runs at every endpoint and has
+    // none (spec §10.1).
+    const at = this.match(TokenKind.At) ? this.parseLocation() : undefined;
+    this.consume(TokenKind.LParen, "expected '(' after function name");
     const params = this.check(TokenKind.RParen) ? [] : this.parameterList();
     this.consume(TokenKind.RParen, "expected ')' after parameters");
     let returnType: TypeAnnotation | undefined;
@@ -166,7 +169,7 @@ class Parser {
     const stmt = this.parseStatement();
     return {
       kind: "TopLevelStatement",
-      context: EVERY_CONTEXT,
+      context: CHOREOGRAPHY_CONTEXT,
       statement: stmt,
       span: spanOfNode(stmt),
     };
@@ -231,7 +234,7 @@ class Parser {
       [TokenKind.Boolean]: "boolean",
       [TokenKind.String]: "string",
       [TokenKind.Null]: "null",
-      [TokenKind.Unit]: "unit",
+      [TokenKind.Void]: "void",
     };
     const base = map[token.kind];
     if (base === undefined) {
@@ -269,11 +272,7 @@ class Parser {
     const start = this.consume(TokenKind.LBrace, "expected '{'");
     const statements: Statement[] = [];
     while (!this.check(TokenKind.RBrace) && !this.check(TokenKind.EOF)) {
-      try {
-        statements.push(this.parseStatement());
-      } catch {
-        this.synchronizeStatement();
-      }
+      statements.push(this.parseStatement());
     }
     const end = this.consume(TokenKind.RBrace, "expected '}'");
     return {
@@ -895,38 +894,7 @@ class Parser {
     );
   }
 
-  private synchronizeTopLevel(): void {
-    while (!this.check(TokenKind.EOF)) {
-      if (
-        this.check(TokenKind.Function) ||
-        this.check(TokenKind.Let) ||
-        this.check(TokenKind.If) ||
-        this.check(TokenKind.While) ||
-        this.check(TokenKind.For) ||
-        this.check(TokenKind.Return) ||
-        this.check(TokenKind.Identifier)
-      ) {
-        return;
-      }
-      this.advance();
-    }
-  }
 
-  private synchronizeStatement(): void {
-    while (!this.check(TokenKind.EOF) && !this.check(TokenKind.RBrace)) {
-      if (
-        this.check(TokenKind.Let) ||
-        this.check(TokenKind.If) ||
-        this.check(TokenKind.While) ||
-        this.check(TokenKind.For) ||
-        this.check(TokenKind.Return) ||
-        this.check(TokenKind.Identifier)
-      ) {
-        return;
-      }
-      this.advance();
-    }
-  }
 
   private consumeIdentifierToken(message: string): Token & { name: string } {
     const token = this.current();

@@ -80,9 +80,9 @@ y = receiveInteger("alice", "top_0");`,
       );
     });
 
-    it("uses function-scoped comm tags inside @every functions", () => {
+    it("uses function-scoped comm tags inside choreography functions", () => {
       const result = compile(`
-function worker@every(): unit@every {
+function worker(): void {
   let x: integer@alice = 1@alice;
   let y: integer@bob <- x;
   return;
@@ -109,6 +109,57 @@ let n: string@bob <- m;
       assert.match(bs(result, "bob"), /receiveString\("alice", "top_1"\)/);
       assertNoChoreoSyntax(bs(result, "alice"));
       assertNoChoreoSyntax(bs(result, "bob"));
+    });
+  });
+
+  describe("void projection (spec §7.3, §12.2)", () => {
+    it("keeps a void return type at every endpoint, never absent", () => {
+      // A void return type used to carry a location, so at an endpoint it did
+      // not reside at, the signature projected to `null` while the body kept a
+      // bare `return;` — invalid BlueScript.
+      const result = compile(`
+function g(): void {
+  return;
+}
+g();
+`);
+      expectSuccess(result);
+      for (const endpoint of ["alice", "bob"]) {
+        assert.match(bs(result, endpoint), /function g\(\): void \{/);
+        assert.doesNotMatch(bs(result, endpoint), /function g\(\): null/);
+      }
+    });
+  });
+
+  describe("choreography vs local functions (spec §10.1, §12.11)", () => {
+    it("emits a choreography function at every endpoint", () => {
+      const result = compile(`
+function pick(c: boolean@every): integer@alice {
+  if (c) {
+    return 1@alice;
+  } else {
+    return 0@alice;
+  }
+}
+let c: boolean@every = true@every;
+let x: integer@alice = pick(c);
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /function pick\(/);
+      assert.match(bs(result, "bob"), /function pick\(/);
+    });
+
+    it("emits a local function only at its own endpoint, and nothings the call elsewhere", () => {
+      const result = compile(`
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
+  return a + b;
+}
+let x: integer@alice = add(1@alice, 2@alice);
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /function add\(/);
+      assert.doesNotMatch(bs(result, "bob"), /function add\(/);
+      assert.equal(bs(result, "bob"), "");
     });
   });
 
@@ -191,7 +242,7 @@ let d: boolean@alice <- c;
   describe("functions and scoping", () => {
     it("emits alice call and empty bob after cleanup for add(10@alice) (spec §10.2, §13.9)", () => {
       const result = compile(`
-function add@alice(a: integer) {
+function add@alice(a: integer@alice) {
   return a;
 }
 add(10@alice);
@@ -205,7 +256,7 @@ add(10@alice);
     it("allows forward reference via function hoisting (spec §6.3)", () => {
       const result = compile(`
 let x: integer@alice = f();
-function f@alice(): integer {
+function f@alice(): integer@alice {
   return 1@alice;
 }
 `);
@@ -214,7 +265,7 @@ function f@alice(): integer {
       assert.match(bs(result, "alice"), /function f\(/);
     });
 
-    it("rejects duplicate let in the same block (spec §6.1)", () => {
+    it("rejects duplicate let in the same block (spec §6.4)", () => {
       const result = compile(`
 let x: integer@alice = 1@alice;
 let x: integer@alice = 2@alice;
@@ -316,9 +367,9 @@ let x: integer@alice = 2@alice;
       assert.ok(result.errors.some((e) => e.message.includes("cannot assign")));
     });
 
-    it("§16.14 rejects recursive @every functions", () => {
+    it("§16.14 rejects recursive choreography functions", () => {
       const result = compile(`
-function f@every(): unit@every {
+function f(): void {
   f();
   return;
 }
@@ -329,8 +380,8 @@ function f@every(): unit@every {
 
     it("§16.15 rejects duplicate function names", () => {
       const result = compile(`
-function f@alice(): unit { return; }
-function f@bob(): unit { return; }
+function f@alice(): void { return; }
+function f@bob(): void { return; }
 `);
       expectFailure(result);
       assert.ok(result.errors.some((e) => e.message.includes("duplicate function")));
@@ -358,7 +409,7 @@ x == y;
 
     it("§16.10 rejects while with non-@every condition", () => {
       const result = compile(`
-function f@every(): unit@every {
+function f(): void {
   while (true@alice) {
     return;
   }
@@ -368,9 +419,9 @@ function f@every(): unit@every {
       assert.ok(result.errors.some((e) => e.message.includes("boolean@every")));
     });
 
-    it("§16.11 rejects for with non-@every condition in @every function", () => {
+    it("§16.11 rejects for with non-@every condition in a choreography function", () => {
       const result = compile(`
-function f@every(): unit@every {
+function f(): void {
   for (let i: integer@alice = 0@alice; i < 10@alice; i = i + 1@alice) {
     return;
   }
@@ -380,18 +431,19 @@ function f@every(): unit@every {
       assert.ok(result.errors.some((e) => e.message.includes("boolean@every")));
     });
 
-    it("§10.1 rejects transfers inside local functions", () => {
+    it("§10.1 allows transfers inside local functions as local copies", () => {
       const result = compile(`
-function f@alice(): unit {
-  let y: integer@bob <- x;
-  return;
+function f@alice(): integer@alice {
+  let xs: float[]@alice = [1.1, 2.2]@alice;
+  let ys: float[]@alice <- xs;
+  return length(ys);
 }
+let n: integer@alice = f();
 `);
-      expectFailure(result);
-      assert.ok(
-        result.errors.some((e) => e.message.includes("transfer is not allowed")),
-        JSON.stringify(result.errors),
-      );
+      expectSuccess(result);
+      // A transfer at one location is a fresh copy, and emits no communication.
+      assert.match(bs(result, "alice"), /let ys: float\[\] = cloneFloatArray\(xs\);/);
+      assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
     });
 
     it("stops before EPP when parse fails", () => {

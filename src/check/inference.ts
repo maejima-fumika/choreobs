@@ -27,7 +27,7 @@ export type ValueReturnCandidate = {
 
 /** Bare `return;` candidate (spec §7.14.4). */
 export type UnitReturnCandidate = {
-  readonly kind: "unit";
+  readonly kind: "void";
   readonly span: Span;
 };
 
@@ -127,7 +127,7 @@ function collectFromStatement(
   switch (stmt.kind) {
     case "ReturnStatement":
       if (stmt.value === undefined) {
-        out.push({ kind: "unit", span: stmt.span });
+        out.push({ kind: "void", span: stmt.span });
         return undefined;
       }
       {
@@ -199,10 +199,10 @@ export function inferReturnTypeFromCandidates(
   candidates: readonly ReturnCandidate[],
 ): InferResult<LocatedType> {
   if (candidates.length === 0) {
-    return inferenceOk(locatedType("unit", functionLocation));
+    return inferenceOk(locatedType("void", functionLocation));
   }
 
-  const hasUnit = candidates.some((c) => c.kind === "unit");
+  const hasUnit = candidates.some((c) => c.kind === "void");
   const valueCandidates = candidates.filter(
     (c): c is ValueReturnCandidate => c.kind === "value",
   );
@@ -214,7 +214,7 @@ export function inferReturnTypeFromCandidates(
   }
 
   if (hasUnit) {
-    return inferenceOk(locatedType("unit", functionLocation));
+    return inferenceOk(locatedType("void", functionLocation));
   }
 
   let merged = valueCandidates[0]!.type;
@@ -228,7 +228,7 @@ export function inferReturnTypeFromCandidates(
 
   if (!checkReturnCoverage(body)) {
     return inferenceError(
-      "not all execution paths return a value for inferred non-unit function (spec §7.14.6)",
+      "not all execution paths return a value for inferred non-void function (spec §7.14.6)",
     );
   }
 

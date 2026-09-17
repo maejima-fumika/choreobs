@@ -223,8 +223,8 @@ describe("Projected AST cleanup (spec §13.9)", () => {
     it("preserves user nothing function and call at alice (spec §15.3 variant)", () => {
       const result = compileSource(
         `
-function nothing@alice(a: null): null {
-    return null;
+function nothing@alice(a: null@alice): null@alice {
+    return null@alice;
 }
 nothing(null@alice);
 `,

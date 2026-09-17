@@ -51,16 +51,19 @@ export function residesAt(location: Location, endpoint: string): boolean {
 
 /** Execution context as the location that its statements must be located at. */
 export function contextAsLocation(ctx: ExecutionContext): Location {
-  if (ctx.kind === "every") {
+  if (ctx.kind === "choreography") {
     return { kind: "every" };
   }
   return { kind: "individual", name: ctx.endpoint };
 }
 
 export function formatLocatedType(type: LocatedType): string {
+  const head = type.isArray ? `${type.base}[]` : type.base;
+  if (type.base === "void" && type.isArray !== true) {
+    return head; // `void` has no location (spec §7.3)
+  }
   const loc =
     type.location.kind === "every" ? "every" : type.location.name;
-  const head = type.isArray ? `${type.base}[]` : type.base;
   return `${head}@${loc}`;
 }
 

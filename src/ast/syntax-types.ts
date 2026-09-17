@@ -8,12 +8,13 @@ export type BaseType =
   | "boolean"
   | "string"
   | "null"
-  | "unit";
+  | "void";
 
 /**
  * Type syntax: `BaseType` or `BaseType @ Location` (spec §5.2).
  *
- * `location` is omitted in local-function bodies before elaboration (spec §8.1).
+ * Syntactically optional, but the checker requires it: locations are never
+ * inferred from context (spec §8.1).
  */
 export interface TypeAnnotation extends AstNode {
   readonly kind: "TypeAnnotation";

@@ -67,7 +67,7 @@ let ok: boolean@every <- localOk;
   it("finalizes absent call args to null in nothing before cleanup (spec §10.2)", () => {
     const bob = pipeline(
       `
-function add@alice(a: integer, b: integer): integer { return a + b; }
+function add@alice(a: integer@alice, b: integer@alice): integer@alice { return a + b; }
 let x: integer@alice = add(1@alice, 2@alice);
 `,
       "bob",
@@ -78,7 +78,7 @@ let x: integer@alice = add(1@alice, 2@alice);
   it("removes bob output after cleanup when top level calls alice (spec §10.2, §13.9)", () => {
     const result = compileSource(
       `
-function add@alice(a: integer) {
+function add@alice(a: integer@alice) {
   return a;
 }
 add(10@alice);
@@ -93,9 +93,9 @@ add(10@alice);
     assert.match(alice!, /add\(10\);/);
   });
 
-  it("maps unit to void in functions", () => {
+  it("maps void to void in functions", () => {
     const code = pipeline(
-      `function f@every(): unit@every { return; }`,
+      `function f(): void { return; }`,
       "alice",
     );
     assert.match(code, /function f\(\): void/);
@@ -103,7 +103,7 @@ add(10@alice);
 
   it("emits function with inferred return type through EPP (spec §7.14.4)", () => {
     const code = pipeline(
-      `function add@alice(a: integer, b: integer) {
+      `function add@alice(a: integer@alice, b: integer@alice) {
   return a + b;
 }`,
       "alice",
@@ -179,9 +179,9 @@ let ys: float[]@alice <- xs;
   it("emits average use case with localized array argument", () => {
     const alice = pipeline(
       `
-function average@alice(arr: float[]): float {
-  let sum = 0.0;
-  for (let i = 0; i < length(arr); i = i + 1) {
+function average@alice(arr: float[]@alice): float@alice {
+  let sum = 0.0@alice;
+  for (let i = 0@alice; i < length(arr); i = i + 1@alice) {
     sum = sum + arr[i];
   }
   return sum / length(arr);

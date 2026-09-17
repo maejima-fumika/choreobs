@@ -31,7 +31,7 @@ export const TokenKind = {
   Float: "Float",
   Boolean: "Boolean",
   String: "String",
-  Unit: "Unit",
+  Void: "Void",
 
   // Keywords — reserved but unsupported in v0 (spec §4.4)
   Break: "Break",

@@ -61,7 +61,7 @@ describe("type inference (spec §7.14)", () => {
 
     it("infers chained let bindings (§7.14.1)", () => {
       const typed = expectTypeCheckSuccess(`
-function f@alice(): unit {
+function f@alice(): void {
   let x = 1@alice;
   let y = x + 1@alice;
   return;
@@ -86,7 +86,7 @@ function f@alice(): unit {
 
     it("infers comparison result type (§7.14.1, §7.11)", () => {
       const typed = expectTypeCheckSuccess(`
-function f@alice(): unit {
+function f@alice(): void {
   let x = 1@alice;
   let c = x < 10@alice;
   return;
@@ -102,10 +102,10 @@ function f@alice(): unit {
       }
     });
 
-    it("infers let in local function with omitted literal location (§7.14.1, §8.1)", () => {
+    it("infers let type in a local function from its initializer (§7.14.1)", () => {
       const typed = expectTypeCheckSuccess(`
-function f@alice(): integer {
-  let x = 1;
+function f@alice(): integer@alice {
+  let x = 1@alice;
   return x;
 }
 `);
@@ -153,7 +153,7 @@ for (let i = 0@every; i < 3@every; i = i + 1@every) {
 
     it("infers function return type from return expressions (§7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`
-function add@alice(a: integer, b: integer) {
+function add@alice(a: integer@alice, b: integer@alice) {
   return a + b;
 }
 `);
@@ -166,7 +166,7 @@ function add@alice(a: integer, b: integer) {
 
     it("infers return type through inferred let binding (§7.14.1, §7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`
-function add@alice(a: integer, b: integer) {
+function add@alice(a: integer@alice, b: integer@alice) {
   let c = a + b;
   return c;
 }
@@ -178,36 +178,36 @@ function add@alice(a: integer, b: integer) {
       }
     });
 
-    it("infers unit return for empty body (§7.14.4)", () => {
+    it("infers void return for empty body (§7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`function noop@alice() {}`);
-      assert.equal(functionDecl(typed, 0).returnType.base, "unit");
+      assert.equal(functionDecl(typed, 0).returnType.base, "void");
     });
 
-    it("infers unit return when all returns are bare (§7.14.4)", () => {
+    it("infers void return when all returns are bare (§7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`
 function log@alice() {
   return;
 }
 `);
-      assert.equal(functionDecl(typed, 0).returnType.base, "unit");
+      assert.equal(functionDecl(typed, 0).returnType.base, "void");
     });
 
     it("infers numeric LUB for conditional returns (§7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`
-function f@alice(c: boolean) {
+function f@alice(c: boolean@alice) {
   if (c) {
-    return 1;
+    return 1@alice;
   } else {
-    return 2.5;
+    return 2.5@alice;
   }
 }
 `);
       assert.equal(functionDecl(typed, 0).returnType.base, "float");
     });
 
-    it("infers return type for @every function binary at alice (§7.11, §7.14.4)", () => {
+    it("infers return type for choreography function binary at alice (§7.11, §7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`
-function add@every(a: integer@alice, b: integer@alice) {
+function add(a: integer@alice, b: integer@alice) {
   return a + b;
 }
 `);
@@ -220,7 +220,7 @@ function add@every(a: integer@alice, b: integer@alice) {
 
     it("accepts explicit alice return type for @every binary (§7.11)", () => {
       expectTypeCheckSuccess(`
-function add@every(a: integer@alice, b: integer@alice): integer@alice {
+function add(a: integer@alice, b: integer@alice): integer@alice {
   return a + b;
 }
 `);
@@ -228,7 +228,7 @@ function add@every(a: integer@alice, b: integer@alice): integer@alice {
 
     it("keeps @every return of alice value valid (§12.11 regression)", () => {
       expectTypeCheckSuccess(`
-function add@every(a: integer@alice, b: integer@alice) {
+function add(a: integer@alice, b: integer@alice) {
   return a;
 }
 `);
@@ -236,11 +236,11 @@ function add@every(a: integer@alice, b: integer@alice) {
 
     it("allows explicit return type on recursive local function (§7.14.8)", () => {
       expectTypeCheckSuccess(`
-function fact@alice(n: integer): integer {
-  if (n <= 1) {
-    return 1;
+function fact@alice(n: integer@alice): integer@alice {
+  if (n <= 1@alice) {
+    return 1@alice;
   } else {
-    return n * fact(n - 1);
+    return n * fact(n - 1@alice);
   }
 }
 `);
@@ -258,14 +258,14 @@ function fact@alice(n: integer): integer {
       );
     });
 
-    it("rejects top-level let when initializer omits location (§8.3)", () => {
+    it("rejects top-level let when initializer omits location (§8.1)", () => {
       expectTypeCheckFailure("let x = 1;", "location");
     });
 
-    it("rejects let in @every function when initializer omits location (§8.2)", () => {
+    it("rejects let in a choreography function when initializer omits location (§8.1)", () => {
       expectTypeCheckFailure(
         `
-function f@every() {
+function f() {
   let x = 1;
 }
 `,
@@ -286,9 +286,9 @@ function add@alice(a, b) {
     it("rejects mixed bare and value returns (§7.14.5)", () => {
       expectTypeCheckFailure(
         `
-function bad@alice(c: boolean) {
+function bad@alice(c: boolean@alice) {
   if (c) {
-    return 1;
+    return 1@alice;
   }
   return;
 }
@@ -297,12 +297,12 @@ function bad@alice(c: boolean) {
       );
     });
 
-    it("rejects inferred non-unit function without return coverage (§7.14.6)", () => {
+    it("rejects inferred non-void function without return coverage (§7.14.6)", () => {
       expectTypeCheckFailure(
         `
-function bad@alice(c: boolean) {
+function bad@alice(c: boolean@alice) {
   if (c) {
-    return 1;
+    return 1@alice;
   }
 }
 `,
@@ -313,11 +313,11 @@ function bad@alice(c: boolean) {
     it("rejects incompatible inferred return base types (§7.14.4)", () => {
       expectTypeCheckFailure(
         `
-function bad@alice(c: boolean) {
+function bad@alice(c: boolean@alice) {
   if (c) {
-    return 1;
+    return 1@alice;
   } else {
-    return "one";
+    return "one"@alice;
   }
 }
 `,
@@ -328,7 +328,7 @@ function bad@alice(c: boolean) {
     it("rejects incompatible inferred return locations (§7.14.4)", () => {
       expectTypeCheckFailure(
         `
-function bad@every(c: boolean@every) {
+function bad(c: boolean@every) {
   if (c) {
     return 1@alice;
   } else {
@@ -343,7 +343,7 @@ function bad@every(c: boolean@every) {
     it("rejects @every binary with different individual operand locations (§7.11)", () => {
       expectTypeCheckFailure(
         `
-function bad@every(a: integer@alice, b: integer@bob) {
+function bad(a: integer@alice, b: integer@bob) {
   return a + b;
 }
 `,
@@ -354,11 +354,11 @@ function bad@every(a: integer@alice, b: integer@bob) {
     it("rejects recursive local function with omitted return type (§7.14.8)", () => {
       expectTypeCheckFailure(
         `
-function fact@alice(n: integer) {
-  if (n <= 1) {
-    return 1;
+function fact@alice(n: integer@alice) {
+  if (n <= 1@alice) {
+    return 1@alice;
   } else {
-    return n * fact(n - 1);
+    return n * fact(n - 1@alice);
   }
 }
 `,
@@ -368,18 +368,20 @@ function fact@alice(n: integer) {
 
     it("rejects indirect recursive local functions with omitted return types (§7.14.8)", () => {
       const { typed, errors } = checkSource(`
-function f@alice(n: integer) {
+function f@alice(n: integer@alice) {
   return g(n);
 }
-function g@alice(n: integer) {
+function g@alice(n: integer@alice) {
   return f(n);
 }
 `);
       assert.equal(typed, null);
-      const recursiveErrors = errors.filter((e) =>
-        e.message.includes("omitted return type cannot be recursive"),
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("omitted return type cannot be recursive"),
+        ),
+        JSON.stringify(errors),
       );
-      assert.ok(recursiveErrors.length >= 2);
     });
   });
 

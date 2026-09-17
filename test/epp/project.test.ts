@@ -120,7 +120,7 @@ let ok: boolean@every <- localOk;
 
   it("omits local functions at other endpoints (spec §12.11)", () => {
     const source = `
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
   return a + b;
 }
 `;
@@ -130,9 +130,9 @@ function add@alice(a: integer, b: integer): integer {
     assert.equal(bob.functions.length, 0);
   });
 
-  it("projects @every functions with absent parameters (spec §12.11)", () => {
+  it("projects choreography functions with absent parameters (spec §12.11)", () => {
     const source = `
-function foo@every(a: integer@alice, b: integer@bob): integer@alice {
+function foo(a: integer@alice, b: integer@bob): integer@alice {
   return a;
 }
 `;

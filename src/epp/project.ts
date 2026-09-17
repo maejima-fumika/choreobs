@@ -114,10 +114,10 @@ class Projector {
   }
 
   private shouldEmitFunction(decl: FunctionDeclaration): boolean {
-    if (decl.at.kind === "every") {
+    if (decl.at === undefined) {
       return true;
     }
-    return decl.at.name === this.endpoint;
+    return decl.at.kind === "individual" && decl.at.name === this.endpoint;
   }
 
   private projectTopLevelStatement(
@@ -704,6 +704,10 @@ class Projector {
   }
 
   private projectType(type: LocatedType): ProjectedType {
+    // `void` holds no value, so there is nothing that could be absent here.
+    if (type.base === "void" && type.isArray !== true) {
+      return { kind: "PresentType", base: "void" };
+    }
     if (!this.residesHere(type.location)) {
       return { kind: "AbsentType" };
     }
@@ -713,7 +717,7 @@ class Projector {
         : type.base === "float"
           ? "float[]"
           : "boolean[]")
-      : type.base === "unit"
+      : type.base === "void"
         ? "void"
         : type.base;
     return { kind: "PresentType", base };

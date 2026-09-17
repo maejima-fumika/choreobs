@@ -1,9 +1,63 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { EVERY_CONTEXT } from "../../src/ast/context.js";
+import { CHOREOGRAPHY_CONTEXT } from "../../src/ast/context.js";
 import { parse } from "../../src/parser/index.js";
 
 describe("ChoreoBS parser", () => {
+  describe("parsing stops at the first syntax error", () => {
+    it("reports one error for a malformed parameter list", () => {
+      // The old recovery resumed at the next Identifier, which landed *inside*
+      // the broken declaration and produced three further bogus errors.
+      const { program, errors } = parse(`function foo(a: integer@mcu {
+    return a;
+}`);
+      assert.equal(program, null);
+      assert.equal(errors.length, 1, JSON.stringify(errors));
+      assert.ok(errors[0]!.message.includes("expected ')' after parameters"));
+    });
+
+    it("reports one error for a malformed statement inside a block", () => {
+      const { errors } = parse(`function f@alice(): void {
+    let x integer@alice = 1@alice;
+    return;
+}`);
+      assert.equal(errors.length, 1, JSON.stringify(errors));
+    });
+
+    it("does not hide a later syntax error once the earlier one is fixed", () => {
+      const { errors } = parse(`function f@alice(): void {
+    return;
+}
+function g@alice(: void {
+    return;
+}`);
+      assert.equal(errors.length, 1, JSON.stringify(errors));
+      assert.ok(errors[0]!.span.start > 20, "error should be in the second function");
+    });
+  });
+
+  describe("lexical errors stop before parsing", () => {
+    it("reports every independent lexical error and no parse cascade", () => {
+      // `==` and `!=` are unrelated mistakes on different lines, so both are
+      // worth reporting; the parser must not add noise from the lexer's
+      // recovery tokens.
+      const { program, errors } = parse(`let a: integer@alice = 1@alice;
+let b: boolean@alice = a == 1@alice;
+let c: boolean@alice = a != 1@alice;`);
+      assert.equal(program, null);
+      assert.equal(errors.length, 2, JSON.stringify(errors));
+      assert.ok(errors[0]!.message.includes("'=='"));
+      assert.ok(errors[1]!.message.includes("'!='"));
+    });
+
+    it("reports lexical errors in source order", () => {
+      const { errors } = parse(`let a: boolean@alice = 1@alice == 2@alice;
+let b: boolean@alice = 1@alice != 2@alice;`);
+      assert.ok(errors.length >= 2);
+      assert.ok(errors[0]!.span.start < errors[1]!.span.start);
+    });
+  });
+
   it("parses direct communication at top level", () => {
     const source = `let x: integer@alice = 1@alice;
 let y: integer@bob <- x;`;
@@ -15,7 +69,7 @@ let y: integer@bob <- x;`;
     const first = program.items[0];
     assert.equal(first?.kind, "TopLevelStatement");
     if (first?.kind === "TopLevelStatement") {
-      assert.deepEqual(first.context, EVERY_CONTEXT);
+      assert.deepEqual(first.context, CHOREOGRAPHY_CONTEXT);
       assert.equal(first.statement.kind, "LetStatement");
     }
 
@@ -26,7 +80,7 @@ let y: integer@bob <- x;`;
   });
 
   it("parses a local function with omitted location annotations", () => {
-    const source = `function add@alice(a: integer, b: integer): integer {
+    const source = `function add@alice(a: integer@alice, b: integer@alice): integer@alice {
   return a + b;
 }`;
     const { program, errors } = parse(source);
@@ -42,16 +96,17 @@ let y: integer@bob <- x;`;
     }
   });
 
-  it("parses an @every function", () => {
-    const source = `function main@every(): unit@every {
+  it("parses a choreography function (no location annotation)", () => {
+    const source = `function main(): void {
   return;
 }`;
     const { program, errors } = parse(source);
     assert.equal(errors.length, 0);
     const fn = program?.items[0];
+    assert.equal(fn?.kind, "FunctionDeclaration");
     if (fn?.kind === "FunctionDeclaration") {
-      assert.equal(fn.at.kind, "every");
-      assert.equal(fn.context.kind, "every");
+      assert.equal(fn.at, undefined);
+      assert.equal(fn.context.kind, "choreography");
       const ret = fn.body.statements[0];
       assert.equal(ret?.kind, "ReturnStatement");
       if (ret?.kind === "ReturnStatement") {
@@ -168,7 +223,7 @@ let y: integer@bob <- x;`;
   });
 
   it("parses function without return type annotation (spec §5.3, §7.14.4)", () => {
-    const { program, errors } = parse(`function f@alice(a: integer) {
+    const { program, errors } = parse(`function f@alice(a: integer@alice) {
   return a;
 }`);
     assert.equal(errors.length, 0);

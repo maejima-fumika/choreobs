@@ -52,9 +52,9 @@ let b: integer@bob = 2@bob;
     });
   });
 
-  describe("§15.4 @every function — nothing(choose(c)) regression", () => {
+  describe("§15.4 choreography function — nothing(choose(c)) regression", () => {
     const chooseSource = `
-function choose@every(c: boolean@every): integer@alice {
+function choose(c: boolean@every): integer@alice {
   if (c) {
     return 1@alice;
   } else {

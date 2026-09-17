@@ -34,7 +34,7 @@ import type { ExecutionContext } from "./context.js";
 import type { Location } from "./location.js";
 
 /**
- * Fully resolved located type `T@L` after elaboration and type-checking (spec §7.2).
+ * Fully resolved located type `T@L` after type-checking (spec §7.2).
  * Attached to typed AST nodes for EPP and diagnostics.
  */
 export interface LocatedType {
@@ -252,7 +252,6 @@ export interface TypedParenthesizedExpression {
 /** Resolved function for calls and EPP (spec §7.12, §10, §12.11). */
 export interface FunctionSymbol {
   readonly name: string;
-  readonly at: Location;
   readonly context: ExecutionContext;
   readonly params: readonly LocatedType[];
   readonly returnType: LocatedType;

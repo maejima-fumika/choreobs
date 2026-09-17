@@ -8,7 +8,7 @@ export type {
   LocationAnnotation,
 } from "./location.js";
 export {
-  EVERY_CONTEXT,
+  CHOREOGRAPHY_CONTEXT,
   executionContextFromLocation,
 } from "./context.js";
 export type { ExecutionContext } from "./context.js";

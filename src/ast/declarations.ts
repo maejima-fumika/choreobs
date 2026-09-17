@@ -11,8 +11,16 @@ import type { Block } from "./statements.js";
 export interface FunctionDeclaration extends AstNode {
   readonly kind: "FunctionDeclaration";
   readonly name: string;
-  /** Location after `@` on the function name. */
-  readonly at: Location;
+  /**
+   * Location written after `@` on the function name: the one endpoint that runs
+   * the function, which makes it a local function. A choreography function runs
+   * at every endpoint, so no single location names it and this is absent
+   * (spec §10.1).
+   *
+   * `every` can be written here syntactically, but the checker rejects it
+   * (spec §16.39).
+   */
+  readonly at?: Location;
   /**
    * Execution context of the function body (derived from {@link at}).
    * Stored explicitly so consumers need not re-derive it for EPP and checking.

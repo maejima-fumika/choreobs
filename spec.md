@@ -271,7 +271,7 @@ integer
 float
 boolean
 string
-unit
+void
 ```
 
 The following words may also be treated as reserved in v0:
@@ -408,7 +408,7 @@ TopLevelItem ::= FunctionDeclaration
                | Statement
 ```
 
-Top-level statements are executed in an implicit `@every` context.
+Top-level statements are executed in an implicit choreography context.
 
 ### 5.2 Types
 
@@ -427,7 +427,7 @@ BaseType ::= "integer"
            | "boolean"
            | "string"
            | "null"
-           | "unit"
+           | "void"
 ```
 
 ```ebnf
@@ -448,6 +448,9 @@ LocationAnnotation ::= "@" Location
 Location ::= Identifier | "every"
 ```
 
+`void` is the one base type that takes no `LocationAnnotation`, and it may only
+appear as a function return type (spec §7.3, §16.40).
+
 Arrays are mutable reference values. ChoreoBS Core v0 with the mutable array extension supports only one-dimensional arrays whose element type is `integer`, `float`, or `boolean`.
 
 The following array types are not supported:
@@ -455,7 +458,7 @@ The following array types are not supported:
 ```text
 string[]
 null[]
-unit[]
+void[]
 integer[][]
 float[][]
 boolean[][]
@@ -465,12 +468,17 @@ boolean[][]
 
 ```ebnf
 FunctionDeclaration ::=
-  "function" Identifier "@" Location "(" ParameterList? ")" FunctionReturnType? Block
+  "function" Identifier ("@" Location)? "(" ParameterList? ")" FunctionReturnType? Block
 ```
 
 ```ebnf
 FunctionReturnType ::= ":" Type
 ```
+
+The two forms of the production are the two kinds of function (spec §10.1): a
+declaration carrying a location is a local function, and one carrying none is a
+choreography function. A function location must be an individual location
+(spec §16.39).
 
 The return type annotation may be omitted. When omitted, the return type is inferred according to Section 7.14.
 
@@ -485,19 +493,19 @@ Parameter ::= Identifier ":" Type
 Examples:
 
 ```ts
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
 }
 ```
 
 ```ts
-function addInferred@alice(a: integer, b: integer) {
+function addInferred@alice(a: integer@alice, b: integer@alice) {
     return a + b;
 }
 ```
 
 ```ts
-function main@every(x: integer@alice): unit@every {
+function main(x: integer@alice): void {
     return;
 }
 ```
@@ -650,7 +658,7 @@ for (k in obj) {
 ReturnStatement ::= "return" Expression? ";"
 ```
 
-`return;` is allowed only when the function return type is `unit@L`, or when an omitted function return type is inferred as `unit@L`.
+`return;` is allowed only when the function return type is `void`, or when an omitted function return type is inferred as `void`.
 
 ### 5.13 Expression Statement
 
@@ -783,7 +791,7 @@ is elaborated as:
 [1@alice, 2@alice, 3@alice]@alice
 ```
 
-In top-level and `@every` contexts, an array literal without an explicit location annotation must not contain unlocated literal elements. The expected type of a `let` declaration, assignment, function argument, or return does not provide a location for unlocated array literal elements.
+In top-level and choreography contexts, an array literal without an explicit location annotation must not contain unlocated literal elements. The expected type of a `let` declaration, assignment, function argument, or return does not provide a location for unlocated array literal elements.
 
 Allowed at top level:
 
@@ -797,7 +805,7 @@ Disallowed at top level:
 let arr: integer[]@alice = [1, 3, 5];
 ```
 
-Inside a local function declared at individual location `P`, omitted locations in array literals are elaborated to `@P`, following the ordinary local function location omission rule.
+An array literal always needs its own location annotation; a local function's location does not supply one (spec §8.1).
 
 ***
 
@@ -817,28 +825,26 @@ Location names may be the same as variable names or function names.
 Example:
 
 ```ts
-function alice@alice(): unit {
+function alice@alice(): void {
     return;
 }
 ```
-
-However, the same variable name must not be defined more than once in the same scope.
 
 ### 6.2 Function Names
 
 * Function overloading is not supported in v0.
 * The same function name must not be defined more than once.
-* Functions with the same name but different locations are also disallowed.
+* Function names are global: two functions may not share a name, whatever their locations, and a choreography function may not share a name with a local one.
 * `length` and `push` are compiler-known builtin function names and cannot be used as user-defined function names.
 
 Disallowed:
 
 ```ts
-function f@alice(): unit {
+function f@alice(): void {
     return;
 }
 
-function f@bob(): unit {
+function f@bob(): void {
     return;
 }
 ```
@@ -850,8 +856,8 @@ Function declarations are visible throughout the whole file.
 ```ts
 let x: integer@alice = f();
 
-function f@alice(): integer {
-    return 1;
+function f@alice(): integer@alice {
+    return 1@alice;
 }
 ```
 
@@ -869,9 +875,29 @@ if (c) {
 
 `x` is not visible outside the `if` block.
 
+The same variable name must not be defined more than once in the same scope.
+
+Disallowed:
+
+```ts
+let x: integer@alice = 1@alice;
+let x: integer@alice = 2@alice;
+```
+
+A declaration in an inner block may shadow one from an outer block, and a `let`
+in a function body may shadow a parameter.
+
+```ts
+let x: integer@alice = 1@alice;
+
+if (c) {
+    let x: integer@alice = 2@alice;   // shadows the outer `x`
+}
+```
+
 ### 6.5 Top-Level Statements
 
-Non-function top-level statements are treated as the body of an implicit `@every` context.
+Non-function top-level statements are treated as the body of an implicit choreography context.
 
 Example:
 
@@ -883,7 +909,7 @@ let y: integer@bob <- x;
 Conceptually, this is similar to:
 
 ```ts
-function __top@every(): unit@every {
+function __top(): void {
     let x: integer@alice = 1@alice;
     let y: integer@bob <- x;
 }
@@ -902,7 +928,7 @@ Disallowed:
 ```ts
 let x: integer@alice = 1@alice;
 
-function f@alice(): integer {
+function f@alice(): integer@alice {
     return x;
 }
 ```
@@ -921,7 +947,7 @@ float
 boolean
 string
 null
-unit
+void
 ```
 
 `any` and `undefined` do not exist in v0.
@@ -955,7 +981,7 @@ The following array types are not supported:
 ```text
 string[]
 null[]
-unit[]
+void[]
 integer[][]
 float[][]
 boolean[][]
@@ -996,19 +1022,31 @@ boolean@every
 string@sensor
 ```
 
-### 7.3 Unit
+### 7.3 Void
 
-`unit` is used as the return type of functions that do not return a value.
+`void` is the return type of a function that does not return a value.
 
-During BlueScript code generation, `unit` is converted to `void`.
+Unlike every other type, **`void` has no location**. A location says where a
+value is; `void` has no value, so there is nothing to place. Writing one is an
+error (spec §16.40):
 
 ```ts
-function f@alice(): unit {
+function f@alice(): void { ... }         // valid
+function f@alice(): void@alice { ... }   // invalid
+```
+
+For the same reason `void` is not a value type: it may appear only as a function
+return type, never as a variable type, a parameter type, a transfer destination,
+or an array element type (spec §16.40).
+
+```ts
+function f@alice(): void {
     return;
 }
 ```
 
-After EPP:
+After EPP — a `void` return type is kept at every endpoint, because there is no
+value that could be absent at one of them (spec §12.2):
 
 ```ts
 function f(): void {
@@ -1016,13 +1054,16 @@ function f(): void {
 }
 ```
 
+`void` is distinct from `null` (spec §7.4), which is an ordinary value type and
+does carry a location.
+
 ### 7.4 Null
 
 `null` is a singleton type.
 
 ```text
 null is the only value of type null.
-null is not a subtype of integer, float, boolean, string, or unit.
+null is not a subtype of integer, float, boolean, string, or void.
 ```
 
 Allowed:
@@ -1084,7 +1125,7 @@ location rule used by assignment (§7.7), function arguments (§7.12), and retur
 values (§7.13). It also subsumes the local function discipline: inside
 `function f@P` the required location is `P`, so a value at `every` or at another
 individual location is rejected by the same rule. The additional restrictions
-specific to local function declarations are stated in §8.1.1.
+specific to local function declarations are stated in §8.2.
 
 #### Location Residency (endpoint projection)
 
@@ -1286,9 +1327,9 @@ cond : boolean@L
 match(L, C)
 ```
 
-#### `@every` Context
+#### Choreography Context
 
-In an `@every` function or top-level context, the condition must be `boolean@every`.
+In a choreography function or at top level, the condition must be `boolean@every`. The same applies to `while` and `for` conditions (spec §7.10).
 
 ```ts
 let c: boolean@every = true@every;
@@ -1306,7 +1347,7 @@ A condition of type `boolean@every` is not allowed inside a local function: `eve
 Allowed:
 
 ```cbs
-function f@alice(c: boolean): unit {
+function f@alice(c: boolean@alice): void {
     if (c) {
         return;
     }
@@ -1316,7 +1357,7 @@ function f@alice(c: boolean): unit {
 Disallowed:
 
 ```cbs
-function f@alice(c: boolean@every): unit {
+function f@alice(c: boolean@every): void {
     if (c) {
         return;
     }
@@ -1327,7 +1368,7 @@ function f@alice(c: boolean@every): unit {
 
 The termination conditions of `while` and `for` follow the same rule as `if`.
 
-* In an `@every` context, the condition must be `boolean@every`.
+* In a choreography context, the condition must be `boolean@every`.
 * In a local `@p` context, the condition must be `boolean@p`. `boolean@every` is not allowed inside local functions.
 
 ### 7.11 Binary Operators
@@ -1461,7 +1502,7 @@ Disallowed:
 let bad = [1, true]@alice;
 ```
 
-An empty array literal cannot infer its element type. It is allowed only when checked against an explicit array type and when the array literal has an explicit location annotation, except inside local functions where location omission is allowed.
+An empty array literal cannot infer its element type. It is allowed only when checked against an explicit array type and when the array literal has an explicit location annotation.
 
 Allowed:
 
@@ -1543,7 +1584,7 @@ match(M, L)
 then:
 
 ```text
-push(xs, v) : unit@L
+push(xs, v) : void
 ```
 
 In this rule, `T` must be `integer`, `float`, or `boolean`.
@@ -1566,7 +1607,7 @@ Similarly, a value of type `T[]@every` must not be passed to a function paramete
 Disallowed:
 
 ```ts
-function f@alice(xs: integer[]): unit {
+function f@alice(xs: integer[]@alice): void {
     return;
 }
 let xs: integer[]@every = [1, 2, 3]@every;
@@ -1649,7 +1690,7 @@ For mutable array parameters, array invariance applies. A parameter of type `T[]
 Disallowed:
 
 ```cbs
-function add@alice(a: integer): integer {
+function add@alice(a: integer@alice): integer@alice {
     return a;
 }
 
@@ -1671,13 +1712,13 @@ average(arrAlice);
 ```
 
 A local function parameter explicitly declared as `T@every` is invalid for a
-separate reason, stated in §8.1.1.
+separate reason, stated in §8.2.
 
-#### In an `@every` Context
+#### In a Choreography Context
 
 The following function calls are allowed:
 
-* calls to `@every` functions;
+* calls to choreography functions;
 * calls to local functions.
 
 #### In a Local Context
@@ -1687,7 +1728,7 @@ Inside `function@alice`, only `@alice` local functions may be called.
 The following are disallowed:
 
 * calls to local functions at other endpoints;
-* calls to `@every` functions.
+* calls to choreography functions.
 
 ### 7.13 Return Typing
 
@@ -1703,13 +1744,13 @@ is allowed if the type of `expr` is compatible with the function return type.
 return;
 ```
 
-is allowed only if the function return type is `unit@L`.
+is allowed only if the function return type is `void`.
 
 When a function omits its return type, the return type is inferred according to Section 7.14.
 
 ### 7.14 Type Inference
 
-ChoreoBS Core v0 supports simple, local type inference. This feature does not perform general location inference. It only uses types and locations already determined by literals, identifiers, function signatures, local context elaboration, and expression typing.
+ChoreoBS Core v0 supports simple, local type inference. This feature does not perform general location inference. It only uses types and locations already determined by literals, identifiers, function signatures, and expression typing.
 
 The compiler should elaborate inferred constructs into a fully typed AST before Endpoint Projection.
 
@@ -1742,13 +1783,35 @@ let c = y < 10@alice;     // c : boolean@alice
 let e = true@every;       // e : boolean@every
 ```
 
-A `let` declaration with an explicit type annotation is still checked using the normal assignment typing rule.
+A `let` declaration with a fully explicit type annotation is still checked using the normal assignment typing rule.
 
 ```ts
 let x: float@alice = 1@alice;
 ```
 
 This is valid because `integer <: float`.
+
+#### Partial Annotations
+
+The location may be omitted from the type annotation of an initialized `let`. It
+is then taken from the initializer, while the base type comes from the
+annotation:
+
+```ts
+let a: integer = 3@mcu;   // a : integer@mcu
+let b: float = 3@mcu;     // b : float@mcu   (base from the annotation)
+```
+
+A written location always wins, so a mismatch is still reported:
+
+```ts
+let c: integer@server = 3@mcu;   // invalid (spec §16.7)
+```
+
+This applies to a `for` initializer `let` as well (spec §7.14.2). It does **not**
+apply anywhere there is no initializer to read the location from — function
+parameters and return types still require an explicit location (spec §16.3) —
+nor to a transfer `let` (spec §7.14.3).
 
 #### 7.14.2 For Initializer Let Type Inference
 
@@ -1780,10 +1843,16 @@ Transfer declarations keep the existing syntax:
 let y: integer@bob <- x;
 ```
 
-The type annotation is required. The following remains invalid:
+The type annotation is required, including its location. Unlike an initialized
+`let` (spec §7.14.1), the location is **not** taken from the right-hand side:
+the destination location is the whole point of a transfer, and inferring it from
+the source would make every transfer a no-op local copy.
+
+The following remain invalid:
 
 ```ts
 let y <- x;
+let y: integer <- x;
 ```
 
 #### 7.14.4 Function Return Type Inference
@@ -1798,13 +1867,7 @@ function f@L(params) {
 
 The compiler infers the function return type from `return` statements in the body.
 
-If all returns are bare `return;`, or if there are no return statements, the inferred return type is:
-
-```text
-unit@L
-```
-
-where `L` is the function location.
+If all returns are bare `return;`, or if there are no return statements, the inferred return type is `void`, which carries no location (spec §7.3).
 
 For `return expr;`, the return candidate is the type of `expr`.
 
@@ -1841,11 +1904,11 @@ All other location combinations are invalid.
 Example:
 
 ```ts
-function f@alice(c: boolean) {
+function f@alice(c: boolean@alice) {
     if (c) {
-        return 1;
+        return 1@alice;
     } else {
-        return 2.5;
+        return 2.5@alice;
     }
 }
 ```
@@ -1883,7 +1946,7 @@ function add@alice(a, b) {
 Allowed:
 
 ```ts
-function add@alice(a: integer, b: integer) {
+function add@alice(a: integer@alice, b: integer@alice) {
     return a + b;
 }
 ```
@@ -1896,15 +1959,23 @@ Therefore:
 
 - direct or indirect recursive local functions with omitted return types are compile-time errors;
 - direct or indirect recursive local functions with explicit return types are allowed;
-- `@every` recursion remains unsupported.
+- choreography recursion remains unsupported.
 
 ***
 
-## 8. Location Elaboration Rules
+## 8. Location Annotation Rules
 
-### 8.1 Local Function Context
+### 8.1 Explicit Location Annotations
 
-Inside a local function, location annotations on types and literals may be omitted.
+Every type annotation and every literal must carry its own location annotation,
+except on an initialized `let`, where the location is taken from the initializer
+(spec §7.14.1).
+
+A location is **never** inferred from the surrounding *context*: the enclosing
+function's location does not supply a default. The `let` case is not a context
+rule — the location comes from the declaration's own right-hand side.
+
+Disallowed, in a local function:
 
 ```ts
 function add@alice(a: integer, b: integer): integer {
@@ -1912,7 +1983,7 @@ function add@alice(a: integer, b: integer): integer {
 }
 ```
 
-This is equivalent to:
+Allowed:
 
 ```ts
 function add@alice(
@@ -1923,25 +1994,56 @@ function add@alice(
 }
 ```
 
-This rule also applies when the function return type is omitted and inferred.
+The same rule applies in a choreography function and at top level, which are not
+special cases of it:
 
 ```ts
-function add@alice(a: integer, b: integer) {
-    let c = a + b + 1;
-    return c;
+function f(): void {
+    let x: integer = 1;              // invalid: the literal has no location
+    let y: integer = 1@alice;        // valid: y : integer@alice (§7.14.1)
+    let z: integer@alice = 1@alice;  // valid
 }
 ```
 
-This is elaborated to:
+```ts
+let x = 1;                       // invalid: the literal has no location
+let y: integer = 1;              // invalid: same reason
+let z: integer = 1@alice;        // valid: z : integer@alice
+let w: integer@alice = 1@alice;  // valid
+```
+
+Note that in `let y: integer = 1;` it is the **literal** that is missing its
+location, not the type annotation.
+
+This rule is about the location annotation on a **type or literal**. It does not
+reach a **function declaration** at all. There, the presence of a location
+selects the kind of function — a location declares a local function, no location
+declares a choreography function (spec §10.1) — so neither form is an omission.
+
+This rule governs location annotations only. It does not affect **type**
+inference (§7.14), which is a separate mechanism:
 
 ```ts
-function add@alice(a: integer@alice, b: integer@alice): integer@alice {
-    let c: integer@alice = a + b + 1@alice;
-    return c;
+let x = 1@alice;   // valid: `x : integer@alice` is inferred from the initializer
+```
+
+and a function may still omit its return type entirely, in which case the return
+type — including its location — is inferred from the `return` statements (§7.14.4).
+
+```ts
+function f@alice(a: integer@alice) {   // valid: returns@alice integer@alice
+    return a;
 }
 ```
 
-### 8.1.1 Local Function Strict Location Rule
+Nor does it affect the filling of unlocated literal elements of an array literal
+from that literal's **own** annotation (§5.16), which reads no context:
+
+```ts
+let xs: integer[]@alice = [1, 2, 3]@alice;   // valid
+```
+
+### 8.2 Local Function Strict Location Rule
 
 For a local function declared at an individual location `P`:
 
@@ -1955,35 +2057,18 @@ all parameters, return values, and expressions evaluated in the function body mu
 
 Rules:
 
-- Every parameter type must be located at `P` after location elaboration.
-- If a parameter type omits its location, it is elaborated to `@P`.
+- Every parameter type must be located at `P`.
 - A parameter type explicitly located at another individual location `Q`, where `Q != P`, is a compile-time error.
 - A parameter type explicitly located at `every` is a compile-time error.
-- The explicit or inferred return type of a local function must be located at `P`, except that `unit` with an omitted location is elaborated to `unit@P`.
+- The explicit or inferred return type of a local function must be located at `P`.
 - A return type explicitly or implicitly located at another individual location `Q`, where `Q != P`, is a compile-time error.
 - A return type explicitly or implicitly located at `every` is a compile-time error.
 - Every expression evaluated inside the local function body must have a type located at `P`.
 - Values located at `every` are not allowed inside local function bodies.
 - Values located at another individual location are not allowed inside local function bodies.
-- Transfers are not allowed inside local functions.
+- A transfer inside a local function has the function's own location on both sides, so it is always a local copy (spec §11.4).
 
 Allowed:
-
-```cbs
-function add@bob(a: integer, b: integer): integer {
-    return a + b;
-}
-```
-
-This is elaborated to:
-
-```cbs
-function add@bob(a: integer@bob, b: integer@bob): integer@bob {
-    return a + b;
-}
-```
-
-Also allowed:
 
 ```cbs
 function add@bob(a: integer@bob, b: integer@bob): integer@bob {
@@ -2034,51 +2119,9 @@ function bad@bob(): integer@bob {
 
 This rule is intentionally stricter than ordinary location availability. In particular, `T@every` is not permitted in local function parameters, local function return types, or local function bodies.
 
-### 8.2 `@every` Function Context
+### 8.3 `@every` Literals
 
-Inside an `@every` function, location omission is not allowed.
-
-Disallowed:
-
-```ts
-function f@every(): unit@every {
-    let x: integer = 1;
-}
-```
-
-Allowed:
-
-```ts
-function f@every(): unit@every {
-    let x: integer@alice = 1@alice;
-}
-```
-
-### 8.3 Top-Level Context
-
-Top-level non-function statements are treated as an `@every` context.
-
-Therefore, location omission is not allowed at top level.
-
-Disallowed:
-
-```ts
-let x = 1;
-let y: integer = 1;
-```
-
-Allowed:
-
-```ts
-let x = 1@alice;
-let y: integer@alice = 1@alice;
-```
-
-Here `x` omits its type annotation, but the literal location is explicit, so `x` is inferred as `integer@alice`.
-
-### 8.4 `@every` Literals
-
-`@every` literals are allowed in choreographic contexts.
+`@every` literals are allowed in choreography contexts.
 
 ```ts
 true@every
@@ -2106,7 +2149,7 @@ return x;
 Not required after compound constructs:
 
 ```ts
-function f@alice(): unit {
+function f@alice(): void {
     return;
 }
 
@@ -2217,12 +2260,22 @@ The builtin `push(xs, v)` may appear only as an expression statement. It must no
 
 ### 10.1 Function Kinds
 
-ChoreoBS has two kinds of functions.
+ChoreoBS has two kinds of functions, distinguished by how many endpoints run
+them.
 
-#### Choreographic Function
+A local function runs at the single endpoint named by its location. A
+choreography function runs at **every** endpoint: each endpoint executes its own
+projection of it (spec §12.11). The two are separate kinds, not one derived from
+the other — a choreography function is not a local function with something left
+out. Since it is not the function of any one endpoint, no single location names
+it, and its declaration carries none.
+
+#### Choreography Function
+
+Declared with no location:
 
 ```ts
-function f@every(...): T@L {
+function f(...): T@L {
     ...
 }
 ```
@@ -2230,7 +2283,7 @@ function f@every(...): T@L {
 or, with inferred return type:
 
 ```ts
-function f@every(...) {
+function f(...) {
     ...
 }
 ```
@@ -2238,14 +2291,19 @@ function f@every(...) {
 - Describes choreography.
 - May contain transfers.
 - Is projected to all endpoints.
-- Does not allow location omission.
+- May call choreography functions and local functions (spec §10.2).
 - Allows return type inference.
-- Recursion is not supported in v0.
+- Recursion, direct or mutual, is not supported in v0 (spec §10.4).
+
+A location on a function declaration names the one endpoint that runs the
+function, so it always declares a local function and must be an individual
+location; `@every` is not a function location (spec §16.39). `@every` remains
+available as a value location, e.g. `boolean@every`.
 
 #### Local Function
 
 ```ts
-function f@alice(...): T {
+function f@alice(...): T@alice {
     ...
 }
 ```
@@ -2258,19 +2316,20 @@ function f@alice(...) {
 }
 ```
 
-- Runs on a single endpoint.
-- Must not contain transfers.
+- Runs on a single endpoint; the location must be an individual location.
 - Is generated only for the corresponding endpoint.
-- Allows location omission.
+- May call only local functions at the same endpoint (spec §10.3).
+- May contain transfers, but both sides are necessarily at the function's own
+  location, so a transfer there is always a local copy (spec §11.4).
 - Allows return type inference.
 - Recursion is allowed only when the recursive function has an explicit return type.
 
-### 10.2 Calling Local Functions from an `@every` Context
+### 10.2 Calling Local Functions from a Choreography Context
 
-An `@every` context may call local functions.
+A choreography context may call local functions. At endpoints where the function's location does not match, the call projects to `nothing(...)` and is removed by cleanup (spec §13.9).
 
 ```ts
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
 }
 
@@ -2303,8 +2362,8 @@ An argument must already be located at the parameter's location. A value at
 `@every` — a mutable array or otherwise — must be localized with `<-` first.
 
 ```ts
-function average@alice(arr: float[]): float {
-    return 0.0;
+function average@alice(arr: float[]@alice): float@alice {
+    return 0.0@alice;
 }
 
 let arr: float[]@every = [1.1, 2.2]@every;
@@ -2319,11 +2378,11 @@ Inside `function@alice`, only `@alice` local functions may be called.
 Allowed:
 
 ```ts
-function f@alice(): integer {
-    return 1;
+function f@alice(): integer@alice {
+    return 1@alice;
 }
 
-function g@alice(): integer {
+function g@alice(): integer@alice {
     return f();
 }
 ```
@@ -2331,11 +2390,11 @@ function g@alice(): integer {
 Disallowed:
 
 ```ts
-function f@bob(): integer {
-    return 1;
+function f@bob(): integer@bob {
+    return 1@bob;
 }
 
-function g@alice(): integer {
+function g@alice(): integer@alice {
     return f();
 }
 ```
@@ -2343,11 +2402,11 @@ function g@alice(): integer {
 Disallowed:
 
 ```ts
-function h@every(): unit@every {
+function h(): void {
     return;
 }
 
-function g@alice(): unit {
+function g@alice(): void {
     h();
 }
 ```
@@ -2355,17 +2414,17 @@ function g@alice(): unit {
 ### 10.4 Recursion
 
 * Local function recursion is allowed.
-* `@every` function recursion is not supported in v0.
+* choreography function recursion is not supported in v0, whether direct or mutual;
 * ChoreoBS v0 does not guarantee termination of local recursion.
 
 Allowed:
 
 ```ts
-function fact@alice(n: integer): integer {
-    if (n <= 1) {
-        return 1;
+function fact@alice(n: integer@alice): integer@alice {
+    if (n <= 1@alice) {
+        return 1@alice;
     } else {
-        return n * fact(n - 1);
+        return n * fact(n - 1@alice);
     }
 }
 ```
@@ -2373,11 +2432,11 @@ function fact@alice(n: integer): integer {
 Disallowed:
 
 ```ts
-function fact@alice(n: integer) {
-    if (n <= 1) {
-        return 1;
+function fact@alice(n: integer@alice) {
+    if (n <= 1@alice) {
+        return 1@alice;
     } else {
-        return n * fact(n - 1);
+        return n * fact(n - 1@alice);
     }
 }
 ```
@@ -2385,7 +2444,7 @@ function fact@alice(n: integer) {
 Disallowed:
 
 ```ts
-function loop@every(n: integer@every): unit@every {
+function loop(n: integer@every): void {
     if (n > 0@every) {
         loop(n - 1@every);
     }
@@ -2588,7 +2647,7 @@ Before EPP, all inferred types must be elaborated into explicit located types in
 
 ### 12.2 Type Projection
 
-Projection of type `T@L` to endpoint `P` is:
+Projection of a located type `T@L` to endpoint `P` is:
 
 ```text
 if residesAt(L, P):
@@ -2597,7 +2656,13 @@ else:
     absent
 ```
 
-`unit` is mapped to `void` in BlueScript.
+`void` has no location (spec §7.3) and is never absent: it projects to `void` at
+every endpoint. A `void` return type therefore keeps its signature everywhere,
+which is what makes the projected `return;` well formed.
+
+```text
+void projected to any endpoint -> void
+```
 
 Examples:
 
@@ -2605,7 +2670,7 @@ Examples:
 integer@alice projected to alice -> integer
 integer@alice projected to bob   -> absent
 integer@every projected to bob   -> integer
-unit@alice projected to alice    -> void
+void projected to bob            -> void
 ```
 
 ### 12.3 Expression Projection
@@ -2820,7 +2885,7 @@ For array element assignment `xs[i] = v;`, projection is generated only at endpo
 #### Local Function
 
 ```ts
-function add@alice(a: integer, b: integer) {
+function add@alice(a: integer@alice, b: integer@alice) {
     return a + b;
 }
 ```
@@ -2847,10 +2912,10 @@ EPP at `bob`:
 // not generated
 ```
 
-#### `@every` Function
+#### Choreography Function
 
 ```ts
-function foo@every(a: integer@alice, b: integer@bob): integer@alice {
+function foo(a: integer@alice, b: integer@bob): integer@alice {
     return a;
 }
 ```
@@ -3040,7 +3105,6 @@ ChoreoBS float   -> BlueScript float
 ChoreoBS boolean -> BlueScript boolean
 ChoreoBS string  -> BlueScript string
 ChoreoBS null    -> BlueScript null
-ChoreoBS unit    -> BlueScript void
 ChoreoBS integer[] -> BlueScript integer[]
 ChoreoBS float[]   -> BlueScript float[]
 ChoreoBS boolean[] -> BlueScript boolean[]
@@ -3090,7 +3154,7 @@ EPP at `alice`:
 function add(...)
 ```
 
-### 13.4 Output File Naming
+### 13.4@alice Output File Naming
 
 Input:
 
@@ -3102,7 +3166,7 @@ endpoints:
 
 ```json
 {
-  "endpoints": ["alice", "bob"]
+  "endpoints"@alice: ["alice"@alice, "bob"@alice]
 }
 ```
 
@@ -3117,9 +3181,9 @@ index_bob.bs
 
 A local function is emitted only for the corresponding endpoint.
 
-### 13.6 `@every` Functions
+### 13.6 Choreography Functions
 
-An `@every` function is emitted for all endpoints.
+A choreography function is emitted for all endpoints.
 
 ### 13.7 Absent Finalization
 
@@ -3515,7 +3579,7 @@ Note: ChoreoBS Core v0 cleanup does not remove empty `if` statements. Removing e
 Input:
 
 ```ts
-function add@alice(a: integer, b: integer): integer {
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
 }
 
@@ -3546,12 +3610,12 @@ EPP at `bob` after cleanup:
 
 ***
 
-### 15.4 `@every` Function
+### 15.4 Choreography Function
 
 Input:
 
 ```ts
-function choose@every(c: boolean@every): integer@alice {
+function choose(c: boolean@every): integer@alice {
     if (c) {
         return 1@alice;
     } else {
@@ -3774,11 +3838,11 @@ Ordinary function calls are not removed by the v0 cleanup pass.
 Input:
 
 ```ts
-function f@alice(c: boolean) {
+function f@alice(c: boolean@alice) {
     if (c) {
-        return 1;
+        return 1@alice;
     } else {
-        return 2.5;
+        return 2.5@alice;
     }
 }
 ```
@@ -3851,18 +3915,40 @@ This is an error if `carol` is not listed in `choreobs.json`.
 
 This is an error.
 
-### 16.3 Location Omission in an `@every` Context
+### 16.3 Location Annotation Omission
+
+A type annotation or a literal without a location annotation is an error, unless
+the location can be taken from an initializer (spec §7.14.1).
 
 ```ts
-function f@every(): unit@every {
-    let x: integer = 1;
+let x: integer = 1;          // the initializer has no location either
+```
+
+```ts
+function f@alice(a: integer): integer@alice {   // no initializer to read
+    return a;
 }
 ```
 
-### 16.4 Top-Level Location Omission
+### 16.4 Location Omission in a Local Function
+
+A local function's own location does not supply a default. Parameter types,
+return types, and literals must all be annotated explicitly (spec §8.1). An
+initialized `let` is the one exception, since it can read the location from its
+initializer (spec §7.14.1).
 
 ```ts
-let x: integer = 1;
+function add@alice(a: integer, b: integer): integer {
+    return a + b;
+}
+```
+
+Write it as:
+
+```ts
+function add@alice(a: integer@alice, b: integer@alice): integer@alice {
+    return a + b;
+}
 ```
 
 ### 16.5 Uninitialized Let
@@ -3936,7 +4022,7 @@ destination share a location is valid and denotes a local copy (spec §11.4).
 ### 16.9 Invalid If Condition
 
 ```ts
-function f@every(c: boolean@alice): unit@every {
+function f(c: boolean@alice): void {
     if (c) {
         return;
     }
@@ -3946,7 +4032,7 @@ function f@every(c: boolean@alice): unit@every {
 ### 16.10 Invalid While Condition
 
 ```ts
-function f@every(c: boolean@alice): unit@every {
+function f(c: boolean@alice): void {
     while (c) {
         return;
     }
@@ -3956,7 +4042,7 @@ function f@every(c: boolean@alice): unit@every {
 ### 16.11 Invalid For Condition
 
 ```ts
-function f@every(): unit@every {
+function f(): void {
     for (
         let i: integer@alice = 0@alice;
         i < 10@alice;
@@ -3969,31 +4055,45 @@ function f@every(): unit@every {
 ### 16.12 Calling Another Endpoint's Local Function
 
 ```ts
-function f@bob(): integer {
-    return 1;
+function f@bob(): integer@bob {
+    return 1@bob;
 }
 
-function g@alice(): integer {
+function g@alice(): integer@alice {
     return f();
 }
 ```
 
-### 16.13 Calling an `@every` Function from a Local Function
+### 16.13 Calling a Choreography Function from a Local Function
 
 ```ts
-function f@every(): unit@every {
+function f(): void {
     return;
 }
 
-function g@alice(): unit {
+function g@alice(): void {
     f();
 }
 ```
 
-### 16.14 Recursive `@every` Function
+### 16.14 Recursive Choreography Function
+
+Direct recursion:
 
 ```ts
-function f@every(): unit@every {
+function f(): void {
+    f();
+}
+```
+
+Mutual recursion is equally invalid:
+
+```ts
+function f(): void {
+    g();
+}
+
+function g(): void {
     f();
 }
 ```
@@ -4001,11 +4101,11 @@ function f@every(): unit@every {
 ### 16.15 Function Overloading
 
 ```ts
-function f@alice(): unit {
+function f@alice(): void {
     return;
 }
 
-function f@bob(): unit {
+function f@bob(): void {
     return;
 }
 ```
@@ -4051,9 +4151,9 @@ Transfer declarations require an explicit destination type.
 A function return type cannot be inferred if value-returning paths are not proven to return.
 
 ```ts
-function maybe@alice(c: boolean) {
+function maybe@alice(c: boolean@alice) {
     if (c) {
-        return 1;
+        return 1@alice;
     }
 }
 ```
@@ -4061,9 +4161,9 @@ function maybe@alice(c: boolean) {
 ### 16.20 Mixed Bare and Value Returns
 
 ```ts
-function bad@alice(c: boolean) {
+function bad@alice(c: boolean@alice) {
     if (c) {
-        return 1;
+        return 1@alice;
     }
     return;
 }
@@ -4072,11 +4172,11 @@ function bad@alice(c: boolean) {
 ### 16.21 Incompatible Inferred Return Types
 
 ```ts
-function bad@alice(c: boolean) {
+function bad@alice(c: boolean@alice) {
     if (c) {
-        return 1;
+        return 1@alice;
     } else {
-        return "one";
+        return "one"@alice;
     }
 }
 ```
@@ -4084,7 +4184,7 @@ function bad@alice(c: boolean) {
 ### 16.22 Incompatible Inferred Return Locations
 
 ```ts
-function bad@every(c: boolean@every) {
+function bad(c: boolean@every) {
     if (c) {
         return 1@alice;
     } else {
@@ -4096,11 +4196,11 @@ function bad@every(c: boolean@every) {
 ### 16.23 Recursive Function With Omitted Return Type
 
 ```ts
-function fact@alice(n: integer) {
-    if (n <= 1) {
-        return 1;
+function fact@alice(n: integer@alice) {
+    if (n <= 1@alice) {
+        return 1@alice;
     } else {
-        return n * fact(n - 1);
+        return n * fact(n - 1@alice);
     }
 }
 ```
@@ -4119,7 +4219,7 @@ Parameter types are not inferred in Core v0.
 
 ### 16.25 Invalid Local Function Parameter Location
 
-A local function parameter must be located at the function's own individual location after location elaboration.
+A local function parameter must be located at the function's own individual location.
 
 Disallowed:
 
@@ -4140,16 +4240,14 @@ function bad@bob(x: integer@every): integer@bob {
 Allowed:
 
 ```cbs
-function add@bob(a: integer, b: integer): integer {
+function add@bob(a: integer@bob, b: integer@bob): integer@bob {
     return a + b;
 }
 ```
 
-This is elaborated to parameters located at `bob`.
-
 ### 16.26 Invalid Local Function Return Location
 
-A local function return type must be located at the function's own individual location after location elaboration.
+A local function return type must be located at the function's own individual location.
 
 Disallowed:
 
@@ -4170,12 +4268,10 @@ function bad@bob(): integer@every {
 Allowed:
 
 ```cbs
-function ok@bob(): integer {
-    return 1;
+function ok@bob(): integer@bob {
+    return 1@bob;
 }
 ```
-
-This is elaborated to `integer@bob`.
 
 ### 16.27 Invalid Value Used Inside Local Function
 
@@ -4202,8 +4298,8 @@ function bad@bob(): integer@bob {
 Allowed:
 
 ```cbs
-function ok@bob(): integer {
-    let x: integer = 1;
+function ok@bob(): integer@bob {
+    let x: integer@bob = 1@bob;
     return x;
 }
 ```
@@ -4217,7 +4313,7 @@ using base type subtyping, and must be located at the parameter's location
 Disallowed:
 
 ```cbs
-function add@alice(a: integer): integer {
+function add@alice(a: integer@alice): integer@alice {
     return a;
 }
 
@@ -4234,7 +4330,7 @@ add(10@alice);
 Disallowed:
 
 ```cbs
-function add@alice(a: integer): integer {
+function add@alice(a: integer@alice): integer@alice {
     return a;
 }
 
@@ -4255,14 +4351,14 @@ This remains invalid because local function parameters must not be located at `e
 
 ### 16.29 Unsupported Array Element Type
 
-`string[]`, `null[]`, and `unit[]` are not supported in the mutable array extension.
+`string[]`, `null[]`, and `void[]` are not supported in the mutable array extension.
 
 Disallowed:
 
 ```ts
 let xs: string[]@alice = []@alice;
 let ys: null[]@alice = []@alice;
-let zs: unit[]@alice = []@alice;
+let zs: void[]@alice = []@alice;
 ```
 
 ### 16.30 Nested Array
@@ -4340,7 +4436,7 @@ rule (§7.6, §16.28), not an array-specific restriction; localize with `<-` fir
 Disallowed:
 
 ```ts
-function f@alice(xs: integer[]): unit {
+function f@alice(xs: integer[]@alice): void {
     return;
 }
 let xs: integer[]@every = [1, 2, 3]@every;
@@ -4381,6 +4477,65 @@ let xs: integer[]@alice = []@alice;
 push(xs, 1.5@alice);
 ```
 
+### 16.39 `@every` on a Function Declaration
+
+A location on a function declaration names the one endpoint that runs the
+function. It therefore declares a local function, and must be an individual
+location (spec §10.1).
+
+A choreography function runs at every endpoint rather than at one, so no single
+location names it and its declaration carries none. It is a separate kind of
+declaration, not a local function with its location left out.
+
+Disallowed:
+
+```ts
+function f@every(): void {
+    return;
+}
+```
+
+Write it as:
+
+```ts
+function f(): void {
+    return;
+}
+```
+
+### 16.40 Invalid Use of `void`
+
+`void` has no location and is not a value type (spec §7.3).
+
+A location on `void` is an error:
+
+```ts
+function g(): void@alice {
+    return;
+}
+```
+
+So is any use outside a function return type:
+
+```ts
+function g(): void { return; }
+
+let x: void = g();          // variable type
+```
+
+```ts
+function f(a: void): void { return; }   // parameter type
+```
+
+```ts
+function g(): void { return; }
+
+let y: void <- g();         // transfer destination
+```
+
+`void[]` is rejected separately, as an unsupported array element type
+(spec §16.29).
+
 ## 17. Non-goals and Future Extensions
 
 The following features are not part of ChoreoBS Core v0.
@@ -4388,7 +4543,7 @@ The following features are not part of ChoreoBS Core v0.
 ### 17.1 Gradual Features
 
 * location inference;
-* omitted locations in `@every` context;
+* omitted locations on types and literals in a choreography context;
 * use of `@every` values inside local functions;
 * local function parameters or return types located at `every`;
 * `any`;
@@ -4441,7 +4596,7 @@ The following features are not part of ChoreoBS Core v0.
 
 * string arrays;
 * null arrays;
-* unit arrays;
+* void arrays;
 * nested arrays;
 * records;
 * structs;

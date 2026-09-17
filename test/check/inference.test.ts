@@ -30,13 +30,19 @@ const literalResolver: ExprTypeResolver = (expr: Expression) => {
   if (expr.kind !== "LiteralExpression") {
     return { ok: false, message: "test resolver supports literals only" };
   }
+  // Locations are never inferred from context (spec §8.1), so read the written
+  // annotation, exactly as the checker does.
+  const written = expr.literal.location?.location;
+  if (written === undefined) {
+    return { ok: false, message: "location annotation required on literal" };
+  }
   switch (expr.literal.literal.kind) {
     case "IntegerLiteral":
-      return { ok: true, value: locatedType("integer", alice) };
+      return { ok: true, value: locatedType("integer", written) };
     case "FloatLiteral":
-      return { ok: true, value: locatedType("float", alice) };
+      return { ok: true, value: locatedType("float", written) };
     case "BooleanLiteral":
-      return { ok: true, value: locatedType("boolean", alice) };
+      return { ok: true, value: locatedType("boolean", written) };
     default:
       return { ok: false, message: "unsupported literal in test resolver" };
   }
@@ -124,16 +130,16 @@ describe("return inference utilities (spec §7.14.4)", () => {
 
   describe("checkReturnCoverage", () => {
     it("accepts a final return expr", () => {
-      const body = parseFunctionBody("return 1;");
+      const body = parseFunctionBody("return 1@alice;");
       assert.equal(checkReturnCoverage(body), true);
     });
 
     it("accepts if/else with both branches returning", () => {
       const body = parseFunctionBody(`
-if (true) {
-  return 1;
+if (true@alice) {
+  return 1@alice;
 } else {
-  return 2.0;
+  return 2.0@alice;
 }
 `);
       assert.equal(checkReturnCoverage(body), true);
@@ -141,14 +147,14 @@ if (true) {
 
     it("accepts nested if/else coverage", () => {
       const body = parseFunctionBody(`
-if (true) {
-  if (false) {
-    return 1;
+if (true@alice) {
+  if (false@alice) {
+    return 1@alice;
   } else {
-    return 2;
+    return 2@alice;
   }
 } else {
-  return 3;
+  return 3@alice;
 }
 `);
       assert.equal(checkReturnCoverage(body), true);
@@ -156,8 +162,8 @@ if (true) {
 
     it("rejects if without else even when then returns", () => {
       const body = parseFunctionBody(`
-if (true) {
-  return 1;
+if (true@alice) {
+  return 1@alice;
 }
 `);
       assert.equal(checkReturnCoverage(body), false);
@@ -165,34 +171,34 @@ if (true) {
 
     it("rejects trailing non-return after guarded returns", () => {
       const body = parseFunctionBody(`
-if (true) {
-  return 1;
+if (true@alice) {
+  return 1@alice;
 } else {
-  return 2;
+  return 2@alice;
 }
-let x = 1;
+let x = 1@alice;
 `);
       assert.equal(checkReturnCoverage(body), false);
     });
   });
 
   describe("inferFunctionReturnType", () => {
-    it("infers unit when there are no returns", () => {
-      const body = parseFunctionBody("let x = 1;");
+    it("infers void when there are no returns", () => {
+      const body = parseFunctionBody("let x = 1@alice;");
       const r = inferFunctionReturnType(body, alice, literalResolver);
       assert.equal(r.ok, true);
       if (r.ok) {
-        assert.equal(r.value.base, "unit");
+        assert.equal(r.value.base, "void");
         assert.deepEqual(r.value.location, alice);
       }
     });
 
     it("infers float from mixed integer and float returns", () => {
       const body = parseFunctionBody(`
-if (true) {
-  return 1;
+if (true@alice) {
+  return 1@alice;
 } else {
-  return 2.0;
+  return 2.0@alice;
 }
 `);
       const r = inferFunctionReturnType(body, alice, literalResolver);
@@ -206,7 +212,7 @@ if (true) {
     it("rejects mixing bare and value returns", () => {
       const body = parseFunctionBody(`
 return;
-return 1;
+return 1@alice;
 `);
       const r = inferFunctionReturnType(body, alice, literalResolver);
       assert.equal(r.ok, false);
@@ -217,8 +223,8 @@ return 1;
 
     it("rejects value returns without coverage", () => {
       const body = parseFunctionBody(`
-if (true) {
-  return 1;
+if (true@alice) {
+  return 1@alice;
 }
 `);
       const r = inferFunctionReturnType(body, alice, literalResolver);
@@ -232,12 +238,12 @@ if (true) {
   describe("collectReturnCandidates", () => {
     it("collects returns from nested blocks", () => {
       const body = parseFunctionBody(`
-if (true) {
-  return 1;
+if (true@alice) {
+  return 1@alice;
 } else {
-  return 2;
+  return 2@alice;
 }
-return 3;
+return 3@alice;
 `);
       const r = collectReturnCandidates(body, literalResolver);
       assert.equal(r.ok, true);
