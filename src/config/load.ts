@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ChoreoBSConfig } from "./types.js";
+import { validateEndpoints } from "./validate.js";
 
 export function loadConfig(path: string): ChoreoBSConfig {
   const raw = readFileSync(path, "utf8");
@@ -18,6 +19,10 @@ export function loadConfig(path: string): ChoreoBSConfig {
       throw new Error(`${path}: each endpoint must be a string`);
     }
     names.push(entry);
+  }
+  const invalid = validateEndpoints(names);
+  if (invalid !== undefined) {
+    throw new Error(`${path}: ${invalid}`);
   }
   return { endpoints: names };
 }

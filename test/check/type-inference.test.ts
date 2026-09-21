@@ -265,6 +265,37 @@ function f() {
       assert.equal(functionDecl(typed, 0).returnType.base, "integer");
     });
 
+    it("resolves a dependency chain of omitted return types (§7.14.4)", () => {
+      const typed = expectTypeCheckSuccess(`
+function g@alice() { return 1@alice; }
+function f@alice() { return g() + 1@alice; }
+let r: integer@alice = f();
+`);
+      assert.equal(functionDecl(typed, 0).returnType.base, "integer");
+      assert.equal(functionDecl(typed, 1).returnType.base, "integer");
+    });
+
+    it("resolves that chain regardless of declaration order (§7.14.4)", () => {
+      // `f` is declared before the `g` it depends on, so inference has to
+      // defer it and come back — the reason the resolution loop iterates.
+      const typed = expectTypeCheckSuccess(`
+function f@alice() { return g() + 1@alice; }
+function g@alice() { return 1@alice; }
+let r: integer@alice = f();
+`);
+      assert.equal(functionDecl(typed, 0).returnType.base, "integer");
+      assert.equal(functionDecl(typed, 1).returnType.base, "integer");
+    });
+
+    it("widens along a chain of omitted return types (§7.14.4)", () => {
+      const typed = expectTypeCheckSuccess(`
+function g@alice() { return 1.5@alice; }
+function f@alice() { return g(); }
+let r: float@alice = f();
+`);
+      assert.equal(functionDecl(typed, 1).returnType.base, "float");
+    });
+
     it("allows explicit return type on recursive local function (§7.14.8)", () => {
       expectTypeCheckSuccess(`
 function fact@alice(n: integer@alice): integer@alice {
@@ -379,6 +410,50 @@ function bad(a: integer@alice, b: integer@bob) {
 }
 `,
         "binary operands must be at the same location",
+      );
+    });
+
+    it("reports a duplicate parameter, not a return-type conflict (§7.14.7)", () => {
+      // Inference walks the body in the same scope the full check opens, so a
+      // duplicate parameter is caught there rather than showing up later as
+      // an incompatible least upper bound between the two parameter types.
+      expectTypeCheckFailure(
+        `function f@alice(a: integer@alice, a: boolean@alice) {
+  if (a) { return 1@alice; } else { return a; }
+}`,
+        "duplicate parameter 'a'",
+      );
+    });
+
+    it("rejects a void-valued let inside an inferred function (§16.40)", () => {
+      expectTypeCheckFailure(
+        `function g@alice(): void { return; }
+function f@alice() { let x = g(); return 1@alice; }`,
+        "expression produces no value",
+      );
+    });
+
+    it("rejects an empty array let inside an inferred function (§16.32)", () => {
+      expectTypeCheckFailure(
+        `function f@alice() { let xs = []@alice; return 1@alice; }`,
+        "cannot infer empty array element type",
+      );
+    });
+
+    it("reports an undefined variable in a statement inference used to skip", () => {
+      // Assignment statements bind nothing and hold no `return`, so the old
+      // inference walk stepped over them entirely and their errors surfaced
+      // only later, if at all.
+      expectTypeCheckFailure(
+        `function f@alice() { q = 1@alice; return 1@alice; }`,
+        "undefined variable 'q'",
+      );
+    });
+
+    it("checks conditions inside a function with an omitted return type", () => {
+      expectTypeCheckFailure(
+        `function f@alice() { if (1@alice) { return 1@alice; } return 2@alice; }`,
+        "condition must have type boolean",
       );
     });
 

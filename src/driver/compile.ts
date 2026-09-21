@@ -7,10 +7,15 @@ import { finalizeAbsentAll } from "../finalize/index.js";
 import { cleanupAll } from "../cleanup/index.js";
 import { emit } from "../emit/index.js";
 import {
+  assignCommTags,
   commConsistencyDiagnostics,
   verifyCommunicationConsistency,
 } from "../comm/index.js";
-import { loadConfig, defaultConfigPath } from "../config/index.js";
+import {
+  loadConfig,
+  defaultConfigPath,
+  validateEndpoints,
+} from "../config/index.js";
 import type { ChoreoBSConfig } from "../config/types.js";
 import type { LexicalError } from "../lexer/index.js";
 
@@ -57,6 +62,15 @@ export function compileSource(
   cbsPath: string,
   config: ChoreoBSConfig,
 ): CompileResult {
+  // `compileSource` is the single funnel for every compilation path, and it
+  // takes a `ChoreoBSConfig` that need not have come from `loadConfig`
+  // (the fuzz scripts build one from a raw `--endpoints` string). The endpoint
+  // set is validated here so that no caller can slip past it (spec §2.2).
+  const invalidConfig = validateEndpoints(config.endpoints);
+  if (invalidConfig !== undefined) {
+    return { success: false, outputs: [], errors: [{ message: invalidConfig }] };
+  }
+
   const parsed = parse(source);
   const errors: CompileDiagnostic[] = [...parsed.errors];
 
@@ -71,8 +85,10 @@ export function compileSource(
     return { success: false, outputs: [], errors };
   }
 
-  // EPP -> absent finalization -> cleanup -> emission (spec §13.7, §13.9).
-  const projected = projectAll(checked.typed, config.endpoints);
+  // Tagging -> EPP -> absent finalization -> cleanup -> emission
+  // (spec §11.5, §13.7, §13.9).
+  const tagged = assignCommTags(checked.typed);
+  const projected = projectAll(tagged, config.endpoints);
   const finalized = finalizeAbsentAll(projected);
   const cleaned = cleanupAll(finalized);
   const stem = basename(cbsPath, extname(cbsPath));

@@ -321,7 +321,12 @@ let x: integer@alice = 2@alice;
         endpoints: ["alice", "every"],
       });
       expectFailure(result);
-      assert.ok(result.errors.some((e) => e.message.includes("every")));
+      assert.ok(
+        result.errors.some((e) =>
+          e.message.includes("must not appear in endpoints"),
+        ),
+        JSON.stringify(result.errors),
+      );
     });
 
     it("§16.5 rejects uninitialized let", () => {

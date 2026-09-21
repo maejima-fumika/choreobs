@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { parse } from "../../src/parser/index.js";
 import { typeCheck, type TypeCheckResult } from "../../src/check/index.js";
+import type { TypedProgram } from "../../src/ast/typed.js";
+import { assignCommTags } from "../../src/comm/index.js";
 import { projectAll } from "../../src/epp/index.js";
 import type { ProjectedProgram } from "../../src/ir/projected.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
@@ -22,6 +24,21 @@ export function checkSource(
 }
 
 /**
+ * Parses, type-checks and assigns communication tags, asserting the first two
+ * stages are clean. For tests that read `commTag` off the typed AST — the
+ * checker no longer sets it (spec §11.5).
+ */
+export function tagSource(
+  source: string,
+  config: ChoreoBSConfig = aliceBob,
+): TypedProgram {
+  const { typed, errors } = checkSource(source, config);
+  assert.equal(errors.length, 0, JSON.stringify(errors));
+  assert.ok(typed);
+  return assignCommTags(typed);
+}
+
+/**
  * Parses, type-checks and projects every endpoint, asserting the first two
  * stages are clean. For tests that work on the projected IR rather than on
  * emitted text.
@@ -36,5 +53,5 @@ export function projectSource(
   const { typed, errors: typeErrors } = typeCheck(program, config);
   assert.equal(typeErrors.length, 0, JSON.stringify(typeErrors));
   assert.ok(typed);
-  return projectAll(typed, config.endpoints);
+  return projectAll(assignCommTags(typed), config.endpoints);
 }

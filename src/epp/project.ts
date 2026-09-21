@@ -276,7 +276,17 @@ class Projector {
 
     const dst = parts.type.location;
     const src = source.choreoType.location;
-    const tag = parts.commTag!;
+    const tag = parts.commTag;
+    if (tag === undefined) {
+      // Every non-`localCopy` transfer is tagged by `assignCommTags`
+      // (spec §11.5). Reaching here means that pass was skipped or disagrees
+      // with the checker about the transfer mode; emitting an untagged
+      // send/receive pair would produce output that looks well formed and
+      // pairs the wrong ends.
+      throw new Error(
+        `internal error: ${parts.mode} transfer '${parts.name}' has no communication tag`,
+      );
+    }
     const comm = this.commKindForType(parts.type);
 
     if (dst.kind === "every") {

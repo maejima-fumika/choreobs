@@ -1,20 +1,32 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { checkSource } from "../support/pipeline.js";
+import { checkSource, tagSource } from "../support/pipeline.js";
+import type { TypedProgram } from "../../src/ast/typed.js";
+
+/**
+ * The transfer statement at top-level item `index`, with its assigned
+ * communication tag. Tags are assigned after checking (spec §11.5), so these
+ * go through `tagSource` rather than `checkSource`.
+ */
+function transferAt(typed: TypedProgram, index: number) {
+  const item = typed.items[index];
+  assert.ok(item && "statement" in item, `item ${index} is not a statement`);
+  const stmt = item.statement;
+  assert.ok("transferMode" in stmt, `item ${index} is not a transfer`);
+  return stmt;
+}
 
 
 describe("ChoreoBS type checker", () => {
   it("accepts direct communication (spec §15.1)", () => {
-    const { typed, errors } = checkSource(`
+    const typed = tagSource(`
 let x: integer@alice = 1@alice;
 let y: integer@bob <- x;
 `);
-    assert.equal(errors.length, 0);
-    assert.equal(typed?.items.length, 2);
-    const recv = typed?.items[1];
-    if (recv && "statement" in recv && "commTag" in recv.statement) {
-      assert.equal(recv.statement.commTag, "top_0");
-    }
+    assert.equal(typed.items.length, 2);
+    const recv = transferAt(typed, 1);
+    assert.equal(recv.transferMode, "direct");
+    assert.equal(recv.commTag, "top_0");
   });
 
   describe("locations are never inferred from context (spec §8.1)", () => {
@@ -136,16 +148,13 @@ let y: integer@bob = x;
   });
 
   it("accepts a scalar local copy from @every (spec §7.8)", () => {
-    const { typed, errors } = checkSource(`
+    const typed = tagSource(`
 let x: integer@every = 1@every;
 let y: integer@alice <- x;
 `);
-    assert.equal(errors.length, 0);
-    const recv = typed?.items[2];
-    if (recv && "statement" in recv && "transferMode" in recv.statement) {
-      assert.equal(recv.statement.transferMode, "localCopy");
-      assert.equal(recv.statement.commTag, undefined);
-    }
+    const recv = transferAt(typed, 1);
+    assert.equal(recv.transferMode, "localCopy");
+    assert.equal(recv.commTag, undefined);
   });
 
   it("accepts a scalar local copy from @every literals with subtyping", () => {
@@ -157,32 +166,23 @@ let b: boolean@bob <- true@every;
   });
 
   it("accepts @every to @every transfer as a local copy (spec §7.8)", () => {
-    const { typed, errors } = checkSource(`
+    const typed = tagSource(`
 let x: integer@every = 1@every;
 let y: integer@every <- x;
 `);
-    assert.equal(errors.length, 0, JSON.stringify(errors));
-    assert.ok(typed);
-    const recv = typed?.items[1];
-    assert.ok(recv && "statement" in recv && "transferMode" in recv.statement);
-    if (recv && "statement" in recv && "transferMode" in recv.statement) {
-      assert.equal(recv.statement.transferMode, "localCopy");
-      assert.equal(recv.statement.commTag, undefined);
-    }
+    const recv = transferAt(typed, 1);
+    assert.equal(recv.transferMode, "localCopy");
+    assert.equal(recv.commTag, undefined);
   });
 
   it("accepts a transfer whose source and destination share a location (spec §7.8)", () => {
-    const { typed, errors } = checkSource(`
+    const typed = tagSource(`
 let x: integer@alice = 1@alice;
 let y: integer@alice <- x;
 `);
-    assert.equal(errors.length, 0, JSON.stringify(errors));
-    assert.ok(typed);
-    const recv = typed?.items[1];
-    if (recv && "statement" in recv && "transferMode" in recv.statement) {
-      assert.equal(recv.statement.transferMode, "localCopy");
-      assert.equal(recv.statement.commTag, undefined);
-    }
+    const recv = transferAt(typed, 1);
+    assert.equal(recv.transferMode, "localCopy");
+    assert.equal(recv.commTag, undefined);
   });
 
   it("rejects references to top-level let from local functions (spec §6.5)", () => {

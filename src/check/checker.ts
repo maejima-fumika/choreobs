@@ -85,7 +85,6 @@ import {
   resolveTypeAnnotation,
   validateArrayTypeAnnotation,
 } from "./resolve.js";
-import { CommTagGenerator, TOP_SCOPE } from "../comm/tags.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
 import { assertNever } from "../util/exhaustive.js";
 import { childExpressions } from "../ast/traverse.js";
@@ -93,8 +92,6 @@ import { isReservedRuntimeName } from "../runtime/names.js";
 import {
   checkReturnCoverage,
   inferReturnTypeFromCandidates,
-  inferenceOk,
-  type InferErr,
   type ReturnCandidate,
 } from "./inference.js";
 import {
@@ -136,13 +133,18 @@ class TypeChecker {
   private readonly errors: TypeCheckError[] = [];
   private readonly functions = new Map<string, FunctionDeclaration>();
   private readonly resolvedReturnTypes = new Map<string, LocatedType>();
+  /** Used to check `@L` against the declared set; the set itself is validated
+   * by `validateEndpoints` before the checker runs (spec §2.2). */
   private readonly endpoints: Set<string>;
-  private readonly endpointList: readonly string[];
-  private readonly commTags = new CommTagGenerator();
-  private commScope = TOP_SCOPE;
   private currentFunction: FunctionDeclaration | undefined;
   /** Resolved return type for the function currently being type-checked. */
   private currentFunctionReturnType: LocatedType | undefined;
+  /**
+   * Set while inferring an omitted return type (spec §7.14.4). The body is
+   * checked by the ordinary machinery, but there is no declared type yet to
+   * check a `return` against, so each one is collected here instead.
+   */
+  private returnCandidates: ReturnCandidate[] | undefined;
   private inTopLevel = false;
   private readonly topLevelEnv = new Map<string, LocatedType>();
   private envStack: Map<string, LocatedType>[] = [];
@@ -152,7 +154,6 @@ class TypeChecker {
     config: ChoreoBSConfig,
   ) {
     this.endpoints = new Set(config.endpoints);
-    this.endpointList = config.endpoints;
   }
 
   check(): TypeCheckResult {
@@ -167,24 +168,6 @@ class TypeChecker {
   }
 
   private checkProgram(): TypeCheckResult {
-    if (this.endpoints.has("every")) {
-      this.error(
-        "'every' must not appear in endpoints (spec §2.2)",
-        this.program.span,
-      );
-    }
-    // A repeated endpoint would give two output files the same name and make
-    // one endpoint both sender and receiver of the same tag (spec §2.2).
-    if (this.endpoints.size !== this.endpointList.length) {
-      const seen = new Set<string>();
-      const duplicate = this.endpointList.find((name) =>
-        seen.size === seen.add(name).size,
-      );
-      this.error(
-        `duplicate endpoint '${duplicate}' in endpoints (spec §2.2)`,
-        this.program.span,
-      );
-    }
     this.collectFunctions();
     this.checkRecursion();
     this.resolveExplicitFunctionSignatures();
@@ -324,36 +307,34 @@ class TypeChecker {
     return true;
   }
 
+  /**
+   * Infers one function's omitted return type by checking its body (§7.14.4).
+   *
+   * The body goes through the ordinary `checkBlock`, in the same scope
+   * `checkFunction` would open, with `returnCandidates` set so that each
+   * `return` reports its type instead of being checked against one. The typed
+   * tree it produces is discarded; `checkFunction` builds the real one later,
+   * once the inferred type exists to validate returns against.
+   *
+   * Sharing the walk is what keeps the two from drifting: a statement form
+   * that binds a name, or a rule about what may appear in a body, is written
+   * once and both passes see it.
+   */
   private inferReturnTypeFor(decl: FunctionDeclaration): boolean {
-    const env = new Map<string, LocatedType>();
-    for (const param of decl.params) {
-      const paramType = this.resolveType(param.type);
-      this.validateLocalFunctionLocatedType(
-        decl,
-        paramType,
-        param.span,
-        "parameter",
-      );
-      env.set(param.name, paramType);
-    }
+    const { env } = this.buildParameterEnv(decl);
+    const candidates: ReturnCandidate[] = [];
     this.currentFunction = decl;
+    this.returnCandidates = candidates;
     this.pushEnv(env);
-    this.pushEnv(new Map());
-    const collected = this.collectReturnCandidatesWithEnv(
-      decl.body,
-      decl.context
-    );
+    this.checkBlock(decl.body, decl.context, true);
     this.popEnv();
-    this.popEnv();
+    this.returnCandidates = undefined;
     this.currentFunction = undefined;
     this.currentFunctionReturnType = undefined;
-    if (!collected.ok) {
-      this.error(collected.message, decl.span);
-    }
     const inferred = inferReturnTypeFromCandidates(
       decl.body,
       functionLocationOf(decl),
-      collected.value,
+      candidates,
     );
     if (!inferred.ok) {
       this.error(inferred.message, decl.span);
@@ -366,176 +347,6 @@ class TypeChecker {
     );
     this.resolvedReturnTypes.set(decl.name, inferred.value);
     return true;
-  }
-
-  /**
-   * Collects return candidates while binding `let` names in execution order,
-   * matching function-body scoping during the full type check (spec §7.14.4).
-   */
-  private collectReturnCandidatesWithEnv(
-    block: Block,
-    ctx: ExecutionContext,
-  ): import("./inference.js").InferResult<readonly ReturnCandidate[]> {
-    const candidates: ReturnCandidate[] = [];
-    const err = this.walkStatementsForReturnInference(
-      block.statements,
-      ctx,
-      candidates,
-    );
-    if (err !== undefined) {
-      return err;
-    }
-    return inferenceOk(candidates);
-  }
-
-  private walkStatementsForReturnInference(
-    statements: readonly Statement[],
-    ctx: ExecutionContext,
-    out: ReturnCandidate[],
-  ): InferErr | undefined {
-    for (const stmt of statements) {
-      const err = this.walkStatementForReturnInference(
-        stmt,
-        ctx,
-        out,
-      );
-      if (err !== undefined) {
-        return err;
-      }
-    }
-    return undefined;
-  }
-
-  private walkStatementForReturnInference(
-    stmt: Statement,
-    ctx: ExecutionContext,
-    out: ReturnCandidate[],
-  ): InferErr | undefined {
-    switch (stmt.kind) {
-      case "LetStatement": {
-        const initializer = this.typeReturnValueExpression(
-          stmt.initializer,
-          ctx
-        );
-        const choreoType =
-          stmt.type !== undefined
-            ? this.resolveLetType(stmt.type, initializer, stmt.span)
-            : initializer.choreoType;
-        this.defineLocal(stmt.name, choreoType, stmt.span);
-        return undefined;
-      }
-      case "LetTransferStatement": {
-        // A transfer `let` always carries its own type annotation (spec §7.14.3),
-        // so the binding is known without typing the source expression.
-        const choreoType = this.resolveType(stmt.type);
-        this.validateLocalFunctionLocatedType(
-          this.currentFunction,
-          choreoType,
-          stmt.type.span,
-          "variable type",
-        );
-        this.defineLocal(stmt.name, choreoType, stmt.span);
-        return undefined;
-      }
-      case "ReturnStatement":
-        if (stmt.value === undefined) {
-          out.push({ kind: "void", span: stmt.span });
-          return undefined;
-        }
-        {
-          const value = this.typeReturnValueExpression(
-            stmt.value,
-            ctx
-          );
-          out.push({
-            kind: "value",
-            type: value.choreoType,
-            span: stmt.span,
-          });
-          return undefined;
-        }
-      case "IfStatement": {
-        this.pushEnv(new Map());
-        let err = this.walkStatementsForReturnInference(
-          stmt.then.statements,
-          ctx,
-          out,
-        );
-        this.popEnv();
-        if (err !== undefined) {
-          return err;
-        }
-        if (stmt.else !== undefined) {
-          this.pushEnv(new Map());
-          err = this.walkStatementsForReturnInference(
-            stmt.else.statements,
-            ctx,
-            out,
-          );
-          this.popEnv();
-        }
-        return err;
-      }
-      case "WhileStatement":
-        this.pushEnv(new Map());
-        {
-          const err = this.walkStatementsForReturnInference(
-            stmt.body.statements,
-            ctx,
-            out,
-          );
-          this.popEnv();
-          return err;
-        }
-      case "ForStatement": {
-        this.pushEnv(new Map());
-        if (stmt.init !== undefined) {
-          const initErr = this.walkForInitForReturnInference(
-            stmt.init,
-            ctx
-          );
-          if (initErr !== undefined) {
-            this.popEnv();
-            return initErr;
-          }
-        }
-        this.pushEnv(new Map());
-        const err = this.walkStatementsForReturnInference(
-          stmt.body.statements,
-          ctx,
-          out,
-        );
-        this.popEnv();
-        this.popEnv();
-        return err;
-      }
-      // Bind nothing and contain no `return`, so there is nothing to collect.
-      case "AssignmentStatement":
-      case "TransferStatement":
-      case "ExpressionStatement":
-        return undefined;
-      default:
-        return assertNever(stmt, "statement");
-    }
-  }
-
-  private walkForInitForReturnInference(
-    init: ForInit,
-    ctx: ExecutionContext,
-  ): InferErr | undefined {
-    if (init.kind !== "ForLetInit") {
-      return undefined;
-    }
-    const initializer = this.typeReturnValueExpression(
-      init.initializer,
-      ctx
-    );
-    const choreoType =
-      init.type !== undefined
-        ? this.resolveLetType(init.type, initializer, init.span)
-        : initializer.choreoType;
-    this.defineLocal(init.name, choreoType, init.span);
-    return undefined;
   }
 
   /** Return type after resolution or inference; does not read raw AST annotations. */
@@ -635,13 +446,12 @@ class TypeChecker {
 
   private checkTopLevelItem(item: TopLevelItem): TypedTopLevelItem {
     if (item.kind === "FunctionDeclaration") {
-      return this.checkFunction(item, false);
+      return this.checkFunction(item);
     }
     return this.checkTopLevelStatement(item);
   }
 
   private checkTopLevelStatement(item: TopLevelStatement): TypedTopLevelStatement {
-    this.commScope = TOP_SCOPE;
     this.currentFunction = undefined;
     this.currentFunctionReturnType = undefined;
     this.inTopLevel = true;
@@ -654,16 +464,18 @@ class TypeChecker {
     };
   }
 
-  private checkFunction(
-    decl: FunctionDeclaration,
-    nested: boolean,
-  ): TypedFunctionDeclaration {
-    if (!nested) {
-      this.commScope = decl.name;
-    }
-    this.currentFunction = decl;
-    const returnType = this.getResolvedReturnType(decl);
-    this.currentFunctionReturnType = returnType;
+  /**
+   * The scope a function body opens in: its parameters, resolved and checked
+   * (spec §7.12, §7.14.7).
+   *
+   * Shared with return type inference, which opens the same scope over the
+   * same body. Two copies of this would be two chances to disagree about
+   * which parameter wins a duplicate, or whether a reserved name is caught.
+   */
+  private buildParameterEnv(decl: FunctionDeclaration): {
+    readonly env: Map<string, LocatedType>;
+    readonly params: TypedParameter[];
+  } {
     const params: TypedParameter[] = [];
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
@@ -685,6 +497,14 @@ class TypeChecker {
       }
       params.push({ param, type });
     }
+    return { env, params };
+  }
+
+  private checkFunction(decl: FunctionDeclaration): TypedFunctionDeclaration {
+    this.currentFunction = decl;
+    const returnType = this.getResolvedReturnType(decl);
+    this.currentFunctionReturnType = returnType;
+    const { env, params } = this.buildParameterEnv(decl);
     this.pushEnv(env);
     const body = this.checkBlock(decl.body, decl.context, true);
     this.popEnv();
@@ -875,9 +695,9 @@ class TypeChecker {
     );
     const source = this.checkExpression(stmt.source, ctx);
     const transferMode = this.validateTransfer(choreoType, source.choreoType, stmt.span);
-    const commTag = this.transferTagForMode(transferMode);
     this.defineLocal(stmt.name, choreoType, stmt.span);
-    return { stmt, choreoType, source, transferMode, commTag };
+    // The tag is assigned after checking, by `assignCommTags` (spec §11.5).
+    return { stmt, choreoType, source, transferMode };
   }
 
   private checkAssignment(
@@ -927,8 +747,7 @@ class TypeChecker {
     const targetType = this.lookupVariable(stmt.name, stmt.span);
     const source = this.checkExpression(stmt.source, ctx);
     const transferMode = this.validateTransfer(targetType, source.choreoType, stmt.span);
-    const commTag = this.transferTagForMode(transferMode);
-    return { stmt, targetType, source, transferMode, commTag };
+    return { stmt, targetType, source, transferMode };
   }
 
   private checkIf(
@@ -1027,6 +846,11 @@ class TypeChecker {
     ctx: ExecutionContext,
     inFunction: boolean,
   ): TypedReturnStatement {
+    // Inferring this function's return type: there is nothing to check the
+    // `return` against yet, so record what it produces (spec §7.14.4).
+    if (this.returnCandidates !== undefined) {
+      return this.collectReturnCandidate(stmt, ctx, this.returnCandidates);
+    }
     if (
       !inFunction ||
       this.currentFunction === undefined ||
@@ -1039,6 +863,20 @@ class TypeChecker {
       this.currentFunctionReturnType,
       ctx
     );
+  }
+
+  private collectReturnCandidate(
+    stmt: ReturnStatement,
+    ctx: ExecutionContext,
+    out: ReturnCandidate[],
+  ): TypedReturnStatement {
+    if (stmt.value === undefined) {
+      out.push({ kind: "void", span: stmt.span });
+      return { stmt };
+    }
+    const value = this.typeReturnValueExpression(stmt.value, ctx);
+    out.push({ kind: "value", type: value.choreoType, span: stmt.span });
+    return { stmt, value };
   }
 
   private typeReturnValueExpression(
@@ -1631,13 +1469,6 @@ class TypeChecker {
       return "broadcast";
     }
     return "direct";
-  }
-
-  private transferTagForMode(mode: TransferMode): string | undefined {
-    if (mode === "direct" || mode === "broadcast") {
-      return this.commTags.next(this.commScope);
-    }
-    return undefined;
   }
 
   private locationAwareBinary(

@@ -1,4 +1,5 @@
 export { CommTagGenerator, TOP_SCOPE } from "./tags.js";
+export { assignCommTags } from "./assign.js";
 export {
   checkCommunicationConsistency,
   type CommConsistencyError,
