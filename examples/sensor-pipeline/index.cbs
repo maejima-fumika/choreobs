@@ -1,0 +1,142 @@
+// Sensor pipeline.
+//
+// Two sensors take readings, calibrate them locally, and hand them to a
+// gateway. The gateway collects a window of samples, decides whether the
+// window looks healthy, and reports the outcome to a server.
+
+// ---------------------------------------------------------------------------
+// sensor1: reading and calibration
+// ---------------------------------------------------------------------------
+
+function readRaw1@sensor1(tick: integer@sensor1): float@sensor1 {
+    // Stands in for a hardware read; the value drifts with the tick.
+    let base = 21.5@sensor1;
+    let drift = 0.25@sensor1;
+    return base + drift * tick;
+}
+
+function bias1@sensor1(): float@sensor1 {
+    return 0.5@sensor1;
+}
+
+function calibrate1@sensor1(raw: float@sensor1): float@sensor1 {
+    let b = bias1();
+    return raw + b;
+}
+
+// ---------------------------------------------------------------------------
+// sensor2: same shape, different constants
+// ---------------------------------------------------------------------------
+
+function readRaw2@sensor2(tick: integer@sensor2): float@sensor2 {
+    let base = 19.0@sensor2;
+    let drift = 0.4@sensor2;
+    return base + drift * tick;
+}
+
+function bias2@sensor2(): float@sensor2 {
+    return 0.75@sensor2;
+}
+
+function calibrate2@sensor2(raw: float@sensor2): float@sensor2 {
+    let b = bias2();
+    return raw + b;
+}
+
+// ---------------------------------------------------------------------------
+// gateway: windowing
+// ---------------------------------------------------------------------------
+
+function emptyWindow@gateway(): float[]@gateway {
+    let window: float[]@gateway = []@gateway;
+    return window;
+}
+
+function record@gateway(window: float[]@gateway, sample: float@gateway): void {
+    window.push(sample);
+}
+
+function windowSum@gateway(window: float[]@gateway): float@gateway {
+    let total = 0.0@gateway;
+    for (let i = 0@gateway; i < window.length; i = i + 1@gateway) {
+        total = total + window[i];
+    }
+    return total;
+}
+
+function windowMean@gateway(window: float[]@gateway): float@gateway {
+    let n = window.length;
+    if (n === 0@gateway) {
+        return 0.0@gateway;
+    }
+    let total = windowSum(window);
+    return total / n;
+}
+
+function isHealthy@gateway(mean: float@gateway): boolean@gateway {
+    let low = 15.0@gateway;
+    let high = 30.0@gateway;
+    return low < mean && mean < high;
+}
+
+// ---------------------------------------------------------------------------
+// server: reporting
+// ---------------------------------------------------------------------------
+
+function newLog@server(): integer[]@server {
+    let log: integer[]@server = []@server;
+    return log;
+}
+
+function appendCode@server(log: integer[]@server, code: integer@server): void {
+    log.push(code);
+}
+
+function healthyCode@server(): integer@server {
+    return 200@server;
+}
+
+function unhealthyCode@server(): integer@server {
+    return 503@server;
+}
+
+// ---------------------------------------------------------------------------
+// The choreography
+// ---------------------------------------------------------------------------
+
+let window: float[]@gateway = emptyWindow();
+let log: integer[]@server = newLog();
+
+let rounds: integer@every = 3@every;
+
+for (let round = 0@every; round < rounds; round = round + 1@every) {
+    // Each sensor reads and calibrates on its own hardware.
+    let tick1: integer@sensor1 <- round;
+    let raw1: float@sensor1 = readRaw1(tick1);
+    let value1: float@sensor1 = calibrate1(raw1);
+
+    let tick2: integer@sensor2 <- round;
+    let raw2: float@sensor2 = readRaw2(tick2);
+    let value2: float@sensor2 = calibrate2(raw2);
+
+    // Both samples travel to the gateway.
+    let atGateway1: float@gateway <- value1;
+    let atGateway2: float@gateway <- value2;
+
+    record(window, atGateway1);
+    record(window, atGateway2);
+}
+
+// The gateway judges the window, then tells everyone the verdict so that all
+// endpoints agree on which branch to take.
+let mean: float@gateway = windowMean(window);
+let healthy: boolean@gateway = isHealthy(mean);
+let verdict: boolean@every <- healthy;
+
+if (verdict) {
+    let code: integer@server = healthyCode();
+    appendCode(log, code);
+} else {
+    let code: integer@server = unhealthyCode();
+    appendCode(log, code);
+}

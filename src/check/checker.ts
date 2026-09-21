@@ -7,7 +7,7 @@ import type {
   LetStatement,
   LetTransferStatement,
   AssignmentStatement,
-  IndexAssignmentTarget,
+  AssignmentTarget,
   TransferStatement,
   IfStatement,
   WhileStatement,
@@ -27,6 +27,8 @@ import type {
   IdentifierExpression,
   CallExpression,
   IndexExpression,
+  LengthExpression,
+  PushExpression,
   ParenthesizedExpression,
 } from "../ast/expressions.js";
 import type { ExecutionContext } from "../ast/context.js";
@@ -43,7 +45,9 @@ import type {
   TypedLetStatement,
   TypedLetTransferStatement,
   TypedAssignmentStatement,
+  TypedAssignmentTarget,
   TypedTransferStatement,
+  TypedPushExpression,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
@@ -59,6 +63,7 @@ import type {
   TypedIdentifierExpression,
   TypedCallExpression,
   TypedIndexExpression,
+  TypedLengthExpression,
   TypedParenthesizedExpression,
   LocatedType,
   TransferMode,
@@ -69,20 +74,24 @@ import { CHOREOGRAPHY_CONTEXT } from "../ast/context.js";
 import {
   contextAsLocation,
   formatLocatedType,
-  isSubtype,
   isArraySubtype,
   locatedType,
   locationsEqual,
 } from "../types/located.js";
 import {
   TypeResolveError,
+  rawLiteralBaseType,
   resolveLiteralType,
   resolveTypeAnnotation,
   validateArrayTypeAnnotation,
 } from "./resolve.js";
 import { CommTagGenerator, TOP_SCOPE } from "../comm/tags.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
+import { assertNever } from "../util/exhaustive.js";
+import { childExpressions } from "../ast/traverse.js";
+import { isReservedRuntimeName } from "../runtime/names.js";
 import {
+  checkReturnCoverage,
   inferReturnTypeFromCandidates,
   inferenceOk,
   type InferErr,
@@ -128,6 +137,7 @@ class TypeChecker {
   private readonly functions = new Map<string, FunctionDeclaration>();
   private readonly resolvedReturnTypes = new Map<string, LocatedType>();
   private readonly endpoints: Set<string>;
+  private readonly endpointList: readonly string[];
   private readonly commTags = new CommTagGenerator();
   private commScope = TOP_SCOPE;
   private currentFunction: FunctionDeclaration | undefined;
@@ -142,6 +152,7 @@ class TypeChecker {
     config: ChoreoBSConfig,
   ) {
     this.endpoints = new Set(config.endpoints);
+    this.endpointList = config.endpoints;
   }
 
   check(): TypeCheckResult {
@@ -159,6 +170,18 @@ class TypeChecker {
     if (this.endpoints.has("every")) {
       this.error(
         "'every' must not appear in endpoints (spec §2.2)",
+        this.program.span,
+      );
+    }
+    // A repeated endpoint would give two output files the same name and make
+    // one endpoint both sender and receiver of the same tag (spec §2.2).
+    if (this.endpoints.size !== this.endpointList.length) {
+      const seen = new Set<string>();
+      const duplicate = this.endpointList.find((name) =>
+        seen.size === seen.add(name).size,
+      );
+      this.error(
+        `duplicate endpoint '${duplicate}' in endpoints (spec §2.2)`,
         this.program.span,
       );
     }
@@ -186,12 +209,7 @@ class TypeChecker {
       if (item.kind !== "FunctionDeclaration") {
         continue;
       }
-      if (item.name === "length" || item.name === "push") {
-        this.error(
-          `'${item.name}' is a reserved builtin function name (spec §6.2, §7.11.1)`,
-          item.span,
-        );
-      }
+      this.rejectReservedRuntimeName(item.name, "function", item.span);
       const existing = this.functions.get(item.name);
       if (existing !== undefined) {
         this.error(
@@ -309,7 +327,7 @@ class TypeChecker {
   private inferReturnTypeFor(decl: FunctionDeclaration): boolean {
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
-      const paramType = this.resolveType(param.type, decl.context);
+      const paramType = this.resolveType(param.type);
       this.validateLocalFunctionLocatedType(
         decl,
         paramType,
@@ -401,13 +419,21 @@ class TypeChecker {
         );
         const choreoType =
           stmt.type !== undefined
-            ? this.resolveLetType(
-                stmt.type,
-                initializer,
-                ctx,
-                stmt.span,
-              )
+            ? this.resolveLetType(stmt.type, initializer, stmt.span)
             : initializer.choreoType;
+        this.defineLocal(stmt.name, choreoType, stmt.span);
+        return undefined;
+      }
+      case "LetTransferStatement": {
+        // A transfer `let` always carries its own type annotation (spec §7.14.3),
+        // so the binding is known without typing the source expression.
+        const choreoType = this.resolveType(stmt.type);
+        this.validateLocalFunctionLocatedType(
+          this.currentFunction,
+          choreoType,
+          stmt.type.span,
+          "variable type",
+        );
         this.defineLocal(stmt.name, choreoType, stmt.span);
         return undefined;
       }
@@ -483,8 +509,13 @@ class TypeChecker {
         this.popEnv();
         return err;
       }
-      default:
+      // Bind nothing and contain no `return`, so there is nothing to collect.
+      case "AssignmentStatement":
+      case "TransferStatement":
+      case "ExpressionStatement":
         return undefined;
+      default:
+        return assertNever(stmt, "statement");
     }
   }
 
@@ -501,12 +532,7 @@ class TypeChecker {
     );
     const choreoType =
       init.type !== undefined
-        ? this.resolveLetType(
-            init.type,
-            initializer,
-            ctx,
-            init.span,
-          )
+        ? this.resolveLetType(init.type, initializer, init.span)
         : initializer.choreoType;
     this.defineLocal(init.name, choreoType, init.span);
     return undefined;
@@ -532,35 +558,11 @@ class TypeChecker {
   private collectCalleeNames(block: Block): Set<string> {
     const names = new Set<string>();
     const visitExpr = (expr: Expression): void => {
-      switch (expr.kind) {
-        case "CallExpression":
-          names.add(expr.callee);
-          for (const arg of expr.args) {
-            visitExpr(arg);
-          }
-          break;
-        case "ArrayLiteralExpression":
-          for (const element of expr.elements) {
-            visitExpr(element);
-          }
-          break;
-        case "IndexExpression":
-          visitExpr(expr.target);
-          visitExpr(expr.index);
-          break;
-        case "BinaryExpression":
-          visitExpr(expr.left);
-          visitExpr(expr.right);
-          break;
-        case "UnaryExpression":
-          visitExpr(expr.operand);
-          break;
-        case "ParenthesizedExpression":
-          visitExpr(expr.expression);
-          break;
-        case "LiteralExpression":
-        case "IdentifierExpression":
-          break;
+      if (expr.kind === "CallExpression") {
+        names.add(expr.callee);
+      }
+      for (const child of childExpressions(expr)) {
+        visitExpr(child);
       }
     };
     const visitStmt = (stmt: Statement): void => {
@@ -577,12 +579,16 @@ class TypeChecker {
           visitExpr(stmt.source);
           break;
         case "AssignmentStatement":
+          if (stmt.target.kind === "IndexAssignmentTarget") {
+            visitExpr(stmt.target.index);
+          }
           visitExpr(stmt.value);
           break;
         case "TransferStatement":
           visitExpr(stmt.source);
           break;
         case "IfStatement":
+          visitExpr(stmt.condition);
           for (const s of stmt.then.statements) {
             visitStmt(s);
           }
@@ -617,6 +623,8 @@ class TypeChecker {
         case "ExpressionStatement":
           visitExpr(stmt.expression);
           break;
+        default:
+          assertNever(stmt, "statement");
       }
     };
     for (const stmt of block.statements) {
@@ -659,13 +667,14 @@ class TypeChecker {
     const params: TypedParameter[] = [];
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
-      const type = this.resolveType(param.type, decl.context);
+      const type = this.resolveType(param.type);
       this.validateLocalFunctionLocatedType(
         decl,
         type,
         param.span,
         "parameter",
       );
+      this.rejectReservedRuntimeName(param.name, "parameter", param.span);
       if (env.has(param.name)) {
         this.error(
           `duplicate parameter '${param.name}' in the same scope`,
@@ -679,6 +688,7 @@ class TypeChecker {
     this.pushEnv(env);
     const body = this.checkBlock(decl.body, decl.context, true);
     this.popEnv();
+    this.validateExplicitReturnCoverage(decl, returnType);
     this.currentFunction = undefined;
     this.currentFunctionReturnType = undefined;
     return {
@@ -688,6 +698,32 @@ class TypeChecker {
       params,
       body,
     };
+  }
+
+  /**
+   * Return coverage for a function that *declares* a non-`void` return type
+   * (spec §7.13, §16.41).
+   *
+   * The inferred case is handled during inference (spec §7.14.6); this is the
+   * same conservative analysis applied to the explicit case, which otherwise
+   * let a function fall off its end and emit BlueScript that returns nothing.
+   *
+   * Deliberately run after the body has been checked: the checker is fail-fast,
+   * so reporting this first would hide the body's real type errors.
+   */
+  private validateExplicitReturnCoverage(
+    decl: FunctionDeclaration,
+    returnType: LocatedType,
+  ): void {
+    if (decl.returnType === undefined || returnType.base === "void") {
+      return;
+    }
+    if (!checkReturnCoverage(decl.body)) {
+      this.error(
+        `function '${decl.name}' must return a value on all paths for return type ${formatLocatedType(returnType)} (spec §7.13, §16.41)`,
+        decl.span,
+      );
+    }
   }
 
   private checkBlock(
@@ -743,22 +779,44 @@ class TypeChecker {
     ) {
       this.error("cannot infer empty array element type (spec §16.32)", stmt.span);
     }
-    if (this.isPushCallExpression(stmt.initializer)) {
-      this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
-    }
     const choreoType =
       stmt.type !== undefined
-        ? this.resolveLetType(stmt.type, initializer, ctx, stmt.span)
-        : initializer.choreoType;
+        ? this.resolveLetType(stmt.type, initializer, stmt.span)
+        : this.inferredValueType(initializer, stmt.span);
     this.requireExpressionAvailable(choreoType.location, ctx, stmt.span);
     this.defineLocal(stmt.name, choreoType, stmt.span);
     return { stmt, choreoType, initializer };
   }
 
+  /**
+   * The type an omitted annotation infers from its initializer.
+   *
+   * An annotated `let` reaches `resolveType`, which rejects `void` (spec §7.3,
+   * §16.40). The inferred path never sees an annotation, so the same rejection
+   * has to happen here — otherwise a call to a `void` function would bind a
+   * variable of a type that holds no value.
+   */
+  private inferredValueType(
+    initializer: TypedExpression,
+    span: Span,
+  ): LocatedType {
+    this.requireValueExpression(initializer, span);
+    return initializer.choreoType;
+  }
+
+  /** Rejects a void computation where a value is required (spec §7.2). */
+  private requireValueExpression(expr: TypedExpression, span: Span): void {
+    if (expr.choreoType.base === "void" && expr.choreoType.isArray !== true) {
+      this.error(
+        "expression produces no value: `void` may only be used as a function return type (spec §7.2, §7.3, §16.40)",
+        span,
+      );
+    }
+  }
+
   private resolveLetType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
     initializer: TypedExpression,
-    ctx: ExecutionContext,
     span: Span,
   ): LocatedType {
     // An initialized `let` may omit the location; it comes from the
@@ -766,7 +824,6 @@ class TypeChecker {
     // directly and keeps requiring an explicit destination (spec §7.14.3).
     const choreoType = this.resolveType(
       ann,
-      ctx,
       initializer.choreoType.location,
     );
     this.validateLocalFunctionLocatedType(
@@ -804,7 +861,18 @@ class TypeChecker {
     stmt: LetTransferStatement,
     ctx: ExecutionContext,
   ): TypedLetTransferStatement {
-    const choreoType = this.resolveType(stmt.type, ctx);
+    const choreoType = this.resolveType(stmt.type);
+    // The destination of a transfer `let` is a variable the body declares, so
+    // inside `function f@P` it must be located at `P` like any other local
+    // (spec §8.2). Without this the checker would accept a send out of a
+    // function body that only exists at `P`, leaving the peer with no matching
+    // receive (spec §10.1).
+    this.validateLocalFunctionLocatedType(
+      this.currentFunction,
+      choreoType,
+      stmt.type.span,
+      "variable type",
+    );
     const source = this.checkExpression(stmt.source, ctx);
     const transferMode = this.validateTransfer(choreoType, source.choreoType, stmt.span);
     const commTag = this.transferTagForMode(transferMode);
@@ -817,28 +885,39 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedAssignmentStatement {
     const value = this.checkExpression(stmt.value, ctx);
-    if (this.isPushCallExpression(stmt.value)) {
-      this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
+    return { stmt, target: this.checkAssignmentTarget(stmt.target, value, ctx, stmt.span), value };
+  }
+
+  /**
+   * Checks an assignment target against the value being stored (spec §5.7,
+   * §7.7, §7.11.1). Shared by assignment statements and `for` header clauses,
+   * which take the same target shapes (spec §5.11).
+   */
+  private checkAssignmentTarget(
+    target: AssignmentTarget,
+    value: TypedExpression,
+    ctx: ExecutionContext,
+    span: Span,
+  ): TypedAssignmentTarget {
+    if (target.kind === "IdentifierAssignmentTarget") {
+      const targetType = this.lookupVariable(target.name, span);
+      this.validateAssignmentLike(targetType, value.choreoType, span);
+      return { target, targetType };
     }
-    if (stmt.target.kind === "IdentifierAssignmentTarget") {
-      const targetType = this.lookupVariable(stmt.target.name, stmt.span);
-      this.validateAssignmentLike(targetType, value.choreoType, stmt.span);
-      return { stmt, target: { target: stmt.target, targetType }, value };
-    }
-    const arrayType = this.lookupVariable(stmt.target.name, stmt.span);
+    const arrayType = this.lookupVariable(target.name, span);
     if (!arrayType.isArray) {
-      this.error("index assignment target must be an array value", stmt.span);
+      this.error("index assignment target must be an array value", span);
     }
-    const index = this.checkExpression(stmt.target.index, ctx);
+    const index = this.checkExpression(target.index, ctx);
     if (index.choreoType.base !== "integer" || index.choreoType.isArray) {
-      this.error("array index must have type integer", stmt.target.index.span);
+      this.error("array index must have type integer", target.index.span);
     }
     const elementType = locatedType(arrayType.base, arrayType.location);
-    this.validateAssignmentLike(elementType, value.choreoType, stmt.span);
+    this.validateAssignmentLike(elementType, value.choreoType, span);
     if (!locationsEqual(index.choreoType.location, arrayType.location)) {
-      this.error("array index must be at the same location as the array (spec §16.37)", stmt.span);
+      this.error("array index must be at the same location as the array (spec §16.37)", span);
     }
-    return { stmt, target: { target: stmt.target, arrayType, index, elementType }, value };
+    return { target, arrayType, index, elementType };
   }
 
   private checkComm(
@@ -885,9 +964,7 @@ class TypeChecker {
     if (stmt.init !== undefined) {
       init = this.checkForInit(stmt.init, ctx);
     }
-    const condition = stmt.condition
-      ? this.checkCondition(stmt.condition, ctx)
-      : undefined;
+    const condition = this.checkCondition(stmt.condition, ctx);
     const update = stmt.update
       ? this.checkForUpdate(stmt.update, ctx)
       : undefined;
@@ -922,8 +999,8 @@ class TypeChecker {
     }
     const choreoType =
       init.type !== undefined
-        ? this.resolveLetType(init.type, initializer, ctx, init.span)
-        : initializer.choreoType;
+        ? this.resolveLetType(init.type, initializer, init.span)
+        : this.inferredValueType(initializer, init.span);
     this.requireExpressionAvailable(choreoType.location, ctx, init.span);
     this.defineLocal(init.name, choreoType, init.span);
     return { init, choreoType, initializer };
@@ -933,10 +1010,9 @@ class TypeChecker {
     init: ForAssignmentInit,
     ctx: ExecutionContext,
   ): TypedForAssignmentInit {
-    const targetType = this.lookupVariable(init.name, init.span);
     const value = this.checkExpression(init.value, ctx);
-    this.validateAssignmentLike(targetType, value.choreoType, init.span);
-    return { init, targetType, value };
+    const target = this.checkAssignmentTarget(init.target, value, ctx, init.span);
+    return { init, target, value };
   }
 
   private checkForUpdate(
@@ -996,24 +1072,17 @@ class TypeChecker {
       stmt.value,
       ctx
     );
-    if (this.isPushCallExpression(stmt.value)) {
-      this.error("push(xs, v) is allowed only as an expression statement", stmt.span);
-    }
     this.validateReturnLike(returnType, value.choreoType, stmt.span);
     return { stmt, value };
   }
+
+
 
   private checkExpressionStatement(
     stmt: ExpressionStatement,
     ctx: ExecutionContext,
   ): TypedExpressionStatement {
     const expression = this.checkExpression(stmt.expression, ctx);
-    if (
-      expression.expr.kind === "CallExpression" &&
-      expression.expr.callee === "length"
-    ) {
-      this.error("length(xs) cannot be used as a statement", stmt.span);
-    }
     return { stmt, expression };
   }
 
@@ -1064,6 +1133,10 @@ class TypeChecker {
         return this.checkCall(expr, ctx);
       case "IndexExpression":
         return this.checkIndex(expr, ctx);
+      case "LengthExpression":
+        return this.checkLength(expr, ctx);
+      case "PushExpression":
+        return this.checkPush(expr, ctx);
       case "ParenthesizedExpression":
         return this.checkParen(expr, ctx);
     }
@@ -1082,7 +1155,54 @@ class TypeChecker {
       ctx,
       expr.span,
     );
+    this.requireShortCircuitOperandsCallFree(expr);
     return { expr, choreoType, left, right };
+  }
+
+  /**
+   * `&&` and `||` evaluate their right operand only when the left one does not
+   * already decide the result (spec §5.17), and that decision is made from a
+   * value that lives at one location. An endpoint where the result is absent
+   * has no way to learn which way the branch went, so it cannot know whether to
+   * run a choreography call hidden in either operand — and a choreography
+   * function runs at every endpoint (spec §12.11). Core v0 therefore forbids
+   * such a call in either operand outright (spec §16.46).
+   *
+   * Looking for a call written directly in the operand is enough: a local
+   * function cannot call a choreography one (spec §16.13), so no call reachable
+   * from here can communicate unless it appears in the operand itself.
+   */
+  private requireShortCircuitOperandsCallFree(expr: BinaryExpression): void {
+    if (expr.operator !== "&&" && expr.operator !== "||") {
+      return;
+    }
+    for (const operand of [expr.left, expr.right]) {
+      const callee = this.findChoreographyCall(operand);
+      if (callee !== undefined) {
+        this.error(
+          `operand of '${expr.operator}' must not contain a call to choreography function ` +
+            `'${callee}' (spec §7.11, §16.46)`,
+          expr.span,
+        );
+      }
+    }
+  }
+
+  /** Name of a choreography function called anywhere inside `expr`, if any. */
+  private findChoreographyCall(expr: Expression): string | undefined {
+    if (expr.kind === "CallExpression") {
+      const decl = this.functions.get(expr.callee);
+      if (decl !== undefined && decl.at === undefined) {
+        return expr.callee;
+      }
+    }
+    for (const child of childExpressions(expr)) {
+      const found = this.findChoreographyCall(child);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
   }
 
   private binaryResultType(
@@ -1121,6 +1241,16 @@ class TypeChecker {
       if (left.isArray || right.isArray) {
         this.error("array equality is not supported (spec §16.36)", span);
       }
+      // `void === void` passes the same-base-type test below, so it needs its
+      // own rejection: a void computation produces nothing to compare, and
+      // letting it through emits BlueScript that compares two statements
+      // (spec §7.2, §16.43).
+      if (left.base === "void" || right.base === "void") {
+        this.error(
+          `operator '${operator}' requires operands that produce a value; \`void\` does not (spec §7.2, §16.43)`,
+          span,
+        );
+      }
       if (left.base !== right.base) {
         this.error(
           `operator '${operator}' requires operands of the same base type`,
@@ -1143,9 +1273,15 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedUnaryExpression {
     const operand = this.checkExpression(expr.operand, ctx);
+    // Unary operators are scalar-only. Testing `base` alone would let a
+    // `boolean[]` through `!` and an `integer[]` through `-`, since an array
+    // type carries its element type in `base` (spec §7.11, §16.42).
     if (expr.operator === "!") {
-      if (operand.choreoType.base !== "boolean") {
-        this.error("operator '!' requires boolean operand", expr.span);
+      if (operand.choreoType.isArray === true || operand.choreoType.base !== "boolean") {
+        this.error(
+          `operator '!' requires a boolean operand, got ${formatLocatedType(operand.choreoType)} (spec §7.11, §16.42)`,
+          expr.span,
+        );
       }
       this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
       return {
@@ -1154,8 +1290,11 @@ class TypeChecker {
         operand,
       };
     }
-    if (!this.isNumeric(operand.choreoType)) {
-      this.error("unary '-' requires numeric operand", expr.span);
+    if (operand.choreoType.isArray === true || !this.isNumeric(operand.choreoType)) {
+      this.error(
+        `unary '-' requires a numeric operand, got ${formatLocatedType(operand.choreoType)} (spec §7.11, §16.42)`,
+        expr.span,
+      );
     }
     this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
     return { expr, choreoType: operand.choreoType, operand };
@@ -1165,7 +1304,7 @@ class TypeChecker {
     expr: LiteralExpression,
     ctx: ExecutionContext,
   ): TypedLiteralExpression {
-    const choreoType = this.resolveLiteral(expr.literal, ctx);
+    const choreoType = this.resolveLiteral(expr.literal);
     this.requireExpressionAvailable(choreoType.location, ctx, expr.span);
     return { expr, choreoType, literal: expr.literal };
   }
@@ -1187,6 +1326,9 @@ class TypeChecker {
     if (elements.length === 0) {
       return { expr, choreoType: locatedType("integer", location, true), elements };
     }
+    for (const element of elements) {
+      this.requireValueExpression(element, element.expr.span);
+    }
     let elementBase = elements[0]!.choreoType.base;
     for (let i = 1; i < elements.length; i++) {
       const next = elements[i]!.choreoType.base;
@@ -1205,7 +1347,7 @@ class TypeChecker {
       element.kind === "LiteralExpression" &&
       element.literal.location === undefined
     ) {
-      const base = this.rawLiteralBase(element.literal.literal.kind);
+      const base = rawLiteralBaseType(element.literal.literal);
       return {
         expr: element,
         choreoType: locatedType(base, arrayLocation),
@@ -1217,23 +1359,6 @@ class TypeChecker {
       this.error("array element must be at the same location as the array literal", element.span);
     }
     return typed;
-  }
-
-  private rawLiteralBase(kind: string): LocatedType["base"] {
-    switch (kind) {
-      case "IntegerLiteral":
-        return "integer";
-      case "FloatLiteral":
-        return "float";
-      case "BooleanLiteral":
-        return "boolean";
-      case "StringLiteral":
-        return "string";
-      case "NullLiteral":
-        return "null";
-      default:
-        return "integer";
-    }
   }
 
   private lubArrayElementBase(
@@ -1263,59 +1388,6 @@ class TypeChecker {
     expr: CallExpression,
     ctx: ExecutionContext,
   ): TypedCallExpression {
-    if (expr.callee === "length") {
-      if (expr.args.length !== 1) {
-        this.error("length(xs) expects exactly one argument", expr.span);
-      }
-      const arg = expr.args[0] !== undefined
-        ? this.checkExpression(expr.args[0], ctx)
-        : ({
-            expr: {
-              kind: "IdentifierExpression",
-              name: "_",
-              span: expr.span,
-            },
-            choreoType: locatedType("integer", contextAsLocation(ctx)),
-          } as TypedExpression);
-      if (!arg.choreoType.isArray) {
-        this.error("length builtin requires array argument", expr.span);
-      }
-      return {
-        expr,
-        choreoType: locatedType("integer", arg.choreoType.location),
-        callee: this.unknownFunction(expr.callee),
-        args: [arg],
-      };
-    }
-    if (expr.callee === "push") {
-      if (expr.args.length !== 2) {
-        this.error("push(xs, v) expects two arguments", expr.span);
-      }
-      const xs = expr.args[0] !== undefined
-        ? this.checkExpression(expr.args[0], ctx)
-        : ({
-            expr: { kind: "IdentifierExpression", name: "_", span: expr.span },
-            choreoType: locatedType("integer", contextAsLocation(ctx), true),
-          } as TypedExpression);
-      const v = expr.args[1] !== undefined
-        ? this.checkExpression(expr.args[1], ctx)
-        : ({
-            expr: { kind: "IdentifierExpression", name: "_", span: expr.span },
-            choreoType: locatedType("integer", contextAsLocation(ctx)),
-          } as TypedExpression);
-      if (!xs.choreoType.isArray) {
-        this.error("push builtin requires array as first argument", expr.span);
-      } else {
-        const elementType = locatedType(xs.choreoType.base, xs.choreoType.location);
-        this.validateAssignmentLike(elementType, v.choreoType, expr.span);
-      }
-      return {
-        expr,
-        choreoType: locatedType("void", xs.choreoType.location),
-        callee: this.unknownFunction(expr.callee),
-        args: [xs, v],
-      };
-    }
     const decl = this.functions.get(expr.callee);
     if (decl === undefined) {
       this.error(`undefined function '${expr.callee}'`, expr.span);
@@ -1332,9 +1404,6 @@ class TypeChecker {
     const args: TypedExpression[] = [];
     for (let i = 0; i < expr.args.length; i++) {
       const arg = this.checkExpression(expr.args[i]!, ctx);
-      if (this.isPushCallExpression(expr.args[i]!)) {
-        this.error("push(xs, v) is allowed only as an expression statement", expr.args[i]!.span);
-      }
       const param = params[i];
       if (param !== undefined) {
         this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
@@ -1348,6 +1417,68 @@ class TypeChecker {
       callee: symbol,
       args,
     };
+  }
+
+  /**
+   * `xs.push(v)` (spec §5.14, §7.11.1).
+   *
+   * The result is `void`: appending produces nothing to bind, so every value
+   * position rejects it exactly as it rejects a call to a `void` function
+   * (spec §7.2, §16.40). The location carried on that `void` is the array's,
+   * which is never written or shown (spec §7.3) but tells endpoint projection
+   * where the append happens (spec §12.14.1).
+   */
+  private checkPush(
+    expr: PushExpression,
+    ctx: ExecutionContext,
+  ): TypedPushExpression {
+    const target = this.checkExpression(expr.target, ctx);
+    const value = this.checkExpression(expr.value, ctx);
+    this.requireArrayReceiver(".push", target, expr.span);
+    const elementType = locatedType(
+      target.choreoType.base,
+      target.choreoType.location,
+    );
+    this.validateAssignmentLike(elementType, value.choreoType, expr.span);
+    return {
+      expr,
+      choreoType: locatedType("void", target.choreoType.location),
+      target,
+      value,
+    };
+  }
+
+  /** `xs.length` (spec §5.14, §7.11.1). */
+  private checkLength(
+    expr: LengthExpression,
+    ctx: ExecutionContext,
+  ): TypedLengthExpression {
+    const target = this.checkExpression(expr.target, ctx);
+    this.requireArrayReceiver(".length", target, expr.span);
+    return {
+      expr,
+      choreoType: locatedType("integer", target.choreoType.location),
+      target,
+    };
+  }
+
+  /**
+   * Both array operations take an array (spec §7.11.1). Neither is defined on
+   * a scalar — `string` included, since v0 has no string operations at all
+   * (spec §17.2).
+   */
+  private requireArrayReceiver(
+    member: string,
+    target: TypedExpression,
+    span: Span,
+  ): void {
+    if (target.choreoType.isArray !== true) {
+      this.error(
+        `'${member}' requires an array, got ${formatLocatedType(target.choreoType)}. ` +
+          `The array operations are not defined on scalars, including strings (spec §7.11.1)`,
+        span,
+      );
+    }
   }
 
   private checkIndex(
@@ -1433,10 +1564,6 @@ class TypeChecker {
         span,
       );
     }
-  }
-
-  private isPushCallExpression(expr: Expression): boolean {
-    return expr.kind === "CallExpression" && expr.callee === "push";
   }
 
   private validateAssignmentLike(
@@ -1596,7 +1723,6 @@ class TypeChecker {
   /** Resolve a type in a value position; `void` is not a value type (spec §7.3). */
   private resolveType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
-    ctx: ExecutionContext,
     inferredLocation?: Location,
   ): LocatedType {
     if (ann.base === "void" && ann.isArray !== true) {
@@ -1605,7 +1731,7 @@ class TypeChecker {
         ann.span,
       );
     }
-    return this.resolveTypeAllowingVoid(ann, ctx, inferredLocation);
+    return this.resolveTypeAllowingVoid(ann, inferredLocation);
   }
 
   /** Resolve a function return type, where `void` is allowed (spec §7.3). */
@@ -1617,14 +1743,12 @@ class TypeChecker {
     // through the ordinary machinery. It is never shown or written.
     return this.resolveTypeAllowingVoid(
       ann,
-      decl.context,
       ann.base === "void" ? functionLocationOf(decl) : undefined,
     );
   }
 
   private resolveTypeAllowingVoid(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
-    ctx: ExecutionContext,
     inferredLocation?: Location,
   ): LocatedType {
     try {
@@ -1642,7 +1766,6 @@ class TypeChecker {
 
   private resolveLiteral(
     lit: import("../ast/literals.js").LocatedLiteral,
-    ctx: ExecutionContext,
   ): LocatedType {
     try {
       const resolved = resolveLiteralType(lit);
@@ -1668,7 +1791,26 @@ class TypeChecker {
     }
   }
 
+  /**
+   * Generated BlueScript keeps the source name (spec §13.3), so a user
+   * identifier that collides with a runtime support function would capture the
+   * compiler's own call to it (spec §6.2, §13.8, §14.1).
+   */
+  private rejectReservedRuntimeName(
+    name: string,
+    role: "function" | "variable" | "parameter",
+    span: Span,
+  ): void {
+    if (isReservedRuntimeName(name)) {
+      this.error(
+        `'${name}' is a reserved runtime name and cannot be used as a ${role} name (spec §6.2, §13.3)`,
+        span,
+      );
+    }
+  }
+
   private defineLocal(name: string, type: LocatedType, span: Span): void {
+    this.rejectReservedRuntimeName(name, "variable", span);
     const env = this.currentEnv();
     if (env === undefined) {
       this.error(`cannot define '${name}' outside a scope`, span);
@@ -1725,7 +1867,7 @@ class TypeChecker {
 
   private functionSymbol(decl: FunctionDeclaration): FunctionSymbol {
     const params = decl.params.map((p) =>
-      this.resolveType(p.type, decl.context),
+      this.resolveType(p.type),
     );
     const returnType = this.getResolvedReturnType(decl);
     return {
@@ -1734,33 +1876,6 @@ class TypeChecker {
       params,
       returnType,
       decl,
-    };
-  }
-
-  private unknownFunction(name: string): FunctionSymbol {
-    const fallback = locatedType("integer", { kind: "individual", name: "_" });
-    const stub: FunctionDeclaration = {
-      kind: "FunctionDeclaration",
-      name,
-      // Builtins (`length`, `push`) are compiled inline, never emitted as a
-      // function, so the stub is choreography rather than sitting at a
-      // sentinel endpoint that `shouldEmitFunction` would misread.
-      context: CHOREOGRAPHY_CONTEXT,
-      params: [],
-      returnType: {
-        kind: "TypeAnnotation",
-        base: "integer",
-        span: { start: 0, end: 0 },
-      },
-      body: { kind: "Block", statements: [], span: { start: 0, end: 0 } },
-      span: { start: 0, end: 0 },
-    };
-    return {
-      name,
-      context: stub.context,
-      params: [],
-      returnType: fallback,
-      decl: stub,
     };
   }
 

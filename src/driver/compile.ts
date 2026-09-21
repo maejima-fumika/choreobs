@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parse, type ParseError } from "../parser/index.js";
 import { typeCheck, type TypeCheckError } from "../check/index.js";
 import { projectAll } from "../epp/index.js";
+import { finalizeAbsentAll } from "../finalize/index.js";
 import { cleanupAll } from "../cleanup/index.js";
 import { emit } from "../emit/index.js";
 import {
@@ -70,8 +71,10 @@ export function compileSource(
     return { success: false, outputs: [], errors };
   }
 
+  // EPP -> absent finalization -> cleanup -> emission (spec §13.7, §13.9).
   const projected = projectAll(checked.typed, config.endpoints);
-  const cleaned = cleanupAll(projected);
+  const finalized = finalizeAbsentAll(projected);
+  const cleaned = cleanupAll(finalized);
   const stem = basename(cbsPath, extname(cbsPath));
   const outDir = dirname(cbsPath);
 

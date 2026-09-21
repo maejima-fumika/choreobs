@@ -1,33 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { compileSource } from "../../src/driver/index.js";
-import type { CompileResult } from "../../src/driver/index.js";
-
-const config = { endpoints: ["alice", "bob"] };
-
-function compile(source: string): CompileResult {
-  return compileSource(source, "index.cbs", config);
-}
-
-function bs(result: CompileResult, endpoint: string): string {
-  const hit = result.outputs.find((o) => o.endpoint === endpoint);
-  assert.ok(hit, `missing output for ${endpoint}`);
-  return hit.source.trimEnd();
-}
-
-function expectSuccess(result: CompileResult): void {
-  assert.equal(
-    result.success,
-    true,
-    `expected success, errors: ${JSON.stringify(result.errors)}`,
-  );
-}
-
-function expectFailure(result: CompileResult): void {
-  assert.equal(result.success, false);
-  assert.ok(result.errors.length > 0);
-  assert.equal(result.outputs.length, 0);
-}
+import {
+  compile,
+  bs,
+  expectSuccess,
+  expectFailure,
+} from "../support/compile.js";
 
 describe("spec.md examples — generated .bs output", () => {
   it("§15.1 direct communication", () => {
@@ -160,7 +138,7 @@ let x: integer = choose(c);`,
   }
 }
 let c: boolean = true;
-nothing(choose(c));`,
+choose(c);`,
     );
   });
 

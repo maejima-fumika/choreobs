@@ -4,12 +4,12 @@ import type {
   ProjectedStatement,
   ProjectedBlock,
   ProjectedExpression,
-  ProjectedType,
   ProjectedForInit,
   ProjectedForUpdate,
 } from "../ir/projected.js";
 import { emitType } from "./types.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
+import { ARRAY_SENTINEL, NOTHING_HELPER, PUSH_SENTINEL } from "../runtime/names.js";
 
 export function emit(program: ProjectedProgram): string {
   return new BlueScriptEmitter().emitProgram(program);
@@ -54,8 +54,6 @@ class BlueScriptEmitter {
 
   private emitStatement(stmt: ProjectedStatement): void {
     switch (stmt.kind) {
-      case "AbsentStatement":
-        return;
       case "LetStatement":
         this.line(
           `let ${stmt.name}: ${emitType(stmt.type)} = ${this.emitExpr(stmt.initializer)};`,
@@ -117,7 +115,7 @@ class BlueScriptEmitter {
   private emitFor(stmt: import("../ir/projected.js").ForStatement): void {
     const init = stmt.init !== undefined ? this.emitForInit(stmt.init) : "";
     const cond =
-      stmt.condition !== undefined ? this.emitExpr(stmt.condition) : "";
+      this.emitExpr(stmt.condition);
     const update =
       stmt.update !== undefined ? this.emitForUpdate(stmt.update) : "";
     this.line(`for (${init}; ${cond}; ${update}) {`);
@@ -135,13 +133,20 @@ class BlueScriptEmitter {
   }
 
   private emitForUpdate(update: ProjectedForUpdate): string {
-    return `${update.name} = ${this.emitExpr(update.value)}`;
+    if (update.kind === "ForExpressionInit") {
+      return this.emitExpr(update.expression);
+    }
+    return `${this.emitAssignmentTarget(update.target)} = ${this.emitExpr(update.value)}`;
   }
 
   private emitExpr(expr: ProjectedExpression): string {
     switch (expr.kind) {
       case "AbsentExpression":
-        return "null";
+        // Finalized to `null` before cleanup (spec §13.7); reaching the
+        // emitter means a projection slot was never traversed.
+        throw new Error(
+          "internal error: absent reached code generation (spec §13.7)",
+        );
       case "IntegerLiteralExpression":
         return String(expr.value);
       case "FloatLiteralExpression":
@@ -161,10 +166,10 @@ class BlueScriptEmitter {
           ? `!${this.emitExpr(expr.operand)}`
           : `(-${this.emitExpr(expr.operand)})`;
       case "CallExpression": {
-        if (expr.callee === "__array") {
+        if (expr.callee === ARRAY_SENTINEL) {
           return `[${expr.args.map((a) => this.emitExpr(a)).join(", ")}]`;
         }
-        if (expr.callee === "__push") {
+        if (expr.callee === PUSH_SENTINEL) {
           const xs = expr.args[0] ? this.emitExpr(expr.args[0]) : "null";
           const v = expr.args[1] ? this.emitExpr(expr.args[1]) : "null";
           return `${xs}.push(${v})`;
@@ -177,7 +182,7 @@ class BlueScriptEmitter {
       case "PropertyLengthExpression":
         return `${this.emitExpr(expr.target)}.length`;
       case "NothingExpression":
-        return `nothing(${expr.parts.map((p) => this.emitExpr(p)).join(", ")})`;
+        return `${NOTHING_HELPER}(${expr.parts.map((p) => this.emitExpr(p)).join(", ")})`;
       case "ParenthesizedExpression":
         return `(${this.emitExpr(expr.expression)})`;
       case "ReceiveExpression":

@@ -16,10 +16,9 @@ import type {
   Statement,
   LetStatement,
   LetTransferStatement,
-  AssignmentStatement,
+  AssignmentTarget,
   IdentifierAssignmentTarget,
   IndexAssignmentTarget,
-  TransferStatement,
   IfStatement,
   WhileStatement,
   ForStatement,
@@ -50,9 +49,6 @@ import type {
   NullLiteral,
 } from "../ast/literals.js";
 import type {
-  ArithmeticOperator,
-  RelationalOperator,
-  EqualityOperator,
   BinaryOperator,
   UnaryOperator,
 } from "../ast/operators.js";
@@ -60,10 +56,19 @@ import {
   TokenKind,
   tokenize,
   type Token,
-  type TokenizeResult,
 } from "../lexer/index.js";
 import { parseError, type ParseError } from "./errors.js";
 import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-utils.js";
+
+/**
+ * The two array operation names, written after `.` (spec §5.14, §7.11.1).
+ *
+ * Grammar, not function names: they mean something only after a `.`, so a
+ * program may still use `length` and `push` as ordinary identifiers
+ * (spec §6.2) — which is why they are not among the reserved runtime names.
+ */
+const LENGTH_PROPERTY = "length";
+const PUSH_METHOD = "push";
 
 export interface ParseResult {
   readonly program: Program | null;
@@ -427,7 +432,9 @@ class Parser {
       };
     }
 
-    this.index -= 1;
+    // Rewind to the start of the statement rather than by one token: the
+    // branches above may consume more than the leading identifier.
+    this.index = start;
     return this.parseExpressionStatement();
   }
 
@@ -473,10 +480,10 @@ class Parser {
       init = this.parseForInit();
     }
     this.consume(TokenKind.Semicolon, "expected ';' after for initializer");
-    let condition: Expression | undefined;
-    if (!this.check(TokenKind.Semicolon)) {
-      condition = this.parseExpression();
-    }
+    // The condition is required (spec §5.11). An omitted one would have to mean
+    // an implicit `true`, and a literal has no location to take from context
+    // (spec §8.1); `while (true@every)` says the same thing explicitly.
+    const condition = this.parseExpression();
     this.consume(TokenKind.Semicolon, "expected ';' after for condition");
     let update: ForAssignmentInit | undefined;
     if (!this.check(TokenKind.RParen)) {
@@ -521,14 +528,35 @@ class Parser {
     return this.parseForAssignmentInit();
   }
 
+  /**
+   * `i = e` or `xs[i] = e`. The target is the same shape an assignment
+   * statement takes (spec §5.7, §5.11).
+   */
   private parseForAssignmentInit(): ForAssignmentInit {
     const start = this.current();
     const nameTok = this.consumeIdentifierToken("expected identifier in for clause");
+    let target: AssignmentTarget;
+    if (this.match(TokenKind.LBracket)) {
+      const index = this.parseExpression();
+      this.consume(TokenKind.RBracket, "expected ']' after index expression");
+      target = {
+        kind: "IndexAssignmentTarget",
+        name: nameTok.name,
+        index,
+        span: spanFrom(nameTok, index),
+      };
+    } else {
+      target = {
+        kind: "IdentifierAssignmentTarget",
+        name: nameTok.name,
+        span: spanOf(nameTok),
+      };
+    }
     this.consume(TokenKind.Assign, "expected '=' in for clause");
     const value = this.parseExpression();
     return {
       kind: "ForAssignmentInit",
-      name: nameTok.name,
+      target,
       value,
       span: spanFrom(start, value),
     };
@@ -650,18 +678,73 @@ class Parser {
 
   private parsePostfix(): Expression {
     let expr = this.parsePrimary();
-    while (this.match(TokenKind.LBracket)) {
-      const start = spanOfNode(expr);
-      const index = this.parseExpression();
-      const end = this.consume(TokenKind.RBracket, "expected ']' after index expression");
-      expr = {
-        kind: "IndexExpression",
-        target: expr,
-        index,
-        span: spanMerge(start, spanOf(end)),
-      } satisfies IndexExpression;
+    for (;;) {
+      if (this.match(TokenKind.LBracket)) {
+        const start = spanOfNode(expr);
+        const index = this.parseExpression();
+        const end = this.consume(TokenKind.RBracket, "expected ']' after index expression");
+        expr = {
+          kind: "IndexExpression",
+          target: expr,
+          index,
+          span: spanMerge(start, spanOf(end)),
+        } satisfies IndexExpression;
+        continue;
+      }
+      if (this.check(TokenKind.Dot)) {
+        expr = this.finishMember(expr);
+        continue;
+      }
+      return expr;
     }
-    return expr;
+  }
+
+  /**
+   * `xs.length` and `xs.push(v)` — the two array member operations
+   * (spec §5.14, §7.11.1).
+   *
+   * Both take a variable as their receiver. The member token is checked before
+   * being consumed, because `fail` reports at the current token.
+   */
+  private finishMember(target: Expression): Expression {
+    this.advance(); // '.'
+    const member = this.current();
+    if (member.kind !== TokenKind.Identifier) {
+      throw this.fail("expected a property name after '.'");
+    }
+    if (
+      member.lexeme !== LENGTH_PROPERTY &&
+      member.lexeme !== PUSH_METHOD
+    ) {
+      throw this.fail(
+        `unknown array operation '.${member.lexeme}': v0 supports '.length' and '.push' (spec §5.14, §7.11.1)`,
+      );
+    }
+    if (target.kind !== "IdentifierExpression") {
+      throw this.fail(
+        `the receiver of '.${member.lexeme}' must be a variable (spec §5.14)`,
+      );
+    }
+    this.advance();
+    if (member.lexeme === LENGTH_PROPERTY) {
+      return {
+        kind: "LengthExpression",
+        target,
+        span: spanMerge(spanOfNode(target), spanOf(member)),
+      };
+    }
+    this.consume(TokenKind.LParen, "expected '(' after '.push'");
+    const value = this.parseExpression();
+    const end = this.consume(
+      TokenKind.RParen,
+      "expected ')' after the argument of '.push'",
+    );
+    return {
+      kind: "PushExpression",
+      target,
+      value,
+      span: spanMerge(spanOfNode(target), spanOf(end)),
+    };
   }
 
   private parsePrimary(): Expression {

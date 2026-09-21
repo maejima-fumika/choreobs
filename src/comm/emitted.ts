@@ -13,6 +13,7 @@ const COMM_TYPES = [
   "Float",
   "Boolean",
   "String",
+  "Null",
   "IntegerArray",
   "FloatArray",
   "BooleanArray",
@@ -114,6 +115,7 @@ function commToProjectedBase(
     case "float":
     case "boolean":
     case "string":
+    case "null":
       return comm;
     case "integerArray":
       return "integer[]";
@@ -134,6 +136,8 @@ function suffixToComm(suffix: CommSuffix): CommKind {
       return "boolean";
     case "String":
       return "string";
+    case "Null":
+      return "null";
     case "IntegerArray":
       return "integerArray";
     case "FloatArray":

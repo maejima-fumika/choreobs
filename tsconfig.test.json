@@ -1,0 +1,24 @@
+// Type-checks everything, including `test/` and `scripts/`, which the build's
+// tsconfig leaves out because it only emits `src`. Checking only — no output.
+//
+// `src` is still checked under the build's own `node16` settings by `tsc`;
+// this config only widens the net, so the looser module mode below does not
+// weaken what ships.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // `test/` and `scripts/` run under tsx as ES modules and use
+    // `import.meta`, which `module: node16` rejects while package.json has no
+    // `"type"` field. `preserve` accepts it, and requires `bundler`
+    // resolution, which still understands the `.js` specifiers used here.
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": "${configDir}"
+  },
+  "include": ["src", "test", "scripts"],
+  "exclude": ["node_modules", "dist"]
+}

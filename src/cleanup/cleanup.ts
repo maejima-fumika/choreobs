@@ -7,9 +7,17 @@ import type {
   ProjectedExpression,
   ProjectedForInit,
   ProjectedForUpdate,
+  ForStatement,
   ExpressionStatement,
   NothingExpression,
 } from "../ir/projected.js";
+import {
+  mapExpressionChildren,
+  mapStatementParts,
+  mapForInit,
+  mapForUpdate,
+  type StatementMappers,
+} from "../ir/traverse.js";
 
 export function cleanupAll(
   programs: readonly ProjectedProgram[],
@@ -52,66 +60,34 @@ function cleanupStatements(
   return out;
 }
 
+const MAPPERS: StatementMappers = {
+  expression: simplifyExpression,
+  block: cleanupBlock,
+};
+
+/**
+ * Two kinds can lose something and are handled by hand; the rest just need
+ * their expressions simplified and their blocks cleaned (spec §13.9.5).
+ */
 function cleanupStatement(stmt: ProjectedStatement): ProjectedStatement | undefined {
-  switch (stmt.kind) {
-    case "AbsentStatement":
-      return undefined;
-    case "ExpressionStatement":
-      return cleanupExpressionStatement(stmt);
-    case "LetStatement":
-      return {
-        ...stmt,
-        initializer: simplifyExpression(stmt.initializer),
-      };
-    case "AssignmentStatement":
-      return {
-        ...stmt,
-        value: simplifyExpression(stmt.value),
-      };
-    case "SendStatement":
-      return {
-        ...stmt,
-        value: simplifyExpression(stmt.value),
-      };
-    case "BroadcastStatement":
-      return {
-        ...stmt,
-        value: simplifyExpression(stmt.value),
-      };
-    case "ReturnStatement":
-      return {
-        ...stmt,
-        value:
-          stmt.value === undefined
-            ? undefined
-            : simplifyExpression(stmt.value),
-      };
-    case "IfStatement":
-      return {
-        ...stmt,
-        condition: simplifyExpression(stmt.condition),
-        then: cleanupBlock(stmt.then),
-        else: stmt.else === undefined ? undefined : cleanupBlock(stmt.else),
-      };
-    case "WhileStatement":
-      return {
-        ...stmt,
-        condition: simplifyExpression(stmt.condition),
-        body: cleanupBlock(stmt.body),
-      };
-    case "ForStatement":
-      return {
-        ...stmt,
-        init: stmt.init === undefined ? undefined : cleanupForInit(stmt.init),
-        condition:
-          stmt.condition === undefined
-            ? undefined
-            : simplifyExpression(stmt.condition),
-        update:
-          stmt.update === undefined ? undefined : cleanupForUpdate(stmt.update),
-        body: cleanupBlock(stmt.body),
-      };
+  if (stmt.kind === "ExpressionStatement") {
+    return cleanupExpressionStatement(stmt);
   }
+  if (stmt.kind === "ForStatement") {
+    return cleanupFor(stmt);
+  }
+  return mapStatementParts(stmt, MAPPERS);
+}
+
+function cleanupFor(stmt: ForStatement): ProjectedStatement {
+  return {
+    ...stmt,
+    init: stmt.init === undefined ? undefined : cleanupForInit(stmt.init),
+    condition: simplifyExpression(stmt.condition),
+    update:
+      stmt.update === undefined ? undefined : cleanupForUpdate(stmt.update),
+    body: cleanupBlock(stmt.body),
+  };
 }
 
 function cleanupExpressionStatement(
@@ -124,77 +100,51 @@ function cleanupExpressionStatement(
   return { ...stmt, expression };
 }
 
-function cleanupForInit(init: ProjectedForInit): ProjectedForInit {
-  if (init.kind === "ForLetInit") {
-    return {
-      ...init,
-      initializer: simplifyExpression(init.initializer),
-    };
-  }
-  return {
-    ...init,
-    value: simplifyExpression(init.value),
-  };
-}
-
-function cleanupForUpdate(update: ProjectedForUpdate): ProjectedForUpdate {
-  return {
-    ...update,
-    value: simplifyExpression(update.value),
-  };
+/** A `let` binding in the header always stays; only a discarded slot can go. */
+function cleanupForInit(init: ProjectedForInit): ProjectedForInit | undefined {
+  return init.kind === "ForLetInit"
+    ? mapForInit(init, MAPPERS)
+    : cleanupForUpdate(init);
 }
 
 /**
- * Stage 1 — expression simplification (spec §13.9.2).
- * Only {@link NothingExpression} artifacts fold to `null`; ordinary calls are preserved.
+ * A header slot that holds only a discarded expression disappears once that
+ * expression simplifies to `null` — the `for` equivalent of dropping a `null;`
+ * statement (spec §12.14, §13.9.4). A binding or a real assignment stays.
+ */
+function cleanupForUpdate(
+  update: ProjectedForUpdate,
+): ProjectedForUpdate | undefined {
+  const cleaned = mapForUpdate(update, MAPPERS);
+  if (cleaned.kind === "ForExpressionInit" && isNullLiteral(cleaned.expression)) {
+    return undefined;
+  }
+  return cleaned;
+}
+
+/**
+ * Expression simplification (spec §13.9.2), bottom-up: every argument is
+ * simplified before its parent is considered.
+ *
+ * Only {@link NothingExpression} artifacts fold to `null`, and only when every
+ * argument is syntactically `null` after simplification. Ordinary calls are
+ * preserved whatever their type says they return, because a call may
+ * communicate (spec §13.9.5).
  */
 export function simplifyExpression(expr: ProjectedExpression): ProjectedExpression {
-  switch (expr.kind) {
-    case "AbsentExpression":
-      return nullLiteral(expr.span);
-    case "NullLiteralExpression":
-    case "IntegerLiteralExpression":
-    case "FloatLiteralExpression":
-    case "StringLiteralExpression":
-    case "BooleanLiteralExpression":
-    case "IdentifierExpression":
-    case "ReceiveExpression":
-      return expr;
-    case "NothingExpression":
-      return simplifyNothingExpression(expr);
-    case "ParenthesizedExpression":
-      return {
-        ...expr,
-        expression: simplifyExpression(expr.expression),
-      };
-    case "UnaryExpression":
-      return {
-        ...expr,
-        operand: simplifyExpression(expr.operand),
-      };
-    case "BinaryExpression":
-      return {
-        ...expr,
-        left: simplifyExpression(expr.left),
-        right: simplifyExpression(expr.right),
-      };
-    case "CallExpression":
-      return {
-        ...expr,
-        args: expr.args.map((arg) => simplifyExpression(arg)),
-      };
-    case "IndexExpression":
-      return {
-        ...expr,
-        target: simplifyExpression(expr.target),
-        index: simplifyExpression(expr.index),
-      };
-    case "PropertyLengthExpression":
-      return {
-        ...expr,
-        target: simplifyExpression(expr.target),
-      };
+  if (expr.kind === "AbsentExpression") {
+    // Absent finalization runs first and leaves none behind (spec §13.7).
+    // The rule below is stated over arguments that are syntactically `null`,
+    // which an `absent` is not, so reaching here would silently keep a
+    // `nothing(...)` alive that should have folded away.
+    throw new Error(
+      "internal error: absent must be finalized before cleanup (spec §13.7)",
+    );
   }
+  if (expr.kind === "NothingExpression") {
+    return simplifyNothingExpression(expr);
+  }
+  return mapExpressionChildren(expr, simplifyExpression);
 }
 
 function simplifyNothingExpression(

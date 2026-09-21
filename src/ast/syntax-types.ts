@@ -1,4 +1,4 @@
-import type { AstNode, Span } from "./span.js";
+import type { AstNode } from "./span.js";
 import type { LocationAnnotation } from "./location.js";
 
 /** Base types in type annotations (spec §5.2, §7.1). */

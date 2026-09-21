@@ -5,45 +5,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   compileFile,
-  compileSource,
   writeOutputs,
-  type CompileResult,
 } from "../../src/driver/index.js";
-import type { ChoreoBSConfig } from "../../src/config/types.js";
-
-const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
-
-function compile(
-  source: string,
-  config: ChoreoBSConfig = aliceBob,
-  cbsPath = "index.cbs",
-): CompileResult {
-  return compileSource(source, cbsPath, config);
-}
-
-function bs(result: CompileResult, endpoint: string): string {
-  const hit = result.outputs.find((o) => o.endpoint === endpoint);
-  assert.ok(hit, `missing output for ${endpoint}`);
-  return hit.source.trimEnd();
-}
-
-function expectSuccess(result: CompileResult): void {
-  assert.equal(
-    result.success,
-    true,
-    `expected success, errors: ${JSON.stringify(result.errors)}`,
-  );
-}
-
-function expectFailure(result: CompileResult): void {
-  assert.equal(result.success, false);
-  assert.ok(result.errors.length > 0);
-  assert.equal(result.outputs.length, 0);
-}
-
-function assertNoChoreoSyntax(source: string): void {
-  assert.doesNotMatch(source, /@/);
-}
+import { aliceBob } from "../support/config.js";
+import {
+  compile,
+  bs,
+  expectSuccess,
+  expectFailure,
+  assertNoChoreoResidue,
+} from "../support/compile.js";
 
 describe("integration — compile pipeline", () => {
   describe("communication edge cases", () => {
@@ -107,8 +78,8 @@ let n: string@bob <- m;
       assert.match(bs(result, "bob"), /receiveFloat\("alice", "top_0"\)/);
       assert.match(bs(result, "alice"), /sendString\("bob", "top_1", m\)/);
       assert.match(bs(result, "bob"), /receiveString\("alice", "top_1"\)/);
-      assertNoChoreoSyntax(bs(result, "alice"));
-      assertNoChoreoSyntax(bs(result, "bob"));
+      assertNoChoreoResidue(bs(result, "alice"));
+      assertNoChoreoResidue(bs(result, "bob"));
     });
   });
 
@@ -436,7 +407,7 @@ function f(): void {
 function f@alice(): integer@alice {
   let xs: float[]@alice = [1.1, 2.2]@alice;
   let ys: float[]@alice <- xs;
-  return length(ys);
+  return ys.length;
 }
 let n: integer@alice = f();
 `);
@@ -444,6 +415,134 @@ let n: integer@alice = f();
       // A transfer at one location is a fresh copy, and emits no communication.
       assert.match(bs(result, "alice"), /let ys: float\[\] = cloneFloatArray\(xs\);/);
       assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
+    });
+
+    it("§7.8 transfers a null value through the null communication API", () => {
+      const result = compile(`
+let x: null@alice = null@alice;
+let y: null@bob <- x;
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /sendNull\("bob", "top_0", x\);/);
+      assert.match(bs(result, "bob"), /let y: null = receiveNull\("alice", "top_0"\);/);
+      // Regression: `null` used to fall back to the integer channel.
+      assert.doesNotMatch(bs(result, "alice"), /sendInteger/);
+      assert.doesNotMatch(bs(result, "bob"), /receiveInteger/);
+    });
+
+    it("§7.8 broadcasts a null value through the null communication API", () => {
+      const result = compile(`
+let x: null@alice = null@alice;
+let y: null@every <- x;
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /broadcastNull\("top_0", x\);/);
+      assert.match(bs(result, "bob"), /receiveNull\("alice", "top_0"\)/);
+    });
+
+    it("§2.2 rejects a duplicate endpoint name", () => {
+      const result = compile(`let x: integer@alice = 1@alice;`, {
+        endpoints: ["alice", "alice", "bob"],
+      });
+      expectFailure(result);
+      assert.ok(
+        result.errors.some((e) => e.message.includes("duplicate endpoint 'alice'")),
+        JSON.stringify(result.errors),
+      );
+    });
+
+    it("§11.5 keeps tags unique when a function is named after the top-level scope", () => {
+      const result = compile(`
+function top(): void {
+  let a: integer@alice = 1@alice;
+  let b: integer@bob <- a;
+  return;
+}
+let x: integer@alice = 2@alice;
+let y: integer@bob <- x;
+top();
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      const tags = [...alice.matchAll(/"(top_\d+)"/g)].map((m) => m[1]);
+      assert.equal(tags.length, 2);
+      assert.equal(new Set(tags).size, 2, `tags collided: ${tags.join(", ")}`);
+    });
+
+    it("§7.8 evaluates a broadcast source exactly once at the sender", () => {
+      const result = compile(`
+function nextValue(): integer@alice { return 1@alice; }
+let n: integer@every <- nextValue();
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      // Two calls would broadcast one value and keep another. Count call sites
+      // only — the declaration header mentions the name as well.
+      const calls = alice
+        .split("\n")
+        .filter((l) => l.includes("nextValue()") && !l.startsWith("function"));
+      assert.equal(calls.length, 1, alice);
+      assert.match(alice, /let __transfer_0: integer = nextValue\(\);/);
+      assert.match(alice, /broadcastInteger\("top_0", __transfer_0\);/);
+      assert.match(alice, /let n: integer = __transfer_0;/);
+    });
+
+    it("§7.8 clones the same array it broadcasts", () => {
+      const result = compile(`
+function makeArray(): integer[]@alice { return [1, 2]@alice; }
+let xs: integer[]@every <- makeArray();
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      const calls = alice
+        .split("\n")
+        .filter((l) => l.includes("makeArray()") && !l.startsWith("function"));
+      assert.equal(calls.length, 1, alice);
+      assert.match(alice, /broadcastIntegerArray\("top_0", __transfer_0\);/);
+      assert.match(alice, /let xs: integer\[\] = cloneIntegerArray\(__transfer_0\);/);
+    });
+
+    it("§7.8 uses a plain identifier source directly, with no temporary", () => {
+      const result = compile(`
+let plain: boolean@alice = true@alice;
+let ok: boolean@every <- plain;
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      assert.match(alice, /broadcastBoolean\("top_0", plain\);/);
+      assert.doesNotMatch(alice, /__transfer/);
+    });
+
+    it("§6.2 reserves the compiler's `__` identifier prefix", () => {
+      const result = compile(`let __transfer_0: integer@alice = 1@alice;`);
+      expectFailure(result);
+      assert.ok(
+        result.errors.some((e) => e.message.includes("reserved runtime name")),
+        JSON.stringify(result.errors),
+      );
+    });
+
+    it("compiles the array operations to the same BlueScript spelling", () => {
+      const result = compile(`
+function total@alice(ys: integer[]@alice): integer@alice {
+  let sum: integer@alice = 0@alice;
+  for (let i = 0@alice; i < ys.length; i = i + 1@alice) {
+    sum = sum + ys[i];
+  }
+  return sum;
+}
+let xs: integer[]@alice = [1, 2]@alice;
+xs.push(3@alice);
+let n: integer@alice = xs.length;
+let t: integer@alice = total(xs);
+`);
+      expectSuccess(result);
+      // Source and output spell these the same way, so code generation for the
+      // two array operations is the identity (spec §13.2.1).
+      const alice = bs(result, "alice");
+      assert.match(alice, /xs\.push\(3\);/);
+      assert.match(alice, /let n: integer = xs\.length;/);
+      assert.match(alice, /i < ys\.length;/);
     });
 
     it("stops before EPP when parse fails", () => {
@@ -499,8 +598,8 @@ while (false@every) {
       const result = compile(`
 let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
-push(xs, 20@alice);
-let n: integer@alice = length(xs);
+xs.push(20@alice);
+let n: integer@alice = xs.length;
 let ys: integer[]@bob <- xs;
 `);
       expectSuccess(result);

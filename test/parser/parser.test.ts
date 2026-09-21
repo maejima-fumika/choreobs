@@ -89,7 +89,7 @@ let y: integer@bob <- x;`;
     assert.equal(fn?.kind, "FunctionDeclaration");
     if (fn?.kind === "FunctionDeclaration") {
       assert.equal(fn.name, "add");
-      assert.equal(fn.at.kind, "individual");
+      assert.equal(fn.at?.kind, "individual");
       assert.equal(fn.context.kind, "local");
       assert.equal(fn.params.length, 2);
       assert.equal(fn.body.statements[0]?.kind, "ReturnStatement");
@@ -113,6 +113,88 @@ let y: integer@bob <- x;`;
         assert.equal(ret.value, undefined);
       }
     }
+  });
+
+  describe("array operation syntax (spec §5.14)", () => {
+    function parseFail(source: string, needle: string): void {
+      const { errors } = parse(source);
+      assert.ok(errors.length > 0, `expected a parse error for: ${source}`);
+      assert.ok(
+        errors.some((e) => e.message.includes(needle)),
+        JSON.stringify(errors),
+      );
+    }
+
+    it("parses `xs.length` as a LengthExpression", () => {
+      const { program, errors } = parse(`let n: integer@alice = xs.length;`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      const stmt = program?.items[0];
+      assert.equal(stmt?.kind, "TopLevelStatement");
+      if (stmt?.kind !== "TopLevelStatement") return;
+      const let_ = stmt.statement;
+      assert.equal(let_.kind, "LetStatement");
+      if (let_.kind !== "LetStatement") return;
+      assert.equal(let_.initializer.kind, "LengthExpression");
+    });
+
+    it("parses `xs.push(v);` as an expression statement", () => {
+      // `.push` is an expression of type `void` (spec §5.14, §7.11.1), so it
+      // reaches the tree as an ordinary expression statement. That it may not
+      // appear anywhere else is a typing rule, checked in test/check.
+      const { program, errors } = parse(`xs.push(1@alice);`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      const stmt = program?.items[0];
+      assert.equal(stmt?.kind, "TopLevelStatement");
+      if (stmt?.kind !== "TopLevelStatement") return;
+      assert.equal(stmt.statement.kind, "ExpressionStatement");
+      if (stmt.statement.kind !== "ExpressionStatement") return;
+      assert.equal(stmt.statement.expression.kind, "PushExpression");
+    });
+
+    it("parses `.push` in expression position (spec §5.14)", () => {
+      // Rejecting it is the type checker's job now — see test/check.
+      for (const source of [`let n = xs.push(1@alice);`, `f(xs.push(1@alice));`]) {
+        const { errors } = parse(source);
+        assert.equal(errors.length, 0, JSON.stringify(errors));
+      }
+    });
+
+    it("requires a variable as the receiver of `.length` and `.push`", () => {
+      parseFail(`let n: integer@alice = xs.length.length;`, "must be a variable");
+      parseFail(`let n: integer@alice = f().length;`, "must be a variable");
+      parseFail(`xs[0@alice].push(1@alice);`, "must be a variable");
+      parseFail(`(xs).push(1@alice);`, "must be a variable");
+    });
+
+    it("rejects an unknown array operation", () => {
+      parseFail(`let n: integer@alice = xs.pop;`, "unknown array operation '.pop'");
+    });
+  });
+
+  it("requires a for condition (spec §5.11, §16.45)", () => {
+    const { errors } = parse(`for (let i = 0@every; ; i = i + 1@every) {\n}`);
+    assert.ok(errors.length > 0);
+    assert.ok(
+      errors.some((e) => e.message.includes("expected expression")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("parses array element targets in for clauses (spec §5.11)", () => {
+    const source = `for (xs[0@alice] = 0@alice; c; xs[1@alice] = 1@alice) {
+}`;
+    const { program, errors } = parse(source);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    const stmt = program?.items[0];
+    assert.equal(stmt?.kind, "TopLevelStatement");
+    if (stmt?.kind !== "TopLevelStatement") return;
+    const forStmt = stmt.statement;
+    assert.equal(forStmt.kind, "ForStatement");
+    if (forStmt.kind !== "ForStatement") return;
+    assert.equal(forStmt.init?.kind, "ForAssignmentInit");
+    if (forStmt.init?.kind !== "ForAssignmentInit") return;
+    assert.equal(forStmt.init.target.kind, "IndexAssignmentTarget");
+    assert.equal(forStmt.update?.target.kind, "IndexAssignmentTarget");
   });
 
   it("parses if/while/for and transfer statement", () => {
@@ -261,8 +343,8 @@ let ys: float[]@bob = []@bob;
 let zs: boolean[]@every = [true, false]@every;
 let x: integer@alice = xs[0@alice];
 xs[1@alice] = 10@alice;
-let n: integer@alice = length(xs);
-push(xs, 20@alice);
+let n: integer@alice = xs.length;
+xs.push(20@alice);
 `);
     assert.equal(errors.length, 0);
     assert.ok(program);

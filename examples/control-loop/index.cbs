@@ -1,0 +1,169 @@
+// A closed control loop.
+//
+// A controller runs a proportional loop against an actuator, while a monitor
+// keeps an independent audit trail. The loop runs under a `while` whose
+// condition is `@every`, so all three endpoints leave the loop together.
+//
+// This example also shows the two ways of copying a value at one location:
+// `=` aliases a mutable array, while `<-` makes a fresh copy of it.
+
+// ---------------------------------------------------------------------------
+// actuator: the plant being controlled
+// ---------------------------------------------------------------------------
+
+function initialPosition@actuator(): float@actuator {
+    return 0.0@actuator;
+}
+
+function applyStep@actuator(position: float@actuator, command: float@actuator): float@actuator {
+    // The plant only ever moves a bounded amount per step.
+    let limit = 4.0@actuator;
+    if (command > limit) {
+        return position + limit;
+    }
+    let lower = 0.0@actuator - limit;
+    if (command < lower) {
+        return position + lower;
+    }
+    return position + command;
+}
+
+function actuatorHistory@actuator(): float[]@actuator {
+    let history: float[]@actuator = []@actuator;
+    return history;
+}
+
+function remember@actuator(history: float[]@actuator, position: float@actuator): void {
+    history.push(position);
+}
+
+// ---------------------------------------------------------------------------
+// controller: the proportional law
+// ---------------------------------------------------------------------------
+
+function target@controller(): float@controller {
+    return 20.0@controller;
+}
+
+function gain@controller(): float@controller {
+    return 0.6@controller;
+}
+
+function command@controller(position: float@controller): float@controller {
+    let goal = target();
+    let k = gain();
+    let error = goal - position;
+    return k * error;
+}
+
+function absError@controller(position: float@controller): float@controller {
+    let goal = target();
+    let error = goal - position;
+    if (error < 0.0@controller) {
+        return 0.0@controller - error;
+    }
+    return error;
+}
+
+function settled@controller(position: float@controller): boolean@controller {
+    let tolerance = 0.5@controller;
+    let error = absError(position);
+    return error < tolerance;
+}
+
+// ---------------------------------------------------------------------------
+// monitor: an independent audit trail
+// ---------------------------------------------------------------------------
+
+function newTrail@monitor(): float[]@monitor {
+    let trail: float[]@monitor = []@monitor;
+    return trail;
+}
+
+function observe@monitor(trail: float[]@monitor, position: float@monitor): void {
+    trail.push(position);
+}
+
+// A local function may use the transfer operator, but both sides are at the
+// monitor, so it is a plain local copy — and for an array that means a fresh
+// array rather than an alias.
+function snapshot@monitor(trail: float[]@monitor): float[]@monitor {
+    let copy: float[]@monitor <- trail;
+    return copy;
+}
+
+function trailLength@monitor(trail: float[]@monitor): integer@monitor {
+    return trail.length;
+}
+
+function maxSeen@monitor(trail: float[]@monitor): float@monitor {
+    let best = 0.0@monitor;
+    for (let i = 0@monitor; i < trail.length; i = i + 1@monitor) {
+        if (best < trail[i]) {
+            best = trail[i];
+        }
+    }
+    return best;
+}
+
+// ---------------------------------------------------------------------------
+// The loop
+// ---------------------------------------------------------------------------
+
+let position: float@actuator = initialPosition();
+let history: float[]@actuator = actuatorHistory();
+let trail: float[]@monitor = newTrail();
+
+let budget: integer@every = 12@every;
+let step: integer@every = 0@every;
+let running: boolean@every = true@every;
+
+while (running) {
+    // The current position is published to everyone that needs it.
+    let atController: float@controller <- position;
+    let atMonitor: float@monitor <- position;
+
+    observe(trail, atMonitor);
+
+    // The controller computes a command and sends it to the plant.
+    let nextCommand: float@controller = command(atController);
+    let atActuator: float@actuator <- nextCommand;
+    position = applyStep(position, atActuator);
+    remember(history, position);
+
+    // Whether to keep going is decided by the controller and agreed by all.
+    let done: boolean@controller = settled(atController);
+    let converged: boolean@every <- done;
+
+    step = step + 1@every;
+
+    if (converged) {
+        running = false@every;
+    } else {
+        if (step < budget) {
+            running = true@every;
+        } else {
+            running = false@every;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// After the loop: an alias and a fresh copy behave differently
+// ---------------------------------------------------------------------------
+
+let aliased: float[]@monitor = trail;      // same array
+let copied: float[]@monitor <- trail;      // fresh array
+
+let extra: float@monitor = 999.0@monitor;
+trail.push(extra);
+
+// `aliased` sees the push, `copied` does not.
+let aliasedLength: integer@monitor = trailLength(aliased);
+let copiedLength: integer@monitor = trailLength(copied);
+
+let peak: float@monitor = maxSeen(trail);
+let peakEverywhere: float@every <- peak;
+
+let finalSnapshot: float[]@monitor = snapshot(trail);
+let snapshotLength: integer@monitor = trailLength(finalSnapshot);

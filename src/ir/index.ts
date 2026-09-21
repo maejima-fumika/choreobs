@@ -17,7 +17,6 @@ export type {
   ParenthesizedExpression,
   ReceiveExpression,
   ProjectedStatement,
-  AbsentStatement,
   LetStatement,
   AssignmentStatement,
   SendStatement,

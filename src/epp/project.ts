@@ -1,10 +1,9 @@
 import type { Span } from "../ast/span.js";
 import type { Location } from "../ast/location.js";
-import type { LocatedType } from "../ast/typed.js";
+import type { CommTag, LocatedType, TransferMode } from "../ast/typed.js";
 import type { FunctionDeclaration } from "../ast/declarations.js";
 import type {
   TypedProgram,
-  TypedTopLevelItem,
   TypedFunctionDeclaration,
   TypedTopLevelStatement,
   TypedStatement,
@@ -14,6 +13,7 @@ import type {
   TypedLetTransferStatement,
   TypedAssignmentStatement,
   TypedTransferStatement,
+  TypedPushExpression,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
@@ -28,6 +28,7 @@ import type {
   TypedUnaryExpression,
   TypedCallExpression,
   TypedIndexExpression,
+  TypedLengthExpression,
   TypedParenthesizedExpression,
 } from "../ast/typed.js";
 import { residesAt } from "../types/located.js";
@@ -44,6 +45,11 @@ import type {
   ReceiveExpression,
 } from "../ir/projected.js";
 import { cloneFunction } from "../emit/comm.js";
+import {
+  ARRAY_SENTINEL,
+  PUSH_SENTINEL,
+  TRANSFER_TEMP_PREFIX,
+} from "../runtime/names.js";
 
 export function projectAll(
   typed: TypedProgram,
@@ -59,9 +65,23 @@ export function project(
   return new Projector(endpoint).projectProgram(typed);
 }
 
+/** A transfer statement's parts, independent of its `let` / assignment form. */
+interface TransferParts {
+  readonly name: string;
+  /** The destination's type, which carries the location the value lands at. */
+  readonly type: LocatedType;
+  readonly source: TypedExpression;
+  readonly mode: TransferMode;
+  readonly commTag?: CommTag;
+  readonly span: Span;
+}
+
+/** Binds a transferred value at its destination: `let x = v;` or `x = v;`. */
+type BindTransfer = (value: ProjectedExpression) => ProjectedStatement;
+
 class Projector {
   private loopDepth = 0;
-  private ifDepth = 0;
+  private transferTemps = 0;
 
   constructor(private readonly endpoint: string) {}
 
@@ -163,19 +183,12 @@ class Projector {
     }
   }
 
-  private projectLet(stmt: TypedLetStatement): ProjectedStatement {
+  private projectLet(
+    stmt: TypedLetStatement,
+  ): ProjectedStatement {
     const span = stmt.stmt.span;
     if (!this.residesHere(stmt.choreoType.location)) {
-      if (this.loopDepth > 0) {
-        return this.absentStatement(span);
-      }
-      if (this.ifDepth > 0) {
-        return this.nothingForExpression(stmt.initializer, span);
-      }
-      if (stmt.initializer.expr.kind === "CallExpression") {
-        return this.nothingForExpression(stmt.initializer, span);
-      }
-      return this.absentStatement(span);
+      return this.discardStatement(span, stmt.initializer);
     }
     return {
       kind: "LetStatement",
@@ -186,203 +199,146 @@ class Projector {
     };
   }
 
+  /**
+   * A transfer statement's parts, independent of whether it was written as a
+   * `let` declaration or as a store into an existing variable (spec §5.8).
+   *
+   * The two typed nodes share no field for the destination's type — one calls
+   * it `choreoType`, the other `targetType` — so projection works from this
+   * normalized view plus a {@link BindTransfer} for the form-specific half.
+   */
+  private transferParts(
+    stmt: TypedLetTransferStatement | TypedTransferStatement,
+    type: LocatedType,
+  ): TransferParts {
+    return {
+      name: stmt.stmt.name,
+      type,
+      source: stmt.source,
+      mode: stmt.transferMode,
+      commTag: stmt.commTag,
+      span: stmt.stmt.span,
+    };
+  }
+
   private projectLetTransfer(
     stmt: TypedLetTransferStatement,
   ): ProjectedStatement | ProjectedStatement[] {
-    if (stmt.transferMode === "localCopy") {
-      return this.projectLocalCopyLetTransfer(stmt);
-    }
-
-    const span = stmt.stmt.span;
-    const dst = stmt.choreoType.location;
-    const src = stmt.source.choreoType.location;
-    const tag = stmt.commTag!;
-    const name = stmt.stmt.name;
-    const comm = this.commKindForType(stmt.choreoType);
-
-    if (dst.kind === "every") {
-      return this.projectBroadcastReceive(
-        name,
-        stmt.choreoType,
-        src,
-        tag,
-        comm,
-        stmt.source,
-        span,
-      );
-    }
-
-    const dstEndpoint = dst.name;
-    const srcEndpoint = src.kind === "individual" ? src.name : "";
-
-    if (this.endpoint === srcEndpoint) {
-      return {
-        kind: "SendStatement",
-        comm,
-        destinationEndpoint: dstEndpoint,
-        tag,
-        value: this.projectExpression(stmt.source),
-        span,
-      };
-    }
-
-    if (this.endpoint === dstEndpoint) {
-      return {
-        kind: "LetStatement",
-        name,
-        type: this.projectType(stmt.choreoType),
-        initializer: this.receiveExpr(comm, srcEndpoint, tag, span),
-        span,
-      };
-    }
-
-    return this.absentStatement(span);
-  }
-
-  private projectBroadcastReceive(
-    name: string,
-    choreoType: LocatedType,
-    src: Location,
-    tag: string,
-    comm: CommKind,
-    source: TypedExpression,
-    span: Span,
-  ): ProjectedStatement | ProjectedStatement[] {
-    const srcEndpoint = src.kind === "individual" ? src.name : "";
-    const projectedSource = this.projectExpression(source);
-
-    if (this.endpoint === srcEndpoint) {
-      const senderInitializer =
-        choreoType.isArray
-          ? ({
-              kind: "CallExpression",
-              callee: cloneFunction(comm),
-              args: [projectedSource],
-              span,
-            } as ProjectedExpression)
-          : projectedSource;
-      return [
-        {
-          kind: "BroadcastStatement",
-          comm,
-          tag,
-          value: projectedSource,
-          span,
-        },
-        {
-          kind: "LetStatement",
-          name,
-          type: this.projectType(choreoType),
-          initializer: senderInitializer,
-          span,
-        },
-      ];
-    }
-
-    return {
+    const parts = this.transferParts(stmt, stmt.choreoType);
+    return this.projectTransfer(parts, (value) => ({
       kind: "LetStatement",
-      name,
-      type: this.projectType(choreoType),
-      initializer: this.receiveExpr(comm, srcEndpoint, tag, span),
-      span,
-    };
+      name: parts.name,
+      type: this.projectType(parts.type),
+      initializer: value,
+      span: parts.span,
+    }));
   }
 
   private projectComm(
     stmt: TypedTransferStatement,
   ): ProjectedStatement | ProjectedStatement[] {
-    if (stmt.transferMode === "localCopy") {
-      return this.projectLocalCopyTransfer(stmt);
-    }
+    const parts = this.transferParts(stmt, stmt.targetType);
+    return this.projectTransfer(parts, (value) => ({
+      kind: "AssignmentStatement",
+      target: { kind: "IdentifierAssignmentTarget", name: parts.name },
+      value,
+      span: parts.span,
+    }));
+  }
 
-    const span = stmt.stmt.span;
-    const dst = stmt.targetType.location;
-    const src = stmt.source.choreoType.location;
-    const tag = stmt.commTag!;
-    const name = stmt.stmt.name;
-    const comm = this.commKindForType(stmt.targetType);
+  /**
+   * Projects a transfer (spec §12.9).
+   *
+   * The source is evaluated once at every endpoint that evaluates the
+   * statement: as the payload at the sender, and for its computations alone
+   * everywhere else, before that endpoint's own receive.
+   */
+  private projectTransfer(
+    parts: TransferParts,
+    bind: BindTransfer,
+  ): ProjectedStatement | ProjectedStatement[] {
+    const { source, span } = parts;
 
-    if (dst.kind === "every") {
-      return this.projectBroadcastComm(
-        name,
-        stmt.targetType,
-        src,
-        tag,
-        comm,
-        stmt.source,
-        span,
+    if (parts.mode === "localCopy") {
+      // Nothing is sent, so an endpoint that does not hold the destination is
+      // left with the source's computations alone (spec §11.4).
+      if (!this.residesHere(parts.type.location)) {
+        return this.discardStatement(span, source);
+      }
+      return bind(
+        this.localCopyInitializer(
+          parts.type,
+          this.projectExpression(source),
+          span,
+        ),
       );
     }
 
-    const dstEndpoint = dst.name;
+    const dst = parts.type.location;
+    const src = source.choreoType.location;
+    const tag = parts.commTag!;
+    const comm = this.commKindForType(parts.type);
+
+    if (dst.kind === "every") {
+      return this.projectBroadcastTransfer(parts, bind, src, tag, comm);
+    }
+
+    // `src` is individual for a direct transfer (an `@every` source makes it a
+    // local copy), but `receiveExpr` still wants a name for the other arm.
     const srcEndpoint = src.kind === "individual" ? src.name : "";
 
-    if (this.endpoint === srcEndpoint) {
+    if (src.kind === "individual" && src.name === this.endpoint) {
       return {
         kind: "SendStatement",
         comm,
-        destinationEndpoint: dstEndpoint,
+        destinationEndpoint: dst.name,
         tag,
-        value: this.projectExpression(stmt.source),
+        value: this.projectExpression(source),
         span,
       };
     }
 
-    if (this.endpoint === dstEndpoint) {
-      return {
-        kind: "AssignmentStatement",
-        target: { kind: "IdentifierAssignmentTarget", name },
-        value: this.receiveExpr(comm, srcEndpoint, tag, span),
+    if (dst.name === this.endpoint) {
+      return [
+        this.sourceEffect(span, source),
+        bind(this.receiveExpr(comm, srcEndpoint, tag, span)),
+      ];
+    }
+
+    return this.discardStatement(span, source);
+  }
+
+  /** Broadcast to `@every`: the sender broadcasts, everyone else receives (spec §11.3). */
+  private projectBroadcastTransfer(
+    parts: TransferParts,
+    bind: BindTransfer,
+    src: Location,
+    tag: string,
+    comm: CommKind,
+  ): ProjectedStatement[] {
+    const { source, span } = parts;
+    const srcEndpoint = src.kind === "individual" ? src.name : "";
+
+    if (src.kind === "individual" && src.name === this.endpoint) {
+      // The sender needs the value twice — as the payload and as its own copy
+      // — so a temporary keeps it to one evaluation (spec §7.8).
+      const { setup, value } = this.evaluateOnce(
+        this.projectExpression(source),
+        parts.type,
         span,
-      };
+      );
+      return [
+        ...setup,
+        { kind: "BroadcastStatement", comm, tag, value, span },
+        // The sender keeps its own fresh copy, like every receiver does.
+        bind(this.localCopyInitializer(parts.type, value, span)),
+      ];
     }
 
-    return this.absentStatement(span);
-  }
-
-  private projectLocalCopyLetTransfer(
-    stmt: TypedLetTransferStatement,
-  ): ProjectedStatement {
-    const span = stmt.stmt.span;
-    const dst = stmt.choreoType.location;
-    if (!this.residesHere(dst)) {
-      return this.absentStatement(span);
-    }
-    const projectedSource = this.projectExpression(stmt.source);
-    const initializer = this.localCopyInitializer(
-      stmt.choreoType,
-      projectedSource,
-      span,
-    );
-    return {
-      kind: "LetStatement",
-      name: stmt.stmt.name,
-      type: this.projectType(stmt.choreoType),
-      initializer,
-      span,
-    };
-  }
-
-  private projectLocalCopyTransfer(
-    stmt: TypedTransferStatement,
-  ): ProjectedStatement {
-    const span = stmt.stmt.span;
-    const dst = stmt.targetType.location;
-    if (!this.residesHere(dst)) {
-      return this.absentStatement(span);
-    }
-    const projectedSource = this.projectExpression(stmt.source);
-    const value = this.localCopyInitializer(
-      stmt.targetType,
-      projectedSource,
-      span,
-    );
-    return {
-      kind: "AssignmentStatement",
-      target: { kind: "IdentifierAssignmentTarget", name: stmt.stmt.name },
-      value,
-      span,
-    };
+    return [
+      this.sourceEffect(span, source),
+      bind(this.receiveExpr(comm, srcEndpoint, tag, span)),
+    ];
   }
 
   private localCopyInitializer(
@@ -402,77 +358,35 @@ class Projector {
     return projectedSource;
   }
 
-  /** Broadcast to `@every`: sender broadcasts; all endpoints assign from receive or local copy (§11.3). */
-  private projectBroadcastComm(
-    name: string,
-    targetType: LocatedType,
-    src: Location,
-    tag: string,
-    comm: CommKind,
-    source: TypedExpression,
-    span: Span,
-  ): ProjectedStatement | ProjectedStatement[] {
-    const srcEndpoint = src.kind === "individual" ? src.name : "";
-    const projectedSource = this.projectExpression(source);
-
-    if (src.kind === "individual" && src.name === this.endpoint) {
-      return [
-        {
-          kind: "BroadcastStatement",
-          comm,
-          tag,
-          value: projectedSource,
-          span,
-        },
-        {
-          kind: "AssignmentStatement",
-          target: { kind: "IdentifierAssignmentTarget", name },
-          // The sender keeps its own fresh copy, like every receiver does.
-          value: this.localCopyInitializer(targetType, projectedSource, span),
-          span,
-        },
-      ];
-    }
-
-    return {
-      kind: "AssignmentStatement",
-      target: { kind: "IdentifierAssignmentTarget", name },
-      value: this.receiveExpr(comm, srcEndpoint, tag, span),
-      span,
-    };
-  }
-
   private projectAssignment(
     stmt: TypedAssignmentStatement,
   ): ProjectedStatement {
     const span = stmt.stmt.span;
-    let targetLocation: Location;
-    if (stmt.target.target.kind === "IdentifierAssignmentTarget") {
-      targetLocation = (stmt.target as import("../ast/typed.js").TypedIdentifierAssignmentTarget).targetType.location;
-    } else {
-      targetLocation = (stmt.target as import("../ast/typed.js").TypedIndexAssignmentTarget).arrayType.location;
-    }
+    const targetLocation = this.assignmentTargetLocation(stmt.target);
     if (!this.residesHere(targetLocation)) {
-      return this.nothingForExpression(stmt.value, span);
+      return this.discardStatement(
+        span,
+        ...this.discardedTargetParts(stmt.target, stmt.value),
+      );
     }
     return {
       kind: "AssignmentStatement",
-      target: this.projectAssignmentTarget(stmt),
+      target: this.projectAssignmentTarget(stmt.target),
       value: this.projectExpression(stmt.value),
       span,
     };
   }
 
   private projectAssignmentTarget(
-    stmt: TypedAssignmentStatement,
+    target: import("../ast/typed.js").TypedAssignmentTarget,
   ): import("../ir/projected.js").ProjectedAssignmentTarget {
-    if (stmt.target.target.kind === "IdentifierAssignmentTarget") {
+    if (target.target.kind === "IdentifierAssignmentTarget") {
       return {
         kind: "IdentifierAssignmentTarget",
-        name: stmt.target.target.name,
+        name: target.target.name,
       };
     }
-    const indexTarget = stmt.target as import("../ast/typed.js").TypedIndexAssignmentTarget;
+    const indexTarget = target as import("../ast/typed.js").TypedIndexAssignmentTarget;
     return {
       kind: "IndexAssignmentTarget",
       name: indexTarget.target.name,
@@ -480,8 +394,19 @@ class Projector {
     };
   }
 
+  /** Where the value an assignment target names lives (spec §12.10). */
+  private assignmentTargetLocation(
+    target: import("../ast/typed.js").TypedAssignmentTarget,
+  ): Location {
+    if (target.target.kind === "IdentifierAssignmentTarget") {
+      return (target as import("../ast/typed.js").TypedIdentifierAssignmentTarget)
+        .targetType.location;
+    }
+    return (target as import("../ast/typed.js").TypedIndexAssignmentTarget)
+      .arrayType.location;
+  }
+
   private projectIf(stmt: TypedIfStatement): ProjectedStatement {
-    this.ifDepth += 1;
     const projected = {
       kind: "IfStatement" as const,
       condition: this.projectExpression(stmt.condition),
@@ -489,7 +414,6 @@ class Projector {
       else: stmt.else ? this.projectBlock(stmt.else) : undefined,
       span: stmt.stmt.span,
     };
-    this.ifDepth -= 1;
     return projected;
   }
 
@@ -510,9 +434,7 @@ class Projector {
     const projected = {
       kind: "ForStatement" as const,
       init: stmt.init ? this.projectForInit(stmt.init) : undefined,
-      condition: stmt.condition
-        ? this.projectExpression(stmt.condition)
-        : undefined,
+      condition: this.projectExpression(stmt.condition),
       update: stmt.update ? this.projectForUpdate(stmt.update) : undefined,
       body: this.projectBlock(stmt.body),
       span: stmt.stmt.span,
@@ -521,7 +443,9 @@ class Projector {
     return projected;
   }
 
-  private projectForInit(init: TypedForInit): import("../ir/projected.js").ProjectedForInit {
+  private projectForInit(
+    init: TypedForInit,
+  ): import("../ir/projected.js").ProjectedForInit | undefined {
     if ("init" in init && init.init.kind === "ForLetInit") {
       return this.projectForLetInit(init as TypedForLetInit);
     }
@@ -538,21 +462,43 @@ class Projector {
     };
   }
 
+  /**
+   * A for-header slot holds an expression, not a statement, so an assignment
+   * whose target is absent here cannot become the evaluation-only *statement*
+   * §12.10 would produce. The discarded expressions go into a `nothing(...)`
+   * that stays in the slot instead; cleanup drops the slot altogether if that
+   * simplifies to `null` (spec §12.14).
+   */
   private projectForAssignmentInit(
     init: TypedForAssignmentInit,
-  ): import("../ir/projected.js").ProjectedForAssignmentInit {
+  ): import("../ir/projected.js").ProjectedForInit | undefined {
+    const span = init.init.span;
+    if (!this.residesHere(this.assignmentTargetLocation(init.target))) {
+      return {
+        kind: "ForExpressionInit",
+        expression: this.discardedValue(
+          span,
+          ...this.discardedTargetParts(init.target, init.value),
+        ),
+        span,
+      };
+    }
     return {
       kind: "ForAssignmentInit",
-      name: init.init.name,
+      target: this.projectAssignmentTarget(init.target),
       value: this.projectExpression(init.value),
-      span: init.init.span,
+      span,
     };
   }
 
   private projectForUpdate(
     init: TypedForAssignmentInit,
-  ): import("../ir/projected.js").ProjectedForAssignmentInit {
-    return this.projectForAssignmentInit(init);
+  ): import("../ir/projected.js").ProjectedForUpdate | undefined {
+    const projected = this.projectForAssignmentInit(init);
+    if (projected === undefined || projected.kind === "ForLetInit") {
+      return undefined;
+    }
+    return projected;
   }
 
   private projectReturn(stmt: TypedReturnStatement): ProjectedStatement {
@@ -561,9 +507,6 @@ class Projector {
       return { kind: "ReturnStatement", span };
     }
     const value = this.projectExpression(stmt.value);
-    if (this.isAbsentExpr(value)) {
-      return { kind: "ReturnStatement", value, span };
-    }
     return { kind: "ReturnStatement", value, span };
   }
 
@@ -571,26 +514,24 @@ class Projector {
     stmt: TypedExpressionStatement,
   ): ProjectedStatement {
     const span = stmt.stmt.span;
-    const expr = stmt.expression;
-
-    if (!this.residesHere(expr.choreoType.location)) {
-      return this.nothingForExpression(expr, span);
-    }
-
-    const projected = this.projectExpression(expr);
-    if (this.isAbsentExpr(projected)) {
-      return this.nothingForExpression(expr, span);
-    }
     return {
       kind: "ExpressionStatement",
-      expression: projected,
+      expression: this.projectExpression(stmt.expression),
       span,
     };
   }
 
+  /**
+   * Projects an expression to this endpoint (spec §12.3).
+   *
+   * Where the result value resides here, the expression is preserved as it
+   * stands. Where it does not, the outer operation is not performed at all and
+   * {@link projectDiscarded} keeps just the computations the subexpressions
+   * still owe this endpoint, in source order.
+   */
   private projectExpression(expr: TypedExpression): ProjectedExpression {
     if (!this.residesHere(expr.choreoType.location)) {
-      return this.absentExpr(expr.expr.span);
+      return this.projectDiscarded(expr);
     }
 
     switch (expr.expr.kind) {
@@ -600,7 +541,7 @@ class Projector {
         const arrayExpr = expr as TypedArrayLiteralExpression;
         return {
           kind: "CallExpression",
-          callee: "__array",
+          callee: ARRAY_SENTINEL,
           args: arrayExpr.elements.map((e) => this.projectExpression(e)),
           span: expr.expr.span,
         };
@@ -611,10 +552,25 @@ class Projector {
           name: expr.expr.name,
           span: expr.expr.span,
         };
-      case "BinaryExpression":
-        return this.projectBinary(expr as TypedBinaryExpression);
-      case "UnaryExpression":
-        return this.projectUnary(expr as TypedUnaryExpression);
+      case "BinaryExpression": {
+        const bin = expr as TypedBinaryExpression;
+        return {
+          kind: "BinaryExpression",
+          operator: bin.expr.operator,
+          left: this.projectExpression(bin.left),
+          right: this.projectExpression(bin.right),
+          span: expr.expr.span,
+        };
+      }
+      case "UnaryExpression": {
+        const un = expr as TypedUnaryExpression;
+        return {
+          kind: "UnaryExpression",
+          operator: un.expr.operator,
+          operand: this.projectExpression(un.operand),
+          span: expr.expr.span,
+        };
+      }
       case "CallExpression":
         return this.projectCall(expr as TypedCallExpression);
       case "IndexExpression": {
@@ -626,6 +582,29 @@ class Projector {
           span: expr.expr.span,
         };
       }
+      case "LengthExpression": {
+        const lengthExpr = expr as TypedLengthExpression;
+        return {
+          kind: "PropertyLengthExpression",
+          target: this.projectExpression(lengthExpr.target),
+          span: expr.expr.span,
+        };
+      }
+      case "PushExpression": {
+        // `xs.push(v)` is emitted unchanged (spec §13.2.1). The `void` result
+        // carries the array's location, so this arm is reached exactly at the
+        // endpoints that hold the array.
+        const push = expr as TypedPushExpression;
+        return {
+          kind: "CallExpression",
+          callee: PUSH_SENTINEL,
+          args: [
+            this.projectExpression(push.target),
+            this.projectExpression(push.value),
+          ],
+          span: expr.expr.span,
+        };
+      }
       case "ParenthesizedExpression": {
         const paren = expr as TypedParenthesizedExpression;
         const inner = this.projectExpression(paren.expression);
@@ -634,6 +613,88 @@ class Projector {
           expression: inner,
           span: expr.expr.span,
         };
+      }
+    }
+  }
+
+  /**
+   * Projects an expression whose result value is not wanted here (spec §12.3).
+   *
+   * The outer operator or callee is not reproduced: either this endpoint has
+   * no value to apply it to, or — for a discarded transfer source — nobody
+   * here wants the result. What is reproduced is the *evaluation* of the
+   * operands, structurally and in source order, inside a `nothing(...)` that
+   * discards their values and yields `null` (spec §14.1). A choreography
+   * function runs at every endpoint (spec §12.11), so a call nested anywhere
+   * in here survives even though its result does not.
+   *
+   * The recursion stays on this side throughout: a subexpression whose value
+   * happens to reside here is still only evaluated, never handed back as a
+   * value. A call's *arguments* are the exception — the call does want those
+   * values, so {@link projectCall} projects them normally.
+   *
+   * Nested `nothing(...)` artifacts are left nested; flattening them is not
+   * part of Core v0 (spec §13.9).
+   */
+  private projectDiscarded(expr: TypedExpression): ProjectedExpression {
+    const span = expr.expr.span;
+    switch (expr.expr.kind) {
+      case "LiteralExpression":
+      case "IdentifierExpression":
+        return this.absentExpr(span);
+      case "BinaryExpression": {
+        const bin = expr as TypedBinaryExpression;
+        // `&&` and `||` evaluate their right operand conditionally, so their
+        // operands cannot be hoisted into `nothing(...)`, which evaluates all
+        // of its arguments. §16.46 keeps calls out of both operands precisely
+        // so that there is nothing left to preserve here.
+        if (bin.expr.operator === "&&" || bin.expr.operator === "||") {
+          return this.absentExpr(span);
+        }
+        return this.nothingExpression(
+          [this.projectDiscarded(bin.left), this.projectDiscarded(bin.right)],
+          span,
+        );
+      }
+      case "UnaryExpression": {
+        const un = expr as TypedUnaryExpression;
+        return this.nothingExpression([this.projectDiscarded(un.operand)], span);
+      }
+      case "ParenthesizedExpression": {
+        const paren = expr as TypedParenthesizedExpression;
+        return this.projectDiscarded(paren.expression);
+      }
+      case "CallExpression":
+        return this.projectCall(expr as TypedCallExpression);
+      case "IndexExpression": {
+        const index = expr as TypedIndexExpression;
+        return this.nothingExpression(
+          [
+            this.projectDiscarded(index.target),
+            this.projectDiscarded(index.index),
+          ],
+          span,
+        );
+      }
+      case "LengthExpression": {
+        const length = expr as TypedLengthExpression;
+        return this.nothingExpression([this.projectDiscarded(length.target)], span);
+      }
+      case "PushExpression": {
+        // The append belongs to the array, so it does not happen here; the
+        // receiver and the argument are still evaluated, in order (spec §5.17).
+        const push = expr as TypedPushExpression;
+        return this.nothingExpression(
+          [this.projectDiscarded(push.target), this.projectDiscarded(push.value)],
+          span,
+        );
+      }
+      case "ArrayLiteralExpression": {
+        const array = expr as TypedArrayLiteralExpression;
+        return this.nothingExpression(
+          array.elements.map((e) => this.projectDiscarded(e)),
+          span,
+        );
       }
     }
   }
@@ -655,51 +716,28 @@ class Projector {
     }
   }
 
-  private projectBinary(expr: TypedBinaryExpression): ProjectedExpression {
-    return {
-      kind: "BinaryExpression",
-      operator: expr.expr.operator,
-      left: this.projectExpression(expr.left),
-      right: this.projectExpression(expr.right),
-      span: expr.expr.span,
-    };
-  }
-
-  private projectUnary(expr: TypedUnaryExpression): ProjectedExpression {
-    return {
-      kind: "UnaryExpression",
-      operator: expr.expr.operator,
-      operand: this.projectExpression(expr.operand),
-      span: expr.expr.span,
-    };
-  }
-
+  /**
+   * A call projects to a call wherever this endpoint runs the callee — that is
+   * at every endpoint for a choreography function, and only at its own for a
+   * local one (spec §12.11).
+   *
+   * Where the callee is not generated here, the call itself disappears but its
+   * arguments do not: they are ordinary expressions that may hold choreography
+   * calls of their own, so their projections are kept in order (spec §12.3).
+   * A local function with no arguments therefore leaves `nothing()`, which
+   * cleanup removes (spec §13.9).
+   */
   private projectCall(expr: TypedCallExpression): ProjectedExpression {
-    if (expr.expr.callee === "length" && expr.args.length === 1) {
-      return {
-        kind: "PropertyLengthExpression",
-        target: this.projectExpression(expr.args[0]!),
-        span: expr.expr.span,
-      };
+    const span = expr.expr.span;
+    const args = expr.args.map((a) => this.projectExpression(a));
+    if (!this.shouldEmitFunction(expr.callee.decl)) {
+      return this.nothingExpression(args, span);
     }
-    if (expr.expr.callee === "push" && expr.args.length === 2) {
-      return {
-        kind: "CallExpression",
-        callee: "__push",
-        args: [this.projectExpression(expr.args[0]!), this.projectExpression(expr.args[1]!)],
-        span: expr.expr.span,
-      };
-    }
-    const decl = expr.callee.decl;
-    if (!this.shouldEmitFunction(decl)) {
-      return this.absentExpr(expr.expr.span);
-    }
-
     return {
       kind: "CallExpression",
       callee: expr.expr.callee,
-      args: expr.args.map((a) => this.projectExpression(a)),
-      span: expr.expr.span,
+      args,
+      span,
     };
   }
 
@@ -711,56 +749,168 @@ class Projector {
     if (!this.residesHere(type.location)) {
       return { kind: "AbsentType" };
     }
-    const base: import("../ir/projected.js").ProjectedBaseType = type.isArray
-      ? (type.base === "integer"
-        ? "integer[]"
-        : type.base === "float"
-          ? "float[]"
-          : "boolean[]")
-      : type.base === "void"
-        ? "void"
-        : type.base;
-    return { kind: "PresentType", base };
+    return { kind: "PresentType", base: this.projectedBase(type) };
   }
 
-  private nothingForExpression(
-    expr: TypedExpression,
+  /**
+   * BlueScript type name for a resident located type (spec §13.1).
+   *
+   * Exhaustive on purpose: the array arm used to fall back to `boolean[]` for
+   * anything that was not `integer` or `float`, which quietly rendered an
+   * unsupported element type as a supported one. The checker rejects those
+   * (spec §7.1.1, §16.29), so reaching the throw is an internal bug.
+   */
+  private projectedBase(
+    type: LocatedType,
+  ): import("../ir/projected.js").ProjectedBaseType {
+    if (type.isArray === true) {
+      switch (type.base) {
+        case "integer":
+          return "integer[]";
+        case "float":
+          return "float[]";
+        case "boolean":
+          return "boolean[]";
+        default:
+          throw new Error(
+            `internal error: '${type.base}[]' is not a supported array type (spec §7.1.1)`,
+          );
+      }
+    }
+    return type.base;
+  }
+
+  /**
+   * A compiler-generated `nothing(e1, ..., en)` artifact (spec §14.1).
+   *
+   * It evaluates each part once, left to right, discards their values and
+   * yields `null`. Cleanup folds it away when every part turns out to be a
+   * plain `null`, including the zero-argument `nothing()` (spec §13.9).
+   */
+  private nothingExpression(
+    parts: readonly ProjectedExpression[],
     span: Span,
-  ): import("../ir/projected.js").ExpressionStatement {
+  ): import("../ir/projected.js").NothingExpression {
+    return { kind: "NothingExpression", parts, span };
+  }
+
+  /**
+   * Projects a statement whose store, binding or callee does not exist here.
+   *
+   * The store is dropped, but the expressions the original semantics evaluates
+   * are kept as an evaluation-only expression statement, in source order
+   * (spec §12.3). Cleanup deletes the statement if it simplifies to `null`,
+   * which is what happens when none of the expressions owed this endpoint any
+   * computation (spec §13.9).
+   */
+  private discardStatement(
+    span: Span,
+    ...exprs: readonly TypedExpression[]
+  ): ProjectedStatement {
     return {
       kind: "ExpressionStatement",
-      expression: this.nothingExpression(expr),
+      expression: this.discardedValue(span, ...exprs),
       span,
     };
   }
 
-  private nothingExpression(
-    expr: TypedExpression,
-  ): import("../ir/projected.js").NothingExpression {
+  /**
+   * The statements an endpoint runs for a transfer's source expression before
+   * its own receive or copy (spec §12.9).
+   *
+   * A transfer evaluates its source once at every endpoint that evaluates it,
+   * not only at the sender: the source may call a choreography function, and
+   * that function runs everywhere (spec §12.11). The sender evaluates it as the
+   * payload; everyone else evaluates it for its computations alone, and must do
+   * so before the receive so that the calls inside it line up with the sender's.
+   * When it owes this endpoint nothing, cleanup removes the statement again.
+   */
+  private sourceEffect(span: Span, source: TypedExpression): ProjectedStatement {
+    return this.discardStatement(span, source);
+  }
+
+  /**
+   * One expression that evaluates `exprs` in order and yields `null`.
+   *
+   * A single expression needs no wrapper: its own projection already discards
+   * whatever value is left (spec §12.3). Two or more need `nothing(...)` to
+   * hold them in one slot.
+   */
+  private discardedValue(
+    span: Span,
+    ...exprs: readonly TypedExpression[]
+  ): ProjectedExpression {
+    const parts = exprs.map((expr) => this.projectDiscarded(expr));
+    return parts.length === 1 ? parts[0]! : this.nothingExpression(parts, span);
+  }
+
+  /**
+   * The expressions an assignment still evaluates when its target is absent
+   * here, in the order the source evaluates them (spec §5.17).
+   *
+   * For `xs[i] = v` that is the index and then the value; the receiver `xs` is
+   * an identifier in Core v0, so evaluating it has no effect to preserve.
+   */
+  private discardedTargetParts(
+    target: import("../ast/typed.js").TypedAssignmentTarget,
+    value: TypedExpression,
+  ): TypedExpression[] {
+    if (target.target.kind === "IndexAssignmentTarget") {
+      const indexTarget =
+        target as import("../ast/typed.js").TypedIndexAssignmentTarget;
+      return [indexTarget.index, value];
+    }
+    return [value];
+  }
+
+  /**
+   * Makes a projected expression safe to use more than once.
+   *
+   * A broadcast needs the source value twice at the sender: once as the payload
+   * and once for the sender's own binding. The source is an arbitrary
+   * expression and may call a function, so projecting it into both positions
+   * would evaluate it twice and could send one value while keeping another.
+   * The transfer's source is evaluated exactly once (spec §7.8), so anything
+   * that is not already a stable reference is bound to a temporary first.
+   */
+  private evaluateOnce(
+    source: ProjectedExpression,
+    type: LocatedType,
+    span: Span,
+  ): { setup: ProjectedStatement[]; value: ProjectedExpression } {
+    if (this.isStableExpression(source)) {
+      return { setup: [], value: source };
+    }
+    const name = `${TRANSFER_TEMP_PREFIX}${this.transferTemps}`;
+    this.transferTemps += 1;
     return {
-      kind: "NothingExpression",
-      parts: this.nothingParts(expr),
-      span: expr.expr.span,
+      setup: [
+        {
+          kind: "LetStatement",
+          name,
+          type: this.projectType(type),
+          initializer: source,
+          span,
+        },
+      ],
+      value: { kind: "IdentifierExpression", name, span },
     };
   }
 
-  private nothingParts(expr: TypedExpression): ProjectedExpression[] {
-    if (expr.expr.kind === "BinaryExpression") {
-      const bin = expr as TypedBinaryExpression;
-      return [
-        this.projectExpression(bin.left),
-        this.projectExpression(bin.right),
-      ];
+  /** Re-reading this expression cannot call anything or observe a change. */
+  private isStableExpression(expr: ProjectedExpression): boolean {
+    switch (expr.kind) {
+      case "IdentifierExpression":
+      case "IntegerLiteralExpression":
+      case "FloatLiteralExpression":
+      case "StringLiteralExpression":
+      case "BooleanLiteralExpression":
+      case "NullLiteralExpression":
+      case "AbsentExpression":
+        return true;
+      default:
+        return false;
     }
-    if (expr.expr.kind === "CallExpression") {
-      const call = expr as TypedCallExpression;
-      const argParts = call.args.map((arg) => this.projectExpression(arg));
-      if (argParts.every((part) => part.kind === "AbsentExpression")) {
-        return argParts;
-      }
-      return [this.projectCall(call)];
-    }
-    return [this.projectExpression(expr)];
   }
 
   private receiveExpr(
@@ -778,23 +928,48 @@ class Projector {
     };
   }
 
+  /**
+   * Scalar payload kind for a transferred base type (spec §13.8).
+   *
+   * Exhaustive on purpose. An earlier version defaulted every unrecognised base
+   * type to `"integer"`, which silently emitted `sendInteger` for values that
+   * were not integers at all. Anything not transferable must be rejected by the
+   * checker (spec §7.8), so reaching the throws below is an internal bug.
+   */
   private commKind(base: LocatedType["base"]): CommKind {
-    const kind = (base === "integer" || base === "float" || base === "boolean" || base === "string")
-      ? base
-      : "integer";
-    return kind;
+    switch (base) {
+      case "integer":
+      case "float":
+      case "boolean":
+      case "string":
+      case "null":
+        return base;
+      case "void":
+        throw new Error(
+          "internal error: `void` has no value to transfer (spec §7.3, §16.40)",
+        );
+      default: {
+        const unexpected: never = base;
+        throw new Error(
+          `internal error: unhandled transfer base type '${String(unexpected)}'`,
+        );
+      }
+    }
   }
 
   private commKindForType(type: LocatedType): CommKind {
-    if (type.isArray) {
-      if (type.base === "integer") {
-        return "integerArray";
-      }
-      if (type.base === "float") {
-        return "floatArray";
-      }
-      if (type.base === "boolean") {
-        return "booleanArray";
+    if (type.isArray === true) {
+      switch (type.base) {
+        case "integer":
+          return "integerArray";
+        case "float":
+          return "floatArray";
+        case "boolean":
+          return "booleanArray";
+        default:
+          throw new Error(
+            `internal error: '${type.base}[]' is not a supported array type (spec §7.1.1)`,
+          );
       }
     }
     return this.commKind(type.base);
@@ -807,14 +982,6 @@ class Projector {
 
   private absentExpr(span: Span): AbsentExpression {
     return { kind: "AbsentExpression", span };
-  }
-
-  private absentStatement(span: Span): import("../ir/projected.js").AbsentStatement {
-    return { kind: "AbsentStatement", span };
-  }
-
-  private isAbsentExpr(expr: ProjectedExpression): expr is AbsentExpression {
-    return expr.kind === "AbsentExpression";
   }
 
   private flatten(

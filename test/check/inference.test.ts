@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { FunctionDeclaration } from "../../src/ast/declarations.js";
-import type { Expression } from "../../src/ast/expressions.js";
 import type { Block } from "../../src/ast/statements.js";
 import { parse } from "../../src/parser/index.js";
 import { locatedType } from "../../src/types/located.js";
 import {
   checkReturnCoverage,
-  collectReturnCandidates,
-  inferFunctionReturnType,
+  inferReturnTypeFromCandidates,
   lubBase,
   lubLocatedType,
   lubLocation,
-  type ExprTypeResolver,
+  type ReturnCandidate,
 } from "../../src/check/inference.js";
 
 const alice = { kind: "individual" as const, name: "alice" };
@@ -25,28 +23,6 @@ function parseFunctionBody(bodySource: string): Block {
   assert.equal(fn?.kind, "FunctionDeclaration");
   return (fn as FunctionDeclaration).body;
 }
-
-const literalResolver: ExprTypeResolver = (expr: Expression) => {
-  if (expr.kind !== "LiteralExpression") {
-    return { ok: false, message: "test resolver supports literals only" };
-  }
-  // Locations are never inferred from context (spec §8.1), so read the written
-  // annotation, exactly as the checker does.
-  const written = expr.literal.location?.location;
-  if (written === undefined) {
-    return { ok: false, message: "location annotation required on literal" };
-  }
-  switch (expr.literal.literal.kind) {
-    case "IntegerLiteral":
-      return { ok: true, value: locatedType("integer", written) };
-    case "FloatLiteral":
-      return { ok: true, value: locatedType("float", written) };
-    case "BooleanLiteral":
-      return { ok: true, value: locatedType("boolean", written) };
-    default:
-      return { ok: false, message: "unsupported literal in test resolver" };
-  }
-};
 
 describe("return inference utilities (spec §7.14.4)", () => {
   describe("lubBase", () => {
@@ -182,10 +158,18 @@ let x = 1@alice;
     });
   });
 
-  describe("inferFunctionReturnType", () => {
-    it("infers void when there are no returns", () => {
+  describe("inferReturnTypeFromCandidates", () => {
+    const span = { start: 0, end: 1 };
+    const value = (type: ReturnType<typeof locatedType>): ReturnCandidate => ({
+      kind: "value",
+      type,
+      span,
+    });
+    const bare: ReturnCandidate = { kind: "void", span };
+
+    it("infers void when there are no returns (§7.14.4)", () => {
       const body = parseFunctionBody("let x = 1@alice;");
-      const r = inferFunctionReturnType(body, alice, literalResolver);
+      const r = inferReturnTypeFromCandidates(body, alice, []);
       assert.equal(r.ok, true);
       if (r.ok) {
         assert.equal(r.value.base, "void");
@@ -193,7 +177,7 @@ let x = 1@alice;
       }
     });
 
-    it("infers float from mixed integer and float returns", () => {
+    it("infers float from mixed integer and float returns (§7.14.4)", () => {
       const body = parseFunctionBody(`
 if (true@alice) {
   return 1@alice;
@@ -201,7 +185,10 @@ if (true@alice) {
   return 2.0@alice;
 }
 `);
-      const r = inferFunctionReturnType(body, alice, literalResolver);
+      const r = inferReturnTypeFromCandidates(body, alice, [
+        value(locatedType("integer", alice)),
+        value(locatedType("float", alice)),
+      ]);
       assert.equal(r.ok, true);
       if (r.ok) {
         assert.equal(r.value.base, "float");
@@ -209,47 +196,33 @@ if (true@alice) {
       }
     });
 
-    it("rejects mixing bare and value returns", () => {
+    it("rejects mixing bare and value returns (§7.14.5)", () => {
       const body = parseFunctionBody(`
 return;
 return 1@alice;
 `);
-      const r = inferFunctionReturnType(body, alice, literalResolver);
+      const r = inferReturnTypeFromCandidates(body, alice, [
+        bare,
+        value(locatedType("integer", alice)),
+      ]);
       assert.equal(r.ok, false);
       if (!r.ok) {
         assert.ok(r.message.includes("§7.14.5"));
       }
     });
 
-    it("rejects value returns without coverage", () => {
+    it("rejects value returns without coverage (§7.14.6)", () => {
       const body = parseFunctionBody(`
 if (true@alice) {
   return 1@alice;
 }
 `);
-      const r = inferFunctionReturnType(body, alice, literalResolver);
+      const r = inferReturnTypeFromCandidates(body, alice, [
+        value(locatedType("integer", alice)),
+      ]);
       assert.equal(r.ok, false);
       if (!r.ok) {
         assert.ok(r.message.includes("§7.14.6"));
-      }
-    });
-  });
-
-  describe("collectReturnCandidates", () => {
-    it("collects returns from nested blocks", () => {
-      const body = parseFunctionBody(`
-if (true@alice) {
-  return 1@alice;
-} else {
-  return 2@alice;
-}
-return 3@alice;
-`);
-      const r = collectReturnCandidates(body, literalResolver);
-      assert.equal(r.ok, true);
-      if (r.ok) {
-        assert.equal(r.value.length, 3);
-        assert.ok(r.value.every((c) => c.kind === "value"));
       }
     });
   });

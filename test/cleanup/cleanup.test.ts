@@ -6,71 +6,38 @@ import {
   isNullLiteral,
   isNothingExpression,
 } from "../../src/cleanup/index.js";
-import { compileSource } from "../../src/driver/index.js";
+import { finalizeAbsentProgram } from "../../src/finalize/index.js";
 import { emit } from "../../src/emit/index.js";
 import type {
-  ProjectedProgram,
   ProjectedStatement,
-  ProjectedExpression,
-  NothingExpression,
-  ExpressionStatement,
   SendStatement,
   BroadcastStatement,
   LetStatement,
 } from "../../src/ir/projected.js";
-import type { Span } from "../../src/ast/span.js";
-
-const span: Span = { start: 0, end: 1 };
-const config = { endpoints: ["alice", "bob"] };
-
-function program(body: ProjectedStatement[]): ProjectedProgram {
-  return {
-    kind: "ProjectedProgram",
-    endpoint: "bob",
-    functions: [],
-    body,
-    span,
-  };
-}
-
-function absent(): ProjectedExpression {
-  return { kind: "AbsentExpression", span };
-}
-
-function nullLit(): ProjectedExpression {
-  return { kind: "NullLiteralExpression", span };
-}
-
-function ident(name: string): ProjectedExpression {
-  return { kind: "IdentifierExpression", name, span };
-}
-
-function nothingExpr(
-  ...parts: ProjectedExpression[]
-): NothingExpression {
-  return { kind: "NothingExpression", parts, span };
-}
-
-function call(
-  callee: string,
-  ...args: ProjectedExpression[]
-): ProjectedExpression {
-  return { kind: "CallExpression", callee, args, span };
-}
-
-function exprStmt(expression: ProjectedExpression): ExpressionStatement {
-  return { kind: "ExpressionStatement", expression, span };
-}
+import { aliceBob } from "../support/config.js";
+import { compile } from "../support/compile.js";
+import {
+  span,
+  program,
+  absent,
+  nullLit,
+  ident,
+  nothingExpr,
+  call,
+  exprStmt,
+} from "../support/ir.js";
 
 function emitCleaned(body: ProjectedStatement[]): string {
-  return emit(cleanupProgram(program(body))).trimEnd();
+  return emit(cleanupProgram(finalizeAbsentProgram(program(body)))).trimEnd();
 }
 
 describe("Projected AST cleanup (spec §13.9)", () => {
   describe("expression simplification", () => {
-    it("finalizes absent to null", () => {
-      const result = simplifyExpression(absent());
-      assert.ok(isNullLiteral(result));
+    it("rejects an absent that absent finalization should have removed", () => {
+      assert.throws(
+        () => simplifyExpression(absent()),
+        /absent must be finalized before cleanup/,
+      );
     });
 
     it("folds compiler-generated NothingExpression(null) to null", () => {
@@ -87,7 +54,7 @@ describe("Projected AST cleanup (spec §13.9)", () => {
 
     it("simplifies NothingExpression inside call arguments to foo(null, null)", () => {
       const result = simplifyExpression(
-        call("foo", nothingExpr(absent()), absent()),
+        call("foo", nothingExpr(nullLit()), nullLit()),
       );
       assert.equal(result.kind, "CallExpression");
       if (result.kind === "CallExpression") {
@@ -127,7 +94,7 @@ describe("Projected AST cleanup (spec §13.9)", () => {
 
     it("simplifies user-defined nothing(NothingExpression(null)) to nothing(null)", () => {
       const result = simplifyExpression(
-        call("nothing", nothingExpr(absent())),
+        call("nothing", nothingExpr(nullLit())),
       );
       assert.equal(result.kind, "CallExpression");
       if (result.kind === "CallExpression") {
@@ -183,6 +150,53 @@ describe("Projected AST cleanup (spec §13.9)", () => {
       );
     });
 
+    it("keeps return, let, assignment and call statements that hold null (§13.9.4)", () => {
+      // Only a statement that is exactly `null;` goes. Everything else stays,
+      // however much `null` it carries.
+      const body: ProjectedStatement[] = [
+        { kind: "ReturnStatement", value: nullLit(), span },
+        {
+          kind: "LetStatement",
+          name: "x",
+          type: { kind: "AbsentType" },
+          initializer: nullLit(),
+          span,
+        },
+        {
+          kind: "AssignmentStatement",
+          target: { kind: "IdentifierAssignmentTarget", name: "x" },
+          value: nullLit(),
+          span,
+        },
+        exprStmt(call("f", nullLit())),
+        exprStmt(nullLit()),
+      ];
+      assert.equal(
+        emitCleaned(body),
+        ["return null;", "let x: null = null;", "x = null;", "f(null);"].join(
+          "\n",
+        ),
+      );
+    });
+
+    it("simplifies the index expression of an assignment target", () => {
+      assert.equal(
+        emitCleaned([
+          {
+            kind: "AssignmentStatement",
+            target: {
+              kind: "IndexAssignmentTarget",
+              name: "xs",
+              index: nothingExpr(nullLit()),
+            },
+            value: ident("v"),
+            span,
+          },
+        ]),
+        "xs[null] = v;",
+      );
+    });
+
     it("preserves sendInteger, receiveInteger, and broadcastBoolean", () => {
       const send: SendStatement = {
         kind: "SendStatement",
@@ -219,26 +233,27 @@ describe("Projected AST cleanup (spec §13.9)", () => {
     });
   });
 
-  describe("integration — user-defined function named nothing", () => {
-    it("preserves user nothing function and call at alice (spec §15.3 variant)", () => {
-      const result = compileSource(
+  describe("integration — `nothing` is a reserved runtime name", () => {
+    // The IR-level tests above still exercise a *call* named `nothing` that is
+    // not the compiler's artifact, because the distinction has to survive
+    // inside cleanup. Source programs may no longer introduce that name: the
+    // emitted BlueScript keeps the source name (spec §13.3), so a user
+    // `nothing` would capture the compiler's own `nothing(...)` calls
+    // (spec §6.2, §14.1).
+    it("rejects a user function named nothing (spec §6.2, §13.3)", () => {
+      const result = compile(
         `
 function nothing@alice(a: null@alice): null@alice {
     return null@alice;
 }
 nothing(null@alice);
 `,
-        "index.cbs",
-        config,
+        aliceBob,
       );
-      assert.equal(result.success, true, JSON.stringify(result.errors));
-      const alice = result.outputs.find((o) => o.endpoint === "alice")?.source.trimEnd();
-      assert.equal(
-        alice,
-        `function nothing(a: null): null {
-  return null;
-}
-nothing(null);`,
+      assert.equal(result.success, false);
+      assert.ok(
+        result.errors.some((e) => e.message.includes("reserved runtime name")),
+        JSON.stringify(result.errors),
       );
     });
   });

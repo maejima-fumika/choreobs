@@ -1,0 +1,3 @@
+{
+  "endpoints": ["sensor1", "sensor2", "gateway", "server"]
+}

@@ -1,0 +1,177 @@
+// Two-phase commit.
+//
+// A coordinator proposes a transaction. Each participant validates it against
+// its own local state and votes. The coordinator collects the votes, decides,
+// and broadcasts the outcome; every participant then applies the same decision.
+//
+// The interesting part for ChoreoBS is that the decision is broadcast before it
+// is branched on, so that all four endpoints take the same branch.
+
+// ---------------------------------------------------------------------------
+// coordinator
+// ---------------------------------------------------------------------------
+
+function proposeAmount@coordinator(attempt: integer@coordinator): integer@coordinator {
+    // Later attempts propose progressively smaller transfers.
+    let base = 120@coordinator;
+    let step = 30@coordinator;
+    return base - step * attempt;
+}
+
+function combineVotes@coordinator(
+    voteA: boolean@coordinator,
+    voteB: boolean@coordinator,
+    voteC: boolean@coordinator
+): boolean@coordinator {
+    return voteA && voteB && voteC;
+}
+
+function newOutcomeLog@coordinator(): integer[]@coordinator {
+    let log: integer[]@coordinator = []@coordinator;
+    return log;
+}
+
+function recordOutcome@coordinator(
+    log: integer[]@coordinator,
+    committed: boolean@coordinator
+): void {
+    if (committed) {
+        log.push(1@coordinator);
+    } else {
+        log.push(0@coordinator);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// alice: a participant with a hard balance limit
+// ---------------------------------------------------------------------------
+
+function aliceBalance@alice(): integer@alice {
+    return 100@alice;
+}
+
+function aliceCanAfford@alice(amount: integer@alice): boolean@alice {
+    let balance = aliceBalance();
+    return amount <= balance;
+}
+
+function aliceApply@alice(amount: integer@alice, committed: boolean@alice): integer@alice {
+    let balance = aliceBalance();
+    if (committed) {
+        return balance - amount;
+    } else {
+        return balance;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bob: a participant that also refuses amounts that are not a multiple of ten
+// ---------------------------------------------------------------------------
+
+function bobBalance@bob(): integer@bob {
+    return 500@bob;
+}
+
+function bobIsRound@bob(amount: integer@bob): boolean@bob {
+    let remainder = amount % 10@bob;
+    return remainder === 0@bob;
+}
+
+function bobCanAfford@bob(amount: integer@bob): boolean@bob {
+    let balance = bobBalance();
+    let affordable = amount <= balance;
+    let round = bobIsRound(amount);
+    return affordable && round;
+}
+
+function bobApply@bob(amount: integer@bob, committed: boolean@bob): integer@bob {
+    let balance = bobBalance();
+    if (committed) {
+        return balance - amount;
+    } else {
+        return balance;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// carol: a participant with a per-transaction ceiling computed recursively
+// ---------------------------------------------------------------------------
+
+// Local functions may recurse as long as the return type is written out.
+function carolCeiling@carol(depth: integer@carol): integer@carol {
+    if (depth <= 0@carol) {
+        return 10@carol;
+    }
+    let inner = carolCeiling(depth - 1@carol);
+    return inner * 2@carol;
+}
+
+function carolCanAfford@carol(amount: integer@carol): boolean@carol {
+    let ceiling = carolCeiling(3@carol);
+    return amount <= ceiling;
+}
+
+function carolApply@carol(amount: integer@carol, committed: boolean@carol): integer@carol {
+    let ceiling = carolCeiling(3@carol);
+    if (committed) {
+        return ceiling - amount;
+    } else {
+        return ceiling;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The protocol
+// ---------------------------------------------------------------------------
+
+let log: integer[]@coordinator = newOutcomeLog();
+let attempts: integer@every = 3@every;
+
+for (let attempt = 0@every; attempt < attempts; attempt = attempt + 1@every) {
+    // Phase 0: the coordinator picks an amount and tells everyone.
+    let attemptAtCoordinator: integer@coordinator <- attempt;
+    let amount: integer@coordinator = proposeAmount(attemptAtCoordinator);
+    let proposal: integer@every <- amount;
+
+    // Phase 1: each participant validates locally and votes.
+    let amountAtAlice: integer@alice <- proposal;
+    let voteAlice: boolean@alice = aliceCanAfford(amountAtAlice);
+
+    let amountAtBob: integer@bob <- proposal;
+    let voteBob: boolean@bob = bobCanAfford(amountAtBob);
+
+    let amountAtCarol: integer@carol <- proposal;
+    let voteCarol: boolean@carol = carolCanAfford(amountAtCarol);
+
+    // The votes travel back to the coordinator.
+    let voteA: boolean@coordinator <- voteAlice;
+    let voteB: boolean@coordinator <- voteBob;
+    let voteC: boolean@coordinator <- voteCarol;
+
+    let committed: boolean@coordinator = combineVotes(voteA, voteB, voteC);
+    recordOutcome(log, committed);
+
+    // Phase 2: the decision is broadcast, so every endpoint agrees on the
+    // branch below.
+    let decision: boolean@every <- committed;
+
+    if (decision) {
+        let commitAtAlice: boolean@alice <- decision;
+        let aliceAfter: integer@alice = aliceApply(amountAtAlice, commitAtAlice);
+
+        let commitAtBob: boolean@bob <- decision;
+        let bobAfter: integer@bob = bobApply(amountAtBob, commitAtBob);
+
+        let commitAtCarol: boolean@carol <- decision;
+        let carolAfter: integer@carol = carolApply(amountAtCarol, commitAtCarol);
+    } else {
+        let abortAtAlice: boolean@alice <- decision;
+        let aliceUnchanged: integer@alice = aliceApply(amountAtAlice, abortAtAlice);
+
+        let abortAtBob: boolean@bob <- decision;
+        let bobUnchanged: integer@bob = bobApply(amountAtBob, abortAtBob);
+
+        let abortAtCarol: boolean@carol <- decision;
+        let carolUnchanged: integer@carol = carolApply(amountAtCarol, abortAtCarol);
+    }
+}

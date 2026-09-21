@@ -3,19 +3,18 @@ import { describe, it } from "node:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parse } from "../../src/parser/index.js";
-import { typeCheck } from "../../src/check/index.js";
-import { project } from "../../src/epp/index.js";
+import { finalizeAbsentProgram } from "../../src/finalize/index.js";
 import { emit } from "../../src/emit/index.js";
-import { compileFile, compileSource, writeOutputs } from "../../src/driver/index.js";
-
-const config = { endpoints: ["alice", "bob"] };
+import { compileFile, writeOutputs } from "../../src/driver/index.js";
+import { compile, bs, expectSuccess } from "../support/compile.js";
+import { projectSource } from "../support/pipeline.js";
 
 function pipeline(source: string, endpoint: string): string {
-  const { program } = parse(source);
-  const { typed } = typeCheck(program!, config);
-  const projected = project(typed!, endpoint);
-  return emit(projected);
+  const projected = projectSource(source).find((p) => p.endpoint === endpoint);
+  assert.ok(projected, `missing projection for ${endpoint}`);
+  // Absent must be finalized before emission (spec §13.7); cleanup is skipped
+  // here on purpose, so the raw projected shape stays visible.
+  return emit(finalizeAbsentProgram(projected));
 }
 
 describe("BlueScript emitter", () => {
@@ -64,7 +63,7 @@ let ok: boolean@every <- localOk;
     assert.match(bob, /let ok: boolean = receiveBoolean\("alice", "top_0"\)/);
   });
 
-  it("finalizes absent call args to null in nothing before cleanup (spec §10.2)", () => {
+  it("drops a call to another endpoint's local function entirely (spec §10.2, §12.3)", () => {
     const bob = pipeline(
       `
 function add@alice(a: integer@alice, b: integer@alice): integer@alice { return a + b; }
@@ -72,25 +71,25 @@ let x: integer@alice = add(1@alice, 2@alice);
 `,
       "bob",
     );
-    assert.match(bob, /nothing\(null, null\);/);
+    // `add` is not generated at bob, so the call itself disappears; its
+    // arguments are still projected, in case one of them held a choreography
+    // call (spec §12.11). These two are literals, so what is left is
+    // `nothing(null, null);`, which cleanup removes — see the next test, since
+    // `pipeline` deliberately stops before cleanup.
+    assert.doesNotMatch(bob, /add/);
+    assert.equal(bob.trim(), "nothing(null, null);");
   });
 
   it("removes bob output after cleanup when top level calls alice (spec §10.2, §13.9)", () => {
-    const result = compileSource(
-      `
+    const result = compile(`
 function add@alice(a: integer@alice) {
   return a;
 }
 add(10@alice);
-`,
-      "index.cbs",
-      config,
-    );
-    assert.equal(result.success, true, JSON.stringify(result.errors));
-    const bob = result.outputs.find((o) => o.endpoint === "bob")?.source.trimEnd();
-    assert.equal(bob, "");
-    const alice = result.outputs.find((o) => o.endpoint === "alice")?.source.trimEnd();
-    assert.match(alice!, /add\(10\);/);
+`);
+    expectSuccess(result);
+    assert.equal(bs(result, "bob"), "");
+    assert.match(bs(result, "alice"), /add\(10\);/);
   });
 
   it("maps void to void in functions", () => {
@@ -181,10 +180,10 @@ let ys: float[]@alice <- xs;
       `
 function average@alice(arr: float[]@alice): float@alice {
   let sum = 0.0@alice;
-  for (let i = 0@alice; i < length(arr); i = i + 1@alice) {
+  for (let i = 0@alice; i < arr.length; i = i + 1@alice) {
     sum = sum + arr[i];
   }
-  return sum / length(arr);
+  return sum / arr.length;
 }
 let arr: float[]@every = [1.1, 2.2, 4.5]@every;
 let arrAlice: float[]@alice <- arr;
@@ -202,8 +201,8 @@ let avg: float@alice = average(arrAlice);
       `
 let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
-push(xs, 20@alice);
-let n: integer@alice = length(xs);
+xs.push(20@alice);
+let n: integer@alice = xs.length;
 let ys: integer[]@bob <- xs;
 `,
       "alice",

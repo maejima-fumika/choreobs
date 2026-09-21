@@ -3,10 +3,12 @@ import type {
   CommKind,
   ProjectedProgram,
   ProjectedStatement,
-  ProjectedBlock,
   ProjectedExpression,
+  ProjectedForUpdate,
   ReceiveExpression,
+  BroadcastStatement,
 } from "../ir/projected.js";
+import { childExpressions } from "../ir/traverse.js";
 import { TOP_SCOPE } from "./tags.js";
 
 /** Scope key for communication tags (spec §11.5): top-level or function name. */
@@ -29,363 +31,458 @@ export function checkCommunicationConsistency(
   return checker.check();
 }
 
+type CommRole = "send" | "receive" | "broadcast";
+
+/**
+ * One end of a communication, located by the control path it sits on.
+ *
+ * A tag identifies exactly one transfer in the source (spec §11.5), so the ends
+ * of a single communication must agree on more than their existence: they must
+ * sit at the same point in the control structure, which endpoint projection
+ * replicates identically at every endpoint (spec §12.12–§12.14).
+ */
+interface Occurrence {
+  readonly endpoint: string;
+  readonly scope: CommScopeId;
+  readonly tag: string;
+  readonly comm: CommKind;
+  readonly role: CommRole;
+  /** Destination for `send`, source for `receive`, unused for `broadcast`. */
+  readonly peer?: string;
+  readonly path: ControlPath;
+  readonly span: Span;
+}
+
+/**
+ * Enclosing control statements, outermost first, keyed by source span so the
+ * same choreographic statement yields the same segment at every endpoint.
+ */
+type ControlPath = readonly string[];
+
+interface WalkContext {
+  readonly endpoint: string;
+  readonly scope: CommScopeId;
+  readonly path: ControlPath;
+}
+
 class CommConsistencyChecker {
-  private readonly endpoints: Set<string>;
-  private readonly byEndpoint = new Map<string, ProjectedProgram>();
+  private readonly endpoints: readonly string[];
   private readonly errors: CommConsistencyError[] = [];
 
-  private readonly sends: SendRecord[] = [];
-  private readonly receives: ReceiveRecord[] = [];
-  private readonly broadcasts: BroadcastRecord[] = [];
-  /** `scope:tag` -> comm kind (spec §11.5). */
-  private readonly tagCommByScope = new Map<string, CommKind>();
+  /** `scope\0tag` -> every end of that communication, across all endpoints. */
+  private readonly sites = new Map<string, Occurrence[]>();
 
   constructor(programs: readonly ProjectedProgram[]) {
-    this.endpoints = new Set(programs.map((p) => p.endpoint));
-    for (const program of programs) {
-      this.byEndpoint.set(program.endpoint, program);
-    }
+    this.endpoints = programs.map((p) => p.endpoint);
     for (const program of programs) {
       this.collectFromProgram(program);
     }
   }
 
   check(): CommConsistencyResult {
-    this.validateTagKinds();
-    this.validateDirectPairs();
-    this.validateBroadcasts();
-    this.validateInvalidPatterns();
+    for (const occurrences of this.sites.values()) {
+      this.validateSite(occurrences);
+    }
     return {
       ok: this.errors.length === 0,
       errors: this.errors,
     };
   }
 
+  // --- collection ------------------------------------------------------
+
   private collectFromProgram(program: ProjectedProgram): void {
-    this.walkStatements(program.endpoint, TOP_SCOPE, program.body);
+    this.walkStatements(
+      { endpoint: program.endpoint, scope: TOP_SCOPE, path: [] },
+      program.body,
+    );
     for (const fn of program.functions) {
-      this.walkStatements(program.endpoint, fn.name, fn.body.statements);
+      this.walkStatements(
+        { endpoint: program.endpoint, scope: fn.name, path: [] },
+        fn.body.statements,
+      );
     }
   }
 
   private walkStatements(
-    endpoint: string,
-    scope: CommScopeId,
+    ctx: WalkContext,
     statements: readonly ProjectedStatement[],
   ): void {
-    for (const stmt of statements) {
-      this.walkStatement(endpoint, scope, stmt);
+    for (let i = 0; i < statements.length; i += 1) {
+      const stmt = statements[i]!;
+      if (stmt.kind === "BroadcastStatement") {
+        this.checkBroadcastSenderBinding(ctx, stmt, statements[i + 1]);
+      }
+      this.walkStatement(ctx, stmt);
     }
   }
 
-  private walkStatement(
-    endpoint: string,
-    scope: CommScopeId,
-    stmt: ProjectedStatement,
-  ): void {
+  private walkStatement(ctx: WalkContext, stmt: ProjectedStatement): void {
     switch (stmt.kind) {
       case "SendStatement": {
-        this.registerTag(scope, stmt.tag, stmt.comm, stmt.span);
-        if (stmt.destinationEndpoint === endpoint) {
+        this.record(ctx, {
+          tag: stmt.tag,
+          comm: stmt.comm,
+          role: "send",
+          peer: stmt.destinationEndpoint,
+          span: stmt.span,
+        });
+        if (stmt.destinationEndpoint === ctx.endpoint) {
           this.error(
-            `send to self at ${endpoint} (tag ${stmt.tag}, scope ${scope})`,
+            `send to self at ${ctx.endpoint} (tag ${stmt.tag}, scope ${ctx.scope})`,
             stmt.span,
           );
         }
-        this.sends.push({
-          scope,
-          src: endpoint,
-          dst: stmt.destinationEndpoint,
-          tag: stmt.tag,
-          comm: stmt.comm,
-          span: stmt.span,
-        });
+        if (!this.endpoints.includes(stmt.destinationEndpoint)) {
+          this.error(
+            `send to unknown endpoint '${stmt.destinationEndpoint}' at ${ctx.endpoint} (tag ${stmt.tag}, scope ${ctx.scope})`,
+            stmt.span,
+          );
+        }
+        this.walkExpression(ctx, stmt.value);
         break;
       }
       case "BroadcastStatement": {
-        this.registerTag(scope, stmt.tag, stmt.comm, stmt.span);
-        this.broadcasts.push({
-          scope,
-          sender: endpoint,
+        this.record(ctx, {
           tag: stmt.tag,
           comm: stmt.comm,
+          role: "broadcast",
           span: stmt.span,
         });
+        this.walkExpression(ctx, stmt.value);
         break;
       }
-      case "LetStatement": {
-        const recv = asReceive(stmt.initializer);
-        if (recv !== undefined) {
-          this.registerReceive(endpoint, scope, recv);
+      case "LetStatement":
+        this.walkExpression(ctx, stmt.initializer);
+        break;
+      case "AssignmentStatement":
+        if (stmt.target.kind === "IndexAssignmentTarget") {
+          this.walkExpression(ctx, stmt.target.index);
         }
+        this.walkExpression(ctx, stmt.value);
         break;
-      }
-      case "AssignmentStatement": {
-        const recv = asReceive(stmt.value);
-        if (recv !== undefined) {
-          this.registerReceive(endpoint, scope, recv);
-        }
-        break;
-      }
-      case "IfStatement":
-        this.walkStatements(endpoint, scope, stmt.then.statements);
+      case "IfStatement": {
+        this.walkExpression(ctx, stmt.condition);
+        this.walkStatements(
+          this.descend(ctx, `if@${stmt.span.start}>then`),
+          stmt.then.statements,
+        );
         if (stmt.else !== undefined) {
-          this.walkStatements(endpoint, scope, stmt.else.statements);
+          this.walkStatements(
+            this.descend(ctx, `if@${stmt.span.start}>else`),
+            stmt.else.statements,
+          );
         }
         break;
+      }
       case "WhileStatement":
-        this.walkStatements(endpoint, scope, stmt.body.statements);
+        this.walkExpression(ctx, stmt.condition);
+        this.walkStatements(
+          this.descend(ctx, `while@${stmt.span.start}`),
+          stmt.body.statements,
+        );
         break;
       case "ForStatement": {
+        // The header runs outside the body, so it gets its own path segment.
+        const header = this.descend(ctx, `for@${stmt.span.start}>header`);
         if (stmt.init?.kind === "ForLetInit") {
-          const recv = asReceive(stmt.init.initializer);
-          if (recv !== undefined) {
-            this.registerReceive(endpoint, scope, recv);
-          }
-        } else if (stmt.init?.kind === "ForAssignmentInit") {
-          const recv = asReceive(stmt.init.value);
-          if (recv !== undefined) {
-            this.registerReceive(endpoint, scope, recv);
-          }
+          this.walkExpression(header, stmt.init.initializer);
+        } else if (stmt.init !== undefined) {
+          this.walkForClause(header, stmt.init);
         }
-        this.walkStatements(endpoint, scope, stmt.body.statements);
+        this.walkExpression(header, stmt.condition);
+        if (stmt.update !== undefined) {
+          this.walkForClause(header, stmt.update);
+        }
+        this.walkStatements(
+          this.descend(ctx, `for@${stmt.span.start}>body`),
+          stmt.body.statements,
+        );
         break;
       }
       case "ReturnStatement":
-        if (stmt.value !== undefined) {
-          const recv = asReceive(stmt.value);
-          if (recv !== undefined) {
-            this.registerReceive(endpoint, scope, recv);
-          }
-        }
+        this.walkExpression(ctx, stmt.value);
         break;
       case "ExpressionStatement":
-        break;
-      case "AbsentStatement":
+        this.walkExpression(ctx, stmt.expression);
         break;
     }
   }
 
-  private registerReceive(
-    endpoint: string,
-    scope: CommScopeId,
-    recv: ReceiveExpression,
-  ): void {
-    this.registerTag(scope, recv.tag, recv.comm, recv.span);
-    if (recv.sourceEndpoint === endpoint) {
-      this.error(
-        `receive from self at ${endpoint} (tag ${recv.tag}, scope ${scope})`,
-        recv.span,
-      );
+  private walkForClause(ctx: WalkContext, clause: ProjectedForUpdate): void {
+    if (clause.kind === "ForExpressionInit") {
+      this.walkExpression(ctx, clause.expression);
+      return;
     }
-    if (!this.endpoints.has(recv.sourceEndpoint)) {
+    if (clause.target.kind === "IndexAssignmentTarget") {
+      this.walkExpression(ctx, clause.target.index);
+    }
+    this.walkExpression(ctx, clause.value);
+  }
+
+  /**
+   * Finds receives anywhere in an expression, not just as the whole
+   * initializer. Endpoint projection only ever produces them at the top level
+   * (spec §12.9); walking the whole tree keeps a stray nested receive from
+   * going unmatched.
+   *
+   * The shape of the walk comes from {@link childExpressions}, which is
+   * exhaustive over the IR — a node added there cannot be silently skipped
+   * here. Statements are walked by hand below, because this pass needs things
+   * a generic traversal cannot give it: the sibling that follows a broadcast,
+   * and a separate control path per branch.
+   */
+  private walkExpression(
+    ctx: WalkContext,
+    expr: ProjectedExpression | undefined,
+  ): void {
+    if (expr === undefined) {
+      return;
+    }
+    if (expr.kind === "ReceiveExpression") {
+      this.registerReceive(ctx, expr);
+      return;
+    }
+    for (const child of childExpressions(expr)) {
+      this.walkExpression(ctx, child);
+    }
+  }
+
+  private registerReceive(ctx: WalkContext, recv: ReceiveExpression): void {
+    this.record(ctx, {
+      tag: recv.tag,
+      comm: recv.comm,
+      role: "receive",
+      peer: recv.sourceEndpoint,
+      span: recv.span,
+    });
+    if (recv.sourceEndpoint === ctx.endpoint) {
       this.error(
-        `receive from unknown endpoint '${recv.sourceEndpoint}' at ${endpoint}`,
+        `receive from self at ${ctx.endpoint} (tag ${recv.tag}, scope ${ctx.scope})`,
         recv.span,
       );
     }
     if (recv.sourceEndpoint === "every") {
       this.error(
-        `receive from @every source at ${endpoint} (tag ${recv.tag}, scope ${scope})`,
+        `receive from @every source at ${ctx.endpoint} (tag ${recv.tag}, scope ${ctx.scope})`,
+        recv.span,
+      );
+    } else if (!this.endpoints.includes(recv.sourceEndpoint)) {
+      this.error(
+        `receive from unknown endpoint '${recv.sourceEndpoint}' at ${ctx.endpoint}`,
         recv.span,
       );
     }
-    this.receives.push({
-      scope,
-      dst: endpoint,
-      src: recv.sourceEndpoint,
-      tag: recv.tag,
-      comm: recv.comm,
-      span: recv.span,
-    });
   }
 
-  private registerTag(
-    scope: CommScopeId,
-    tag: string,
-    comm: CommKind,
-    span: Span,
+  /**
+   * The broadcasting endpoint keeps its own copy of the value instead of
+   * receiving it, and projection emits that binding right after the broadcast
+   * (spec §11.3, §12.9).
+   */
+  private checkBroadcastSenderBinding(
+    ctx: WalkContext,
+    broadcast: BroadcastStatement,
+    next: ProjectedStatement | undefined,
   ): void {
-    const key = tagKey(scope, tag);
-    const existing = this.tagCommByScope.get(key);
-    if (existing !== undefined && existing !== comm) {
+    const bound =
+      next?.kind === "LetStatement"
+        ? next.initializer
+        : next?.kind === "AssignmentStatement"
+          ? next.value
+          : undefined;
+    if (bound === undefined) {
       this.error(
-        `tag '${tag}' in scope '${scope}' used for both ${existing} and ${comm} communication`,
-        span,
+        `broadcast sender ${ctx.endpoint} must bind its own copy of tag ${broadcast.tag} right after broadcasting (scope ${ctx.scope})`,
+        broadcast.span,
+      );
+      return;
+    }
+    if (bound.kind === "ReceiveExpression") {
+      this.error(
+        `broadcast sender ${ctx.endpoint} receives its own broadcast for tag ${broadcast.tag} (scope ${ctx.scope})`,
+        broadcast.span,
       );
     }
-    this.tagCommByScope.set(key, comm);
   }
 
-  private validateTagKinds(): void {
-    // Registered during collection; duplicate-kind errors already recorded.
+  private descend(ctx: WalkContext, segment: string): WalkContext {
+    return { ...ctx, path: [...ctx.path, segment] };
   }
 
-  private validateDirectPairs(): void {
-    for (const send of this.sends) {
-      const match = this.receives.find(
+  private record(
+    ctx: WalkContext,
+    part: Omit<Occurrence, "endpoint" | "scope" | "path">,
+  ): void {
+    const key = siteKey(ctx.scope, part.tag);
+    const occurrence: Occurrence = {
+      ...part,
+      endpoint: ctx.endpoint,
+      scope: ctx.scope,
+      path: ctx.path,
+    };
+    const existing = this.sites.get(key);
+    if (existing === undefined) {
+      this.sites.set(key, [occurrence]);
+    } else {
+      existing.push(occurrence);
+    }
+  }
+
+  // --- validation ------------------------------------------------------
+
+  private validateSite(occurrences: readonly Occurrence[]): void {
+    const first = occurrences[0]!;
+    const { scope, tag } = first;
+
+    this.validateCommKinds(occurrences);
+    this.validateOnePerEndpoint(occurrences);
+    this.validateSamePath(occurrences);
+
+    const broadcasts = occurrences.filter((o) => o.role === "broadcast");
+    const sends = occurrences.filter((o) => o.role === "send");
+    const receives = occurrences.filter((o) => o.role === "receive");
+
+    if (broadcasts.length > 0) {
+      if (sends.length > 0) {
+        this.error(
+          `tag '${tag}' in scope '${scope}' is used for both broadcast and direct communication`,
+          first.span,
+        );
+      }
+      const broadcasters = [...new Set(broadcasts.map((b) => b.endpoint))];
+      if (broadcasters.length > 1) {
+        this.error(
+          `tag '${tag}' in scope '${scope}' is broadcast by more than one endpoint: ${broadcasters.join(", ")}`,
+          first.span,
+        );
+      }
+      this.validateBroadcast(broadcasts[0]!, receives);
+      return;
+    }
+
+    const senders = [...new Set(sends.map((s) => s.endpoint))];
+    if (senders.length > 1) {
+      this.error(
+        `tag '${tag}' in scope '${scope}' is sent by more than one endpoint: ${senders.join(", ")}`,
+        first.span,
+      );
+    }
+    this.validateDirect(sends, receives);
+  }
+
+  private validateBroadcast(
+    broadcast: Occurrence,
+    receives: readonly Occurrence[],
+  ): void {
+    for (const endpoint of this.endpoints) {
+      if (endpoint === broadcast.endpoint) {
+        continue;
+      }
+      const match = receives.find(
         (r) =>
-          r.scope === send.scope &&
-          r.src === send.src &&
-          r.dst === send.dst &&
-          r.tag === send.tag &&
-          r.comm === send.comm,
+          r.endpoint === endpoint &&
+          r.peer === broadcast.endpoint &&
+          r.comm === broadcast.comm,
       );
       if (match === undefined) {
         this.error(
-          `missing receive${capitalize(send.comm)}("${send.src}", "${send.tag}") at ${send.dst} for send from ${send.src} (scope ${send.scope})`,
-          send.span,
+          `missing receive${capitalize(broadcast.comm)}("${broadcast.endpoint}", "${broadcast.tag}") at ${endpoint} for broadcast from ${broadcast.endpoint} (scope ${broadcast.scope})`,
+          broadcast.span,
         );
       }
     }
-    for (const recv of this.receives) {
-      const broadcast = this.broadcasts.find(
-        (b) =>
-          b.scope === recv.scope &&
-          b.sender === recv.src &&
-          b.tag === recv.tag &&
-          b.comm === recv.comm,
-      );
-      if (broadcast !== undefined) {
-        continue;
-      }
-      const match = this.sends.find(
-        (s) =>
-          s.scope === recv.scope &&
-          s.src === recv.src &&
-          s.dst === recv.dst &&
-          s.tag === recv.tag &&
-          s.comm === recv.comm,
-      );
-      if (match === undefined) {
+    for (const recv of receives) {
+      if (recv.peer !== broadcast.endpoint) {
         this.error(
-          `missing send${capitalize(recv.comm)}("${recv.dst}", "${recv.tag}", ...) at ${recv.src} for receive at ${recv.dst} (scope ${recv.scope})`,
+          `receive${capitalize(recv.comm)}("${recv.peer}", "${recv.tag}") at ${recv.endpoint} names a source other than broadcaster ${broadcast.endpoint} (scope ${recv.scope})`,
           recv.span,
         );
       }
     }
   }
 
-  private validateBroadcasts(): void {
-    for (const b of this.broadcasts) {
-      for (const endpoint of this.endpoints) {
-        if (endpoint === b.sender) {
-          if (!this.senderHasBroadcastLocalHandling(b)) {
-            this.error(
-              `broadcast sender ${b.sender} missing local let/assignment without receive for tag ${b.tag} (scope ${b.scope})`,
-              b.span,
-            );
-          }
-          continue;
-        }
-        const match = this.receives.find(
-          (r) =>
-            r.scope === b.scope &&
-            r.dst === endpoint &&
-            r.src === b.sender &&
-            r.tag === b.tag &&
-            r.comm === b.comm,
-        );
-        if (match === undefined) {
-          this.error(
-            `missing receive${capitalize(b.comm)}("${b.sender}", "${b.tag}") at ${endpoint} for broadcast from ${b.sender} (scope ${b.scope})`,
-            b.span,
-          );
-        }
-      }
-    }
-  }
-
-  private senderHasBroadcastLocalHandling(b: BroadcastRecord): boolean {
-    const program = this.byEndpoint.get(b.sender);
-    if (program === undefined) {
-      return false;
-    }
-    return (
-      this.scopeHasNonReceiveBinding(program, b.scope, TOP_SCOPE, program.body) ||
-      program.functions.some((fn) =>
-        fn.name === b.scope
-          ? this.scopeHasNonReceiveBinding(program, b.scope, b.scope, fn.body.statements)
-          : false,
-      )
-    );
-  }
-
-  private scopeHasNonReceiveBinding(
-    program: ProjectedProgram,
-    scope: CommScopeId,
-    walkScope: CommScopeId,
-    statements: readonly ProjectedStatement[],
-  ): boolean {
-    if (walkScope !== scope && scope !== TOP_SCOPE) {
-      return false;
-    }
-    for (const stmt of statements) {
-      if (stmt.kind === "LetStatement" && asReceive(stmt.initializer) === undefined) {
-        return true;
-      }
-      if (
-        stmt.kind === "AssignmentStatement" &&
-        asReceive(stmt.value) === undefined
-      ) {
-        return true;
-      }
-      if (stmt.kind === "IfStatement") {
-        if (
-          this.scopeHasNonReceiveBinding(program, scope, walkScope, stmt.then.statements) ||
-          (stmt.else !== undefined &&
-            this.scopeHasNonReceiveBinding(program, scope, walkScope, stmt.else.statements))
-        ) {
-          return true;
-        }
-      }
-      if (stmt.kind === "WhileStatement") {
-        if (
-          this.scopeHasNonReceiveBinding(
-            program,
-            scope,
-            walkScope,
-            stmt.body.statements,
-          )
-        ) {
-          return true;
-        }
-      }
-      if (stmt.kind === "ForStatement") {
-        if (
-          stmt.init?.kind === "ForLetInit" &&
-          asReceive(stmt.init.initializer) === undefined
-        ) {
-          return true;
-        }
-        if (
-          stmt.init?.kind === "ForAssignmentInit" &&
-          asReceive(stmt.init.value) === undefined
-        ) {
-          return true;
-        }
-        if (
-          this.scopeHasNonReceiveBinding(
-            program,
-            scope,
-            walkScope,
-            stmt.body.statements,
-          )
-        ) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  private validateInvalidPatterns(): void {
-    for (const send of this.sends) {
-      if (send.src === send.dst) {
+  private validateDirect(
+    sends: readonly Occurrence[],
+    receives: readonly Occurrence[],
+  ): void {
+    for (const send of sends) {
+      const match = receives.find(
+        (r) =>
+          r.endpoint === send.peer &&
+          r.peer === send.endpoint &&
+          r.comm === send.comm,
+      );
+      if (match === undefined) {
         this.error(
-          `direct communication with same source and destination '${send.src}' (tag ${send.tag})`,
+          `missing receive${capitalize(send.comm)}("${send.endpoint}", "${send.tag}") at ${send.peer} for send from ${send.endpoint} (scope ${send.scope})`,
           send.span,
         );
+      }
+    }
+    for (const recv of receives) {
+      const match = sends.find(
+        (s) =>
+          s.endpoint === recv.peer &&
+          s.peer === recv.endpoint &&
+          s.comm === recv.comm,
+      );
+      if (match === undefined) {
+        this.error(
+          `missing send${capitalize(recv.comm)}("${recv.endpoint}", "${recv.tag}", ...) at ${recv.peer} for receive at ${recv.endpoint} (scope ${recv.scope})`,
+          recv.span,
+        );
+      }
+    }
+  }
+
+  private validateCommKinds(occurrences: readonly Occurrence[]): void {
+    const first = occurrences[0]!;
+    for (const occurrence of occurrences) {
+      if (occurrence.comm !== first.comm) {
+        this.error(
+          `tag '${first.tag}' in scope '${first.scope}' used for both ${first.comm} and ${occurrence.comm} communication`,
+          occurrence.span,
+        );
+        return;
+      }
+    }
+  }
+
+  /**
+   * A tag names one transfer in one scope (spec §11.5), so each endpoint takes
+   * part in it at most once. A second occurrence means projection duplicated a
+   * communication, and set-based matching would happily pair the wrong ends.
+   */
+  private validateOnePerEndpoint(occurrences: readonly Occurrence[]): void {
+    const seen = new Map<string, Occurrence>();
+    for (const occurrence of occurrences) {
+      const previous = seen.get(occurrence.endpoint);
+      if (previous !== undefined) {
+        this.error(
+          `tag '${occurrence.tag}' in scope '${occurrence.scope}' is used more than once at ${occurrence.endpoint} (${previous.role} and ${occurrence.role}); each tag identifies exactly one transfer`,
+          occurrence.span,
+        );
+        return;
+      }
+      seen.set(occurrence.endpoint, occurrence);
+    }
+  }
+
+  /**
+   * Both ends must sit on the same control path. Without this, a send in a
+   * `then` branch pairs with a receive in the matching `else` branch and the
+   * mismatch goes unreported.
+   */
+  private validateSamePath(occurrences: readonly Occurrence[]): void {
+    const first = occurrences[0]!;
+    for (const occurrence of occurrences) {
+      if (!pathsEqual(occurrence.path, first.path)) {
+        this.error(
+          `tag '${first.tag}' in scope '${first.scope}' occurs on different control paths: ${first.role} at ${first.endpoint} in ${formatPath(first.path)}, ${occurrence.role} at ${occurrence.endpoint} in ${formatPath(occurrence.path)}`,
+          occurrence.span,
+        );
+        return;
       }
     }
   }
@@ -395,38 +492,16 @@ class CommConsistencyChecker {
   }
 }
 
-interface SendRecord {
-  readonly scope: CommScopeId;
-  readonly src: string;
-  readonly dst: string;
-  readonly tag: string;
-  readonly comm: CommKind;
-  readonly span: Span;
-}
-
-interface ReceiveRecord {
-  readonly scope: CommScopeId;
-  readonly dst: string;
-  readonly src: string;
-  readonly tag: string;
-  readonly comm: CommKind;
-  readonly span: Span;
-}
-
-interface BroadcastRecord {
-  readonly scope: CommScopeId;
-  readonly sender: string;
-  readonly tag: string;
-  readonly comm: CommKind;
-  readonly span: Span;
-}
-
-function tagKey(scope: CommScopeId, tag: string): string {
+function siteKey(scope: CommScopeId, tag: string): string {
   return `${scope}\0${tag}`;
 }
 
-function asReceive(expr: ProjectedExpression): ReceiveExpression | undefined {
-  return expr.kind === "ReceiveExpression" ? expr : undefined;
+function pathsEqual(a: ControlPath, b: ControlPath): boolean {
+  return a.length === b.length && a.every((segment, i) => segment === b[i]);
+}
+
+function formatPath(path: ControlPath): string {
+  return path.length === 0 ? "<top level>" : path.join(" > ");
 }
 
 function capitalize(comm: CommKind): string {

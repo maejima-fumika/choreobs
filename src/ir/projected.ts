@@ -24,11 +24,20 @@ export type ProjectedType =
   | { readonly kind: "PresentType"; readonly base: ProjectedBaseType }
   | { readonly kind: "AbsentType" };
 
+/**
+ * Payload kinds the communication API can carry (spec §13.8).
+ *
+ * This is deliberately a closed set rather than `BaseType`: `void` has no value
+ * to send (spec §7.3), and array element types are restricted to the three
+ * supported ones (spec §7.1.1). Anything that is not listed here must be
+ * rejected before EPP, never defaulted to some other kind.
+ */
 export type CommKind =
   | "integer"
   | "float"
   | "boolean"
   | "string"
+  | "null"
   | "integerArray"
   | "floatArray"
   | "booleanArray";
@@ -156,7 +165,6 @@ export interface ReceiveExpression {
 }
 
 export type ProjectedStatement =
-  | AbsentStatement
   | LetStatement
   | AssignmentStatement
   | SendStatement
@@ -166,12 +174,6 @@ export type ProjectedStatement =
   | ForStatement
   | ReturnStatement
   | ExpressionStatement;
-
-/** Statement with no runtime meaning at this endpoint (spec §12.4). */
-export interface AbsentStatement {
-  readonly kind: "AbsentStatement";
-  readonly span: Span;
-}
 
 export interface LetStatement {
   readonly kind: "LetStatement";
@@ -238,13 +240,16 @@ export interface WhileStatement {
 export interface ForStatement {
   readonly kind: "ForStatement";
   readonly init?: ProjectedForInit;
-  readonly condition?: ProjectedExpression;
+  readonly condition: ProjectedExpression;
   readonly update?: ProjectedForUpdate;
   readonly body: ProjectedBlock;
   readonly span: Span;
 }
 
-export type ProjectedForInit = ProjectedForLetInit | ProjectedForAssignmentInit;
+export type ProjectedForInit =
+  | ProjectedForLetInit
+  | ProjectedForAssignmentInit
+  | ProjectedForExpressionInit;
 
 export interface ProjectedForLetInit {
   readonly kind: "ForLetInit";
@@ -256,12 +261,28 @@ export interface ProjectedForLetInit {
 
 export interface ProjectedForAssignmentInit {
   readonly kind: "ForAssignmentInit";
-  readonly name: string;
+  readonly target: ProjectedAssignmentTarget;
   readonly value: ProjectedExpression;
   readonly span: Span;
 }
 
-export type ProjectedForUpdate = ProjectedForAssignmentInit;
+/**
+ * A for-header slot that is not an assignment here.
+ *
+ * A for-header has no room for a statement, so when the assignment target is
+ * absent at this endpoint the slot either disappears or — if the discarded
+ * value still contains a call this endpoint must make (spec §12.3) — becomes
+ * the bare expression that keeps that call.
+ */
+export interface ProjectedForExpressionInit {
+  readonly kind: "ForExpressionInit";
+  readonly expression: ProjectedExpression;
+  readonly span: Span;
+}
+
+export type ProjectedForUpdate =
+  | ProjectedForAssignmentInit
+  | ProjectedForExpressionInit;
 
 export interface ReturnStatement {
   readonly kind: "ReturnStatement";

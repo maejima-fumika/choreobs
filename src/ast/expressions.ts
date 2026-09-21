@@ -19,6 +19,8 @@ export type Expression =
   | IdentifierExpression
   | CallExpression
   | IndexExpression
+  | LengthExpression
+  | PushExpression
   | ParenthesizedExpression;
 
 export interface BinaryExpression extends AstNode {
@@ -61,6 +63,33 @@ export interface IndexExpression extends AstNode {
   readonly kind: "IndexExpression";
   readonly target: Expression;
   readonly index: Expression;
+}
+
+/**
+ * The two array member operations, `xs.length` and `xs.push(v)` (spec §5.14,
+ * §7.11.1).
+ *
+ * Both take an identifier as their receiver by grammar: with no nested arrays
+ * and no objects, a variable is the only receiver that could mean anything.
+ * The field is typed `Expression` so that widening the receiver later does not
+ * silently change these nodes' shape.
+ */
+export interface LengthExpression extends AstNode {
+  readonly kind: "LengthExpression";
+  readonly target: Expression;
+}
+
+/**
+ * `xs.push(v)` — appends to a mutable array.
+ *
+ * An expression of type `void` (spec §7.2, §7.11.1), so the only place it can
+ * stand is an expression statement; every value position rejects it the same
+ * way it rejects a call to a `void` function.
+ */
+export interface PushExpression extends AstNode {
+  readonly kind: "PushExpression";
+  readonly target: Expression;
+  readonly value: Expression;
 }
 
 export interface ParenthesizedExpression extends AstNode {

@@ -2,3 +2,5 @@
 /node_modules
 /test-project
 tsconfig.tsbuildinfo
+/examples/**/*.bs
+/scratchpad

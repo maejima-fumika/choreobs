@@ -43,6 +43,8 @@ export type {
   IdentifierExpression,
   CallExpression,
   IndexExpression,
+  LengthExpression,
+  PushExpression,
   ParenthesizedExpression,
 } from "./expressions.js";
 
@@ -103,6 +105,8 @@ export type {
   TypedIdentifierExpression,
   TypedCallExpression,
   TypedIndexExpression,
+  TypedLengthExpression,
+  TypedPushExpression,
   TypedParenthesizedExpression,
   FunctionSymbol,
   TypedExpressionOf,

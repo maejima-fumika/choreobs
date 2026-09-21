@@ -1,17 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parse } from "../../src/parser/index.js";
-import { typeCheck } from "../../src/check/index.js";
-import type { ChoreoBSConfig } from "../../src/config/types.js";
+import { checkSource } from "../support/pipeline.js";
 
-const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
-
-function checkSource(source: string, config: ChoreoBSConfig = aliceBob) {
-  const { program, errors: parseErrors } = parse(source);
-  assert.equal(parseErrors.length, 0, "parse errors: " + JSON.stringify(parseErrors));
-  assert.ok(program);
-  return typeCheck(program, config);
-}
 
 describe("ChoreoBS type checker", () => {
   it("accepts direct communication (spec §15.1)", () => {
@@ -267,6 +257,422 @@ function f@alice(): void {
       ),
       JSON.stringify(errors),
     );
+  });
+
+  it("rejects a transfer to another endpoint inside a local function (spec §8.2)", () => {
+    // The source is at alice, so §16.27 does not catch this. Without the
+    // destination rule the checker accepted a send out of a body only alice
+    // runs, and only the post-EPP consistency check noticed.
+    const { typed, errors } = checkSource(`
+function f@alice(): integer@alice {
+  let x: integer@alice = 1@alice;
+  let y: integer@bob <- x;
+  return x;
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) =>
+        e.message.includes("variable type must be located at alice"),
+      ),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects a transfer to another endpoint in a local function with an inferred return type (spec §8.2)", () => {
+    const { typed, errors } = checkSource(`
+function f@alice() {
+  let x: integer@alice = 1@alice;
+  let y: integer@bob <- x;
+  return x;
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) =>
+        e.message.includes("variable type must be located at alice"),
+      ),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects a function named after a runtime support function (spec §6.2, §13.3)", () => {
+    const { typed, errors } = checkSource(`
+function sendInteger@alice(): void {
+  return;
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("reserved runtime name")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects a variable named after a runtime support function (spec §6.2, §13.3)", () => {
+    const { typed, errors } = checkSource(`
+let cloneFloatArray: integer@alice = 1@alice;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("reserved runtime name")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects a parameter named after a runtime support function (spec §6.2, §13.3)", () => {
+    const { typed, errors } = checkSource(`
+function f@alice(broadcastNull: integer@alice): void {
+  return;
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("reserved runtime name")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects a function named after an EPP call sentinel (spec §6.2, §13.3)", () => {
+    const { typed, errors } = checkSource(`
+function __array@alice(): void {
+  return;
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("reserved runtime name")),
+      JSON.stringify(errors),
+    );
+  });
+
+  describe("`length` and `push` are ordinary names (spec §6.2)", () => {
+    // They mean an array operation only after a `.`, so nothing is reserved.
+    it("allows them as variable names", () => {
+      const { typed, errors } = checkSource(`
+let length: integer@alice = 1@alice;
+let push: integer@alice = 2@alice;
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("allows them as function names", () => {
+      const { typed, errors } = checkSource(`
+function length@alice(ys: integer[]@alice): integer@alice {
+  return ys.length;
+}
+let xs: integer[]@alice = [1, 2]@alice;
+let n: integer@alice = length(xs);
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("reports an undeclared one like any other undefined function", () => {
+      // No special-casing: the array operations are spelled after a `.`, and
+      // these names carry no other meaning, so `length(xs)` is simply a call
+      // to a function nobody declared.
+      for (const source of [
+        `let xs: integer[]@alice = [1]@alice;\nlet n: integer@alice = length(xs);`,
+        `let xs: integer[]@alice = [1]@alice;\npush(xs, 2@alice);`,
+      ]) {
+        const { typed, errors } = checkSource(source);
+        assert.equal(typed, null);
+        assert.ok(
+          errors.some((e) => e.message.startsWith("undefined function '")),
+          JSON.stringify(errors),
+        );
+      }
+    });
+  });
+
+  it("rejects an explicit non-void return type without a return on all paths (spec §16.41)", () => {
+    const { typed, errors } = checkSource(`
+function f@alice(c: boolean@alice): integer@alice {
+  if (c) {
+    return 1@alice;
+  }
+}
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("§16.41")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("accepts an explicit non-void return type when both branches return (spec §7.13)", () => {
+    const { typed, errors } = checkSource(`
+function f@alice(c: boolean@alice): integer@alice {
+  if (c) {
+    return 1@alice;
+  } else {
+    return 0@alice;
+  }
+}
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
+  });
+
+  it("does not require coverage for an explicit void return type (spec §7.13)", () => {
+    const { typed, errors } = checkSource(`
+function f@alice(c: boolean@alice): void {
+  if (c) {
+    return;
+  }
+}
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
+  });
+
+  it("rejects `!` on an array operand (spec §7.11, §16.42)", () => {
+    const { typed, errors } = checkSource(`
+let xs: boolean[]@alice = [true, false]@alice;
+let b = !xs;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("§16.42")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects unary `-` on an array operand (spec §7.11, §16.42)", () => {
+    const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1, 2]@alice;
+let n = -xs;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("§16.42")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("types unary operators at the operand location (spec §7.11)", () => {
+    const { typed, errors } = checkSource(`
+let x: integer@alice = 1@alice;
+let y: integer@alice = -x;
+let c: boolean@alice = !(x < 10@alice);
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
+  });
+
+  it("rejects a non-numeric comparison (spec §7.11, §16.43)", () => {
+    const { typed, errors } = checkSource(`
+let b: boolean@alice = "a"@alice < "b"@alice;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("numeric operands")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects equality between integer and float (spec §7.11, §16.43)", () => {
+    const { typed, errors } = checkSource(`
+let b: boolean@alice = 1@alice === 1.0@alice;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("same base type")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("rejects equality between void computations (spec §7.11, §16.43)", () => {
+    // Two voids have the same base type, so the same-base-type rule lets them
+    // through: without a rule of its own this emitted BlueScript comparing two
+    // statements. Both kinds of void computation are covered (spec §7.2).
+    for (const source of [
+      `function g@alice(): void { return; }\nlet b: boolean@alice = g() === g();`,
+      `let xs: integer[]@alice = [1]@alice;\nlet b: boolean@alice = xs.push(1@alice) !== xs.push(2@alice);`,
+    ]) {
+      const { typed, errors } = checkSource(source);
+      assert.equal(typed, null, source);
+      assert.ok(
+        errors.some((e) => e.message.includes("requires operands that produce a value")),
+        JSON.stringify(errors),
+      );
+    }
+  });
+
+  it("rejects `return` at top level (spec §5.12, §6.5)", () => {
+    const { typed, errors } = checkSource(`
+let x: integer@alice = 1@alice;
+return x;
+`);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("outside function")),
+      JSON.stringify(errors),
+    );
+  });
+
+  describe("`.push` is a void expression (spec §5.14, §7.11.1)", () => {
+    const XS = "let xs: integer[]@alice = []@alice;\n";
+
+    it("accepts it as an expression statement", () => {
+      const { typed, errors } = checkSource(`${XS}xs.push(1@alice);`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("accepts it parenthesized, like any other void computation", () => {
+      const { typed, errors } = checkSource(`${XS}(xs.push(1@alice));`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    // Producing no value, it is rejected in every value position by the
+    // ordinary `void` rules (spec §7.2, §16.40) — the same ones that reject a
+    // call to a `void` function. This used to be a parse error.
+    it("rejects it as an inferred let initializer", () => {
+      const { errors } = checkSource(`${XS}let n = xs.push(1@alice);`);
+      assert.ok(
+        errors.some((e) => e.message.includes("produces no value")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects it as an annotated let initializer", () => {
+      const { errors } = checkSource(
+        `${XS}let n: integer@alice = xs.push(1@alice);`,
+      );
+      assert.ok(
+        errors.some((e) => e.message.includes("cannot assign void")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects it as a call argument", () => {
+      const { errors } = checkSource(
+        `function f(a: integer@alice): integer@alice { return a; }\n${XS}f(xs.push(1@alice));`,
+      );
+      assert.ok(
+        errors.some((e) => e.message.includes("argument type void")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects it as a short-circuit operand", () => {
+      const { errors } = checkSource(
+        `${XS}let b: boolean@alice = true@alice && xs.push(1@alice);`,
+      );
+      assert.ok(
+        errors.some((e) => e.message.includes("requires boolean operands")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects a non-array receiver", () => {
+      const { errors } = checkSource(
+        `let n: integer@alice = 1@alice;\nn.push(1@alice);`,
+      );
+      assert.ok(
+        errors.some((e) => e.message.includes("'.push' requires an array")),
+        JSON.stringify(errors),
+      );
+    });
+  });
+
+  describe("a void computation may not stand where a value is required (spec §7.2)", () => {
+    const VOID_FN = "function f@alice(): void { return; }";
+
+    it("rejects an inferred let bound to a void call (spec §16.40)", () => {
+      // The annotated form goes through resolveType, which already rejected
+      // `void`. The inferred form took the initializer's type verbatim and
+      // declared a variable of a type that holds no value.
+      const { typed, errors } = checkSource(`${VOID_FN}
+let x = f();
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("produces no value")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects an inferred for-initializer bound to a void call", () => {
+      const { typed, errors } = checkSource(`${VOID_FN}
+for (let i = f(); true@every; i = 1@every) {
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("produces no value")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("rejects a void call as an array literal element", () => {
+      // This one reached EPP and rendered `void[]` as `boolean[]`.
+      const { typed, errors } = checkSource(`${VOID_FN}
+let xs = [f()]@alice;
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("produces no value")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("still accepts a void call as a statement", () => {
+      const { typed, errors } = checkSource(`${VOID_FN}
+f();
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+  });
+
+  describe("`.length` typing (spec §7.11.1)", () => {
+    it("types `xs.length` as integer at the array's location", () => {
+      const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1, 2]@alice;
+let n: integer@alice = xs.length;
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("rejects `.length` on a string", () => {
+      // The prefix form made this unlikely; `s.length` is the first thing a
+      // TypeScript user will try.
+      const { typed, errors } = checkSource(`
+let s: string@alice = "x"@alice;
+let n: integer@alice = s.length;
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("requires an array")),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("accepts `xs.length;` as an expression statement (spec §9.9)", () => {
+      // An effect-free expression statement is pointless but legal, exactly as
+      // `xs[0@alice];` and `1@alice;` are. `.length` used to be singled out —
+      // a leftover from when it was written `length(xs)`.
+      const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1]@alice;
+xs.length;
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+  });
+
+  it("accepts a relational comparison between integer and float (spec §7.11)", () => {
+    const { typed, errors } = checkSource(`
+let b: boolean@alice = 1@alice < 1.5@alice;
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.ok(typed);
   });
 
   it("accepts a transfer widening integer to float (spec §7.8)", () => {
@@ -1007,8 +1413,8 @@ let zs: boolean[]@bob = [true, false]@bob;
 let empty: integer[]@alice = []@alice;
 let x: integer@alice = xs[0@alice];
 xs[1@alice] = 10@alice;
-push(xs, 20@alice);
-let n: integer@alice = length(xs);
+xs.push(20@alice);
+let n: integer@alice = xs.length;
 `);
       assert.equal(errors.length, 0, JSON.stringify(errors));
       assert.ok(typed);

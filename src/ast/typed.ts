@@ -2,7 +2,6 @@ import type { Program } from "./program.js";
 import type { TopLevelStatement } from "./program.js";
 import type { FunctionDeclaration, Parameter } from "./declarations.js";
 import type {
-  Statement,
   LetStatement,
   LetTransferStatement,
   AssignmentStatement,
@@ -26,6 +25,8 @@ import type {
   IdentifierExpression,
   CallExpression,
   IndexExpression,
+  LengthExpression,
+  PushExpression,
   ParenthesizedExpression,
 } from "./expressions.js";
 import type { LocatedLiteral } from "./literals.js";
@@ -152,7 +153,7 @@ export interface TypedWhileStatement {
 export interface TypedForStatement {
   readonly stmt: ForStatement;
   readonly init?: TypedForInit;
-  readonly condition?: TypedExpression;
+  readonly condition: TypedExpression;
   readonly update?: TypedForUpdate;
   readonly body: TypedBlock;
 }
@@ -167,7 +168,7 @@ export interface TypedForLetInit {
 
 export interface TypedForAssignmentInit {
   readonly init: ForAssignmentInit;
-  readonly targetType: LocatedType;
+  readonly target: TypedAssignmentTarget;
   readonly value: TypedExpression;
 }
 
@@ -197,6 +198,8 @@ export type TypedExpression =
   | TypedIdentifierExpression
   | TypedCallExpression
   | TypedIndexExpression
+  | TypedLengthExpression
+  | TypedPushExpression
   | TypedParenthesizedExpression;
 
 export interface TypedBinaryExpression {
@@ -234,6 +237,25 @@ export interface TypedCallExpression {
   readonly choreoType: LocatedType;
   readonly callee: FunctionSymbol;
   readonly args: readonly TypedExpression[];
+}
+
+export interface TypedLengthExpression {
+  readonly expr: LengthExpression;
+  /** Always `integer@L`, where `L` is the array's location (spec §7.11.1). */
+  readonly choreoType: LocatedType;
+  readonly target: TypedExpression;
+}
+
+export interface TypedPushExpression {
+  readonly expr: PushExpression;
+  /**
+   * Always `void` (spec §7.11.1). The location is the array's, and is never
+   * written or shown (spec §7.3): it is what tells endpoint projection which
+   * endpoints perform the append.
+   */
+  readonly choreoType: LocatedType;
+  readonly target: TypedExpression;
+  readonly value: TypedExpression;
 }
 
 export interface TypedIndexExpression {

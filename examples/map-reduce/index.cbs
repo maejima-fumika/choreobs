@@ -1,0 +1,199 @@
+// Distributed statistics, map-reduce style.
+//
+// Two workers each hold a local array of samples. Each computes a partial sum
+// and count; the driver reduces them into a global mean, broadcasts it, and the
+// workers then compute their local variance contribution against that shared
+// mean. Finally the driver reports how many samples were above the mean.
+//
+// The recurring shape here is: a bound that lives at one endpoint has to be
+// broadcast before a choreography-level loop can use it, because a loop
+// condition in a choreography context must be `boolean@every`.
+
+// ---------------------------------------------------------------------------
+// worker1
+// ---------------------------------------------------------------------------
+
+function samples1@worker1(): float[]@worker1 {
+    let xs: float[]@worker1 = []@worker1;
+    xs.push(12.0@worker1);
+    xs.push(15.5@worker1);
+    xs.push(9.25@worker1);
+    xs.push(18.0@worker1);
+    xs.push(11.75@worker1);
+    return xs;
+}
+
+function sum1@worker1(xs: float[]@worker1): float@worker1 {
+    let total = 0.0@worker1;
+    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+        total = total + xs[i];
+    }
+    return total;
+}
+
+function count1@worker1(xs: float[]@worker1): integer@worker1 {
+    return xs.length;
+}
+
+function squaredError1@worker1(xs: float[]@worker1, mean: float@worker1): float@worker1 {
+    let total = 0.0@worker1;
+    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+        let diff = xs[i] - mean;
+        total = total + diff * diff;
+    }
+    return total;
+}
+
+function aboveMean1@worker1(xs: float[]@worker1, mean: float@worker1): integer@worker1 {
+    let n = 0@worker1;
+    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+        if (mean < xs[i]) {
+            n = n + 1@worker1;
+        }
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// worker2
+// ---------------------------------------------------------------------------
+
+function samples2@worker2(): float[]@worker2 {
+    let xs: float[]@worker2 = []@worker2;
+    xs.push(22.5@worker2);
+    xs.push(7.0@worker2);
+    xs.push(16.25@worker2);
+    return xs;
+}
+
+function sum2@worker2(xs: float[]@worker2): float@worker2 {
+    let total = 0.0@worker2;
+    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+        total = total + xs[i];
+    }
+    return total;
+}
+
+function count2@worker2(xs: float[]@worker2): integer@worker2 {
+    return xs.length;
+}
+
+function squaredError2@worker2(xs: float[]@worker2, mean: float@worker2): float@worker2 {
+    let total = 0.0@worker2;
+    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+        let diff = xs[i] - mean;
+        total = total + diff * diff;
+    }
+    return total;
+}
+
+function aboveMean2@worker2(xs: float[]@worker2, mean: float@worker2): integer@worker2 {
+    let n = 0@worker2;
+    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+        if (mean < xs[i]) {
+            n = n + 1@worker2;
+        }
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// driver: the reduce side
+// ---------------------------------------------------------------------------
+
+function reduceSum@driver(a: float@driver, b: float@driver): float@driver {
+    return a + b;
+}
+
+function reduceCount@driver(a: integer@driver, b: integer@driver): integer@driver {
+    return a + b;
+}
+
+function mean@driver(total: float@driver, n: integer@driver): float@driver {
+    if (n === 0@driver) {
+        return 0.0@driver;
+    }
+    return total / n;
+}
+
+function variance@driver(squaredTotal: float@driver, n: integer@driver): float@driver {
+    if (n <= 1@driver) {
+        return 0.0@driver;
+    }
+    return squaredTotal / (n - 1@driver);
+}
+
+function newReport@driver(): float[]@driver {
+    let report: float[]@driver = []@driver;
+    return report;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 1: partial sums and counts
+// ---------------------------------------------------------------------------
+
+let xs1: float[]@worker1 = samples1();
+let xs2: float[]@worker2 = samples2();
+
+let partialSum1: float@worker1 = sum1(xs1);
+let partialSum2: float@worker2 = sum2(xs2);
+
+let partialCount1: integer@worker1 = count1(xs1);
+let partialCount2: integer@worker2 = count2(xs2);
+
+let s1: float@driver <- partialSum1;
+let s2: float@driver <- partialSum2;
+let c1: integer@driver <- partialCount1;
+let c2: integer@driver <- partialCount2;
+
+let totalSum: float@driver = reduceSum(s1, s2);
+let totalCount: integer@driver = reduceCount(c1, c2);
+let globalMean: float@driver = mean(totalSum, totalCount);
+
+// ---------------------------------------------------------------------------
+// Pass 2: every worker needs the same mean, so it is broadcast
+// ---------------------------------------------------------------------------
+
+let sharedMean: float@every <- globalMean;
+
+let meanAt1: float@worker1 <- sharedMean;
+let meanAt2: float@worker2 <- sharedMean;
+
+let sq1: float@worker1 = squaredError1(xs1, meanAt1);
+let sq2: float@worker2 = squaredError2(xs2, meanAt2);
+
+let e1: float@driver <- sq1;
+let e2: float@driver <- sq2;
+
+let squaredTotal: float@driver = reduceSum(e1, e2);
+let globalVariance: float@driver = variance(squaredTotal, totalCount);
+
+// ---------------------------------------------------------------------------
+// Pass 3: count the samples above the mean
+// ---------------------------------------------------------------------------
+
+let above1: integer@worker1 = aboveMean1(xs1, meanAt1);
+let above2: integer@worker2 = aboveMean2(xs2, meanAt2);
+
+let a1: integer@driver <- above1;
+let a2: integer@driver <- above2;
+
+let totalAbove: integer@driver = reduceCount(a1, a2);
+
+let report: float[]@driver = newReport();
+report.push(globalMean);
+report.push(globalVariance);
+
+// ---------------------------------------------------------------------------
+// A choreography-level loop needs an `@every` bound, so the driver publishes it
+// ---------------------------------------------------------------------------
+
+let rounds: integer@every <- totalAbove;
+
+for (let round = 0@every; round < rounds; round = round + 1@every) {
+    // Each round re-checks the shared mean against a worker-local threshold.
+    let roundAt1: integer@worker1 <- round;
+    let bump: float@worker1 = meanAt1 + roundAt1;
+    let bumped: float@driver <- bump;
+    report.push(bumped);
+}

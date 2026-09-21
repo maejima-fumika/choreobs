@@ -5,9 +5,12 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc -p tsconfig.test.json",
     "start:prod": "node dist/index.js",
     "test": "node --import tsx --test $(find test -name '*.test.ts' | sort)",
-    "compile": "tsx src/cli/main.ts compile"
+    "compile": "tsx src/cli/main.ts compile",
+    "fuzz": "tsx scripts/fuzz/run.ts",
+    "fuzz:violate": "tsx scripts/fuzz/violate.ts"
   },
   "bin": {
     "choreobs": "./dist/cli/main.js"

@@ -2,17 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parse } from "../../src/parser/index.js";
 import { typeCheck } from "../../src/check/index.js";
-import type { ChoreoBSConfig } from "../../src/config/types.js";
-import type { TypedFunctionDeclaration } from "../../src/ast/typed.js";
+import { checkSource } from "../support/pipeline.js";
 
-const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
-
-function checkSource(source: string, config: ChoreoBSConfig = aliceBob) {
-  const { program, errors: parseErrors } = parse(source);
-  assert.equal(parseErrors.length, 0, "parse errors: " + JSON.stringify(parseErrors));
-  assert.ok(program);
-  return typeCheck(program, config);
-}
 
 function expectTypeCheckSuccess(source: string) {
   const { typed, errors } = checkSource(source);
@@ -178,6 +169,23 @@ function add@alice(a: integer@alice, b: integer@alice) {
       }
     });
 
+    it("collects returns from nested blocks (§7.14.4)", () => {
+      const typed = expectTypeCheckSuccess(`
+function f@alice(c: boolean@alice) {
+  if (c) {
+    if (c) {
+      return 1@alice;
+    } else {
+      return 2.5@alice;
+    }
+  } else {
+    return 3@alice;
+  }
+}
+`);
+      assert.equal(functionDecl(typed, 0).returnType.base, "float");
+    });
+
     it("infers void return for empty body (§7.14.4)", () => {
       const typed = expectTypeCheckSuccess(`function noop@alice() {}`);
       assert.equal(functionDecl(typed, 0).returnType.base, "void");
@@ -232,6 +240,29 @@ function add(a: integer@alice, b: integer@alice) {
   return a;
 }
 `);
+    });
+
+    it("sees transfer-let bindings while inferring the return type (§7.14.1, §7.14.4)", () => {
+      // Return-type inference walks the body building its own scope; it used to
+      // skip `let ... <- ...`, so the binding looked undefined at the return.
+      const typed = expectTypeCheckSuccess(`
+function f@alice() {
+  let t: integer@alice <- 1@alice;
+  return t;
+}
+`);
+      assert.equal(functionDecl(typed, 0).returnType.base, "integer");
+    });
+
+    it("sees transfer-let bindings in a choreography function (§7.14.4)", () => {
+      const typed = expectTypeCheckSuccess(`
+function f() {
+  let t: integer@alice <- 1@alice;
+  let u: integer@alice = t;
+  return u;
+}
+`);
+      assert.equal(functionDecl(typed, 0).returnType.base, "integer");
     });
 
     it("allows explicit return type on recursive local function (§7.14.8)", () => {

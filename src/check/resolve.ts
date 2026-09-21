@@ -66,7 +66,7 @@ export function validateArrayTypeAnnotation(ann: TypeAnnotation): void {
   }
 }
 
-function rawLiteralBaseType(raw: RawLiteral): LocatedType["base"] {
+export function rawLiteralBaseType(raw: RawLiteral): LocatedType["base"] {
   switch (raw.kind) {
     case "IntegerLiteral":
       return "integer";

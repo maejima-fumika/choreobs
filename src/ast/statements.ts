@@ -81,7 +81,8 @@ export interface WhileStatement extends AstNode {
 export interface ForStatement extends AstNode {
   readonly kind: "ForStatement";
   readonly init?: ForInit;
-  readonly condition?: Expression;
+  /** Required: an omitted condition has no location to take (spec §5.11). */
+  readonly condition: Expression;
   readonly update?: ForUpdate;
   readonly body: Block;
 }
@@ -99,10 +100,16 @@ export interface ForLetInit extends AstNode {
   readonly initializer: Expression;
 }
 
-/** `i = e` in for-header (no trailing `;`). */
+/**
+ * `i = e` or `xs[i] = e` in a for-header (no trailing `;`).
+ *
+ * The target is the same `AssignmentTarget` an assignment statement takes
+ * (spec §5.7, §5.11); the two forms of assignment are not meant to differ
+ * inside and outside a for-header.
+ */
 export interface ForAssignmentInit extends AstNode {
   readonly kind: "ForAssignmentInit";
-  readonly name: string;
+  readonly target: AssignmentTarget;
   readonly value: Expression;
 }
 

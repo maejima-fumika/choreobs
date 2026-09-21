@@ -1,4 +1,4 @@
-import type { AstNode, Span } from "./span.js";
+import type { AstNode } from "./span.js";
 
 /** `alice` | `bob` | … — an individual location naming exactly one endpoint (spec §3.3). */
 export type IndividualLocation = {

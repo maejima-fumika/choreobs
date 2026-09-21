@@ -2,7 +2,6 @@ import type { Span } from "../ast/span.js";
 import type { Location } from "../ast/location.js";
 import type { BaseType } from "../ast/syntax-types.js";
 import type { Block, Statement } from "../ast/statements.js";
-import type { Expression } from "../ast/expressions.js";
 import type { LocatedType } from "../ast/typed.js";
 import { locationsEqual, locatedType } from "../types/located.js";
 
@@ -32,9 +31,6 @@ export type UnitReturnCandidate = {
 };
 
 export type ReturnCandidate = ValueReturnCandidate | UnitReturnCandidate;
-
-/** Supplies located types for `return expr;` during return-type inference. */
-export type ExprTypeResolver = (expr: Expression) => InferResult<LocatedType>;
 
 /** Least upper bound on base types for return inference (spec §7.14.4). */
 export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
@@ -90,75 +86,6 @@ export function lubLocatedType(
     return location;
   }
   return inferenceOk(locatedType(base.value, location.value));
-}
-
-/** Collects all `return` statements in a block tree (spec §7.14.4). */
-export function collectReturnCandidates(
-  block: Block,
-  resolveExprType: ExprTypeResolver,
-): InferResult<readonly ReturnCandidate[]> {
-  const candidates: ReturnCandidate[] = [];
-  const err = collectFromStatements(block.statements, resolveExprType, candidates);
-  if (err !== undefined) {
-    return err;
-  }
-  return inferenceOk(candidates);
-}
-
-function collectFromStatements(
-  statements: readonly Statement[],
-  resolveExprType: ExprTypeResolver,
-  out: ReturnCandidate[],
-): InferErr | undefined {
-  for (const stmt of statements) {
-    const err = collectFromStatement(stmt, resolveExprType, out);
-    if (err !== undefined) {
-      return err;
-    }
-  }
-  return undefined;
-}
-
-function collectFromStatement(
-  stmt: Statement,
-  resolveExprType: ExprTypeResolver,
-  out: ReturnCandidate[],
-): InferErr | undefined {
-  switch (stmt.kind) {
-    case "ReturnStatement":
-      if (stmt.value === undefined) {
-        out.push({ kind: "void", span: stmt.span });
-        return undefined;
-      }
-      {
-        const resolved = resolveExprType(stmt.value);
-        if (!resolved.ok) {
-          return resolved;
-        }
-        out.push({
-          kind: "value",
-          type: resolved.value,
-          span: stmt.span,
-        });
-        return undefined;
-      }
-    case "IfStatement": {
-      let err = collectFromStatements(stmt.then.statements, resolveExprType, out);
-      if (err !== undefined) {
-        return err;
-      }
-      if (stmt.else !== undefined) {
-        err = collectFromStatements(stmt.else.statements, resolveExprType, out);
-      }
-      return err;
-    }
-    case "WhileStatement":
-      return collectFromStatements(stmt.body.statements, resolveExprType, out);
-    case "ForStatement":
-      return collectFromStatements(stmt.body.statements, resolveExprType, out);
-    default:
-      return undefined;
-  }
 }
 
 /**
@@ -233,23 +160,4 @@ export function inferReturnTypeFromCandidates(
   }
 
   return inferenceOk(merged);
-}
-
-/**
- * Infers a function return type when the annotation is omitted (spec §7.14.4–§7.14.6).
- */
-export function inferFunctionReturnType(
-  body: Block,
-  functionLocation: Location,
-  resolveExprType: ExprTypeResolver,
-): InferResult<LocatedType> {
-  const collected = collectReturnCandidates(body, resolveExprType);
-  if (!collected.ok) {
-    return collected;
-  }
-  return inferReturnTypeFromCandidates(
-    body,
-    functionLocation,
-    collected.value,
-  );
 }

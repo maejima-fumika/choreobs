@@ -1,27 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parse } from "../../src/parser/index.js";
-import { typeCheck } from "../../src/check/index.js";
-import { project, projectAll } from "../../src/epp/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
-import { assertCommConsistent } from "../comm/assert-consistent.js";
+import { aliceBob } from "../support/config.js";
+import { projectSource } from "../support/pipeline.js";
+import { assertCommConsistent } from "../support/comm.js";
 import type {
   ProjectedProgram,
   ProjectedStatement,
   IfStatement,
 } from "../../src/ir/projected.js";
 
-const config: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
-
+/** Projects, and checks the result is a coherent set of endpoint programs. */
 function eppAll(
   source: string,
-  endpoints: ChoreoBSConfig = config,
+  config: ChoreoBSConfig = aliceBob,
 ): readonly ProjectedProgram[] {
-  const { program, errors: pe } = parse(source);
-  assert.equal(pe.length, 0);
-  const { typed, errors: te } = typeCheck(program!, endpoints);
-  assert.equal(te.length, 0);
-  const all = projectAll(typed!, endpoints.endpoints);
+  const all = projectSource(source, config);
   assertCommConsistent(all);
   return all;
 }
@@ -146,11 +140,14 @@ function foo(a: integer@alice, b: integer@bob): integer@alice {
   it("omits unavailable top-level lets at other endpoints (spec §12.8)", () => {
     const source = `let x: integer@alice = 1@alice;`;
     const bob = epp(source, "bob");
+    // The binding is gone, but the initializer's evaluation is kept as an
+    // evaluation-only statement (spec §12.8). Here it holds nothing bob owes,
+    // so it is an `absent` that finalization and cleanup remove.
     assert.ok(
       bob.body.every(
         (stmt) =>
-          stmt.kind === "AbsentStatement" ||
-          (stmt.kind === "ExpressionStatement" &&
+          stmt.kind === "ExpressionStatement" &&
+          (stmt.expression.kind === "AbsentExpression" ||
             stmt.expression.kind === "NothingExpression"),
       ),
     );
@@ -167,7 +164,7 @@ function foo(a: integer@alice, b: integer@bob): integer@alice {
     );
   });
 
-  it("projects bob-only let inside nested if as NothingExpression at alice (spec §15.2 EPP)", () => {
+  it("drops a bob-only let inside a nested if at alice (spec §15.2 EPP)", () => {
     const source = `
 let flag: boolean@every = true@every;
 if (flag) {
@@ -179,16 +176,17 @@ if (flag) {
     const alice = epp(source, "alice");
     const kinds = collectStmtKinds(alice.body);
     assert.ok(kinds.includes("IfStatement"));
-    assert.ok(kinds.includes("ExpressionStatement"));
     const outer = findIf(alice.body);
     assert.ok(outer);
     const inner = findIf(outer.then.statements);
     assert.ok(inner);
+    // The initializer holds no call alice has to make, so the whole statement
+    // goes; the `if` stays because its condition is `@every` (spec §12.12).
     const innerThen = inner.then.statements;
     assert.equal(innerThen.length, 1);
     assert.equal(innerThen[0]?.kind, "ExpressionStatement");
     if (innerThen[0]?.kind === "ExpressionStatement") {
-      assert.equal(innerThen[0].expression.kind, "NothingExpression");
+      assert.equal(innerThen[0].expression.kind, "AbsentExpression");
     }
     assert.equal(findStmt(inner.then.statements, "LetStatement"), undefined);
   });
@@ -198,8 +196,8 @@ if (flag) {
     const alice = epp(source, "alice");
     const stmt = alice.body[0];
     assert.ok(
-      stmt?.kind === "AbsentStatement" ||
-        (stmt?.kind === "ExpressionStatement" &&
+      stmt?.kind === "ExpressionStatement" &&
+        (stmt.expression.kind === "AbsentExpression" ||
           stmt.expression.kind === "NothingExpression"),
     );
     assert.equal(findStmt(alice.body, "LetStatement"), undefined);
@@ -275,8 +273,8 @@ let ys: float[]@alice <- xs;
     const source = `
 let xs: integer[]@alice = [1, 2, 3]@alice;
 xs[1@alice] = 10@alice;
-push(xs, 20@alice);
-let n: integer@alice = length(xs);
+xs.push(20@alice);
+let n: integer@alice = xs.length;
 let ys: integer[]@bob <- xs;
 `;
     const alice = epp(source, "alice");
