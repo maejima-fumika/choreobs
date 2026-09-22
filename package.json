@@ -9,6 +9,7 @@
     "start:prod": "node dist/index.js",
     "test": "node --import tsx --test $(find test -name '*.test.ts' | sort)",
     "compile": "tsx src/cli/main.ts compile",
+    "spec:sections": "tsx scripts/spec/sections.ts",
     "fuzz": "tsx scripts/fuzz/run.ts",
     "fuzz:violate": "tsx scripts/fuzz/violate.ts"
   },
