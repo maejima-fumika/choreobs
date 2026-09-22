@@ -370,11 +370,11 @@ let v: integer@alice = here();
       assert.equal(bs(result, "bob"), "");
     });
 
-    it("keeps a call in a let initializer whose binding is absent (§11.6)", () => {
+    it("keeps a call in a let initializer whose binding is absent", () => {
       assert.match(bobOf("let v: integer@alice = sends();"), /^sends\(\);$/m);
     });
 
-    it("keeps a call in an assignment whose target is absent (§11.7)", () => {
+    it("keeps a call in an assignment whose target is absent", () => {
       assert.match(
         bobOf(`
 let v: integer@alice = 0@alice;
@@ -384,7 +384,7 @@ v = sends();
       );
     });
 
-    it("keeps the index of an array element assignment, before the value (§11.8)", () => {
+    it("keeps the index of an array element assignment, before the value", () => {
       // The index used to be dropped: only the right-hand side was scanned,
       // so alice sent from inside the index call and bob never received.
       const bob = bobOf(`
@@ -422,7 +422,7 @@ xs.push(sends());
     });
   });
 
-  describe("§12.9 a transfer source is evaluated at every endpoint (§11.9)", () => {
+  describe("§12.9 a transfer source is evaluated at every endpoint", () => {
     const G = `
 function g(): integer@alice {
   let b: integer@bob = 7@bob;
@@ -491,7 +491,7 @@ let y: integer@alice <- x;
     });
   });
 
-  describe("§16.46 short-circuit operands (§11.10)", () => {
+  describe("§16.46 short-circuit operands", () => {
     const PING = `
 function ping(): boolean@alice {
   let b: integer@bob = 1@bob;
@@ -541,7 +541,7 @@ let d: boolean@alice = c && yes();
     });
   });
 
-  describe("§13.9 what cleanup may and may not remove (§11.11)", () => {
+  describe("§13.9 what cleanup may and may not remove", () => {
     it("keeps return, bindings, stores and ordinary calls that hold null", () => {
       // `relay` returns at alice, so at bob the parameter, the binding, the
       // store and the return value are all `null` — and every one of those

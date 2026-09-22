@@ -1295,7 +1295,7 @@ function f@bob() {
       );
     });
 
-    it("rejects binary operands at different individual locations (spec §8.1.1)", () => {
+    it("rejects binary operands at different individual locations (spec §8.2, §16.27)", () => {
       const { typed, errors } = checkSource(`
 function f@alice(): integer@alice {
   return 1@bob + 2@alice;
@@ -1444,7 +1444,7 @@ function f@alice(x: integer@every) {
       );
     });
 
-    it("rejects integer@every argument from inside a local function (spec §8.1.1)", () => {
+    it("rejects integer@every argument from inside a local function (spec §8.2, §16.27)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: integer@alice) {
   return a;
