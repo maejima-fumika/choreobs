@@ -1,4 +1,4 @@
-# ChoreoBS Core v0 Specification
+# ChoreoBS Core v0 Specification <a id="choreobs-core-v0-specification"></a>
 
 ChoreoBS Core v0 is an explicitly located choreographic programming language designed to be transpiled to BlueScript through Endpoint Projection (EPP).
 
@@ -6,16 +6,16 @@ This specification defines the initial core language for implementing the first 
 
 ---
 
-## 1. Overview
+## 1. Overview <a id="overview"></a>
 
-### 1.1 Language Name
+### 1.1 Language Name <a id="language-name"></a>
 
 - Language name: `ChoreoBS`
 - Source file extension: `.cbs`
 - Output file extension: `.bs`
 - Compilation target: BlueScript
 
-### 1.2 Design Goals
+### 1.2 Design Goals <a id="design-goals"></a>
 
 ChoreoBS Core v0 aims to:
 
@@ -26,7 +26,7 @@ ChoreoBS Core v0 aims to:
 - reduce send/receive mismatches through syntax, typing, and EPP rules;
 - serve as the foundation for future Gradual Choreographic Programming.
 
-### 1.3 Basic Example
+### 1.3 Basic Example <a id="basic-example"></a>
 
 ```ts
 let x: integer@alice = 10@alice;
@@ -52,9 +52,9 @@ let y: integer = receiveInteger("alice", "top_0");
 
 ***
 
-## 2. Input and Output
+## 2. Input and Output <a id="input-and-output"></a>
 
-### 2.1 Input Files
+### 2.1 Input Files <a id="input-files"></a>
 
 The ChoreoBS transpiler takes the following inputs:
 
@@ -69,7 +69,7 @@ project/
   choreobs.json
 ```
 
-### 2.2 `choreobs.json`
+### 2.2 `choreobs.json` <a id="choreobs-json"></a>
 
 `choreobs.json` specifies the list of endpoints.
 
@@ -79,7 +79,7 @@ project/
 }
 ```
 
-#### Rules
+#### Rules <a id="endpoint-rules"></a>
 
 * `endpoints` must be an array of strings.
 * Each string in `endpoints` names one endpoint and defines an individual location.
@@ -106,7 +106,7 @@ Or:
 choreobs compile index.cbs --config path/to/choreobs.json
 ```
 
-### 2.3 Output Files
+### 2.3 Output Files <a id="output-files"></a>
 
 The compiler emits one `.bs` file per endpoint.
 
@@ -133,9 +133,9 @@ index_bob.bs
 
 ***
 
-## 3. Endpoints and Locations
+## 3. Endpoints and Locations <a id="endpoints-and-locations"></a>
 
-### 3.1 Endpoints
+### 3.1 Endpoints <a id="endpoints"></a>
 
 An **endpoint** is an agent that executes a program. The endpoints taking part in a
 choreography are declared by the `endpoints` field of `choreobs.json` (spec §2.2).
@@ -143,7 +143,7 @@ choreography are declared by the `endpoints` field of `choreobs.json` (spec §2.
 A choreography is a single global program. The compiler projects it, by Endpoint
 Projection (spec §12), into one BlueScript program per endpoint.
 
-### 3.2 Locations
+### 3.2 Locations <a id="locations"></a>
 
 A location denotes where a value is placed. ChoreoBS has the following kinds of
 locations:
@@ -174,7 +174,7 @@ every
 Of these, `alice`, `bob`, `sensor1`, and `Controller` are individual locations, and
 `every` is not.
 
-### 3.3 Individual Locations
+### 3.3 Individual Locations <a id="individual-locations"></a>
 
 Individual locations are defined by the `endpoints` field in `choreobs.json`.
 
@@ -192,7 +192,7 @@ bob
 sensor
 ```
 
-### 3.4 `every`
+### 3.4 `every` <a id="every"></a>
 
 `every` is a special location.
 
@@ -216,7 +216,7 @@ For mutable arrays, `T[]@every` means that each endpoint has an independent loca
 
 A local copy of an `@every` array with `<-` creates a fresh mutable array at the destination (spec §11.4).
 
-### 3.5 Location Names
+### 3.5 Location Names <a id="location-names"></a>
 
 * Location names follow the same lexical rules as ordinary identifiers.
 * Location names may contain uppercase letters.
@@ -225,9 +225,9 @@ A local copy of an `@every` array with `<-` creates a fresh mutable array at the
 
 ***
 
-## 4. Lexical Specification
+## 4. Lexical Specification <a id="lexical-specification"></a>
 
-### 4.1 Whitespace
+### 4.1 Whitespace <a id="whitespace"></a>
 
 The following characters are treated as whitespace:
 
@@ -238,7 +238,7 @@ carriage return
 line feed
 ```
 
-### 4.2 Comments
+### 4.2 Comments <a id="comments"></a>
 
 ChoreoBS supports TypeScript-style comments.
 
@@ -248,7 +248,7 @@ ChoreoBS supports TypeScript-style comments.
 /* block comment */
 ```
 
-### 4.3 Identifiers
+### 4.3 Identifiers <a id="identifiers"></a>
 
 Identifiers have the following form:
 
@@ -259,7 +259,7 @@ Identifier ::= [A-Za-z_][A-Za-z0-9_]*
 Reserved words cannot be used as ordinary identifiers, and identifiers beginning
 with two underscores are reserved for the compiler (spec §6.2).
 
-### 4.4 Keywords
+### 4.4 Keywords <a id="keywords"></a>
 
 The following words are reserved:
 
@@ -299,9 +299,9 @@ import
 export
 ```
 
-### 4.5 Literals
+### 4.5 Literals <a id="literals"></a>
 
-#### Integer Literal
+#### Integer Literal <a id="integer-literal"></a>
 
 ```text
 IntegerLiteral ::= [0-9]+
@@ -315,7 +315,7 @@ Examples:
 42
 ```
 
-#### Float Literal
+#### Float Literal <a id="float-literal"></a>
 
 ```text
 FloatLiteral ::= [0-9]+ "." [0-9]+
@@ -329,14 +329,14 @@ Examples:
 0.5
 ```
 
-#### Boolean Literal
+#### Boolean Literal <a id="boolean-literal"></a>
 
 ```ts
 true
 false
 ```
 
-#### String Literal
+#### String Literal <a id="string-literal"></a>
 
 String literals use double quotes.
 
@@ -345,13 +345,13 @@ String literals use double quotes.
 "alice"
 ```
 
-#### Null Literal
+#### Null Literal <a id="null-literal"></a>
 
 ```ts
 null
 ```
 
-### 4.6 Operators and Punctuation
+### 4.6 Operators and Punctuation <a id="operators-and-punctuation"></a>
 
 The lexer recognizes the following tokens:
 
@@ -395,7 +395,7 @@ A float literal's dot is consumed by the literal rule (spec §4.5), which takes
 `.` only when a digit follows, so `xs.length` lexes as three tokens and `1.5` as
 one.
 
-#### Maximal Munch and `<-`
+#### Maximal Munch and `<-` <a id="maximal-munch-and-transfer"></a>
 
 Tokens are formed by maximal munch over the raw character stream, so the
 character immediately following `<` decides the token. `a<-b` is therefore a
@@ -409,11 +409,11 @@ a < -b      // comparison with -b
 
 ***
 
-## 5. Syntax
+## 5. Syntax <a id="syntax"></a>
 
 This section defines the grammar in an EBNF-like notation.
 
-### 5.1 Program
+### 5.1 Program <a id="program"></a>
 
 ```ebnf
 Program ::= TopLevelItem*
@@ -426,7 +426,7 @@ TopLevelItem ::= FunctionDeclaration
 
 Top-level statements are executed in an implicit choreography context.
 
-### 5.2 Types
+### 5.2 Types <a id="types"></a>
 
 ```ebnf
 Type ::= NonLocatedType LocationAnnotation?
@@ -481,7 +481,7 @@ float[][]
 boolean[][]
 ```
 
-### 5.3 Function Declaration
+### 5.3 Function Declaration <a id="function-declaration"></a>
 
 ```ebnf
 FunctionDeclaration ::=
@@ -527,13 +527,13 @@ function main(x: integer@alice): void {
 }
 ```
 
-### 5.4 Blocks
+### 5.4 Blocks <a id="blocks"></a>
 
 ```ebnf
 Block ::= "{" Statement* "}"
 ```
 
-### 5.5 Statements
+### 5.5 Statements <a id="statements"></a>
 
 ```ebnf
 Statement ::= LetStatement
@@ -546,7 +546,7 @@ Statement ::= LetStatement
             | ExpressionStatement
 ```
 
-### 5.6 Let Statement
+### 5.6 Let Statement <a id="let-statement"></a>
 
 ```ebnf
 LetStatement ::= "let" Identifier TypeAnnotation? "=" Expression ";"
@@ -575,7 +575,7 @@ let x: integer@alice;
 let y <- x;
 ```
 
-### 5.7 Assignment Statement
+### 5.7 Assignment Statement <a id="assignment-statement"></a>
 
 ```ebnf
 AssignmentStatement ::= AssignmentTarget "=" Expression ";"
@@ -595,7 +595,7 @@ x = y + 1@alice;
 xs[0@alice] = 10@alice;
 ```
 
-### 5.8 Transfer Statement
+### 5.8 Transfer Statement <a id="transfer-statement"></a>
 
 ```ebnf
 TransferStatement ::= Identifier "<-" Expression ";"
@@ -605,7 +605,7 @@ TransferStatement ::= Identifier "<-" Expression ";"
 y <- x;
 ```
 
-### 5.9 If Statement
+### 5.9 If Statement <a id="if-statement"></a>
 
 ```ebnf
 IfStatement ::= "if" "(" Expression ")" Block ("else" Block)?
@@ -613,13 +613,13 @@ IfStatement ::= "if" "(" Expression ")" Block ("else" Block)?
 
 `if` is a statement, not an expression.
 
-### 5.10 While Statement
+### 5.10 While Statement <a id="while-statement"></a>
 
 ```ebnf
 WhileStatement ::= "while" "(" Expression ")" Block
 ```
 
-### 5.11 For Statement
+### 5.11 For Statement <a id="for-statement"></a>
 
 Only C-style `for` loops are supported in v0.
 
@@ -682,7 +682,7 @@ for (k in obj) {
 }
 ```
 
-### 5.12 Return Statement
+### 5.12 Return Statement <a id="return-statement"></a>
 
 ```ebnf
 ReturnStatement ::= "return" Expression? ";"
@@ -694,13 +694,13 @@ ReturnStatement ::= "return" Expression? ";"
 (spec §6.5) has nothing to return from, so a top-level `return` is an error even
 though that context behaves like a `void` function in every other respect.
 
-### 5.13 Expression Statement
+### 5.13 Expression Statement <a id="expression-statement"></a>
 
 ```ebnf
 ExpressionStatement ::= Expression ";"
 ```
 
-### 5.14 Expressions
+### 5.14 Expressions <a id="expressions"></a>
 
 ```ebnf
 Expression ::= LogicalOrExpression
@@ -793,7 +793,7 @@ ArgumentList ::= Expression ("," Expression)*
 ArrayLiteral ::= "[" ArgumentList? "]" LocationAnnotation?
 ```
 
-### 5.15 Located Literals
+### 5.15 Located Literals <a id="located-literals"></a>
 
 Literals may have location annotations.
 
@@ -819,7 +819,7 @@ true@every
 null@alice
 ```
 
-### 5.16 Array Literals
+### 5.16 Array Literals <a id="array-literals"></a>
 
 Array literals have the following form:
 
@@ -889,7 +889,7 @@ to be inside it — and v0 never infers a location from context (spec §8.1).
 
 ***
 
-### 5.17 Evaluation Order
+### 5.17 Evaluation Order <a id="evaluation-order"></a>
 
 Evaluation is eager and left to right.
 
@@ -926,9 +926,9 @@ different orders. Every endpoint program therefore preserves this one order
 
 ***
 
-## 6. Namespaces and Scopes
+## 6. Namespaces and Scopes <a id="namespaces-and-scopes"></a>
 
-### 6.1 Namespaces
+### 6.1 Namespaces <a id="namespaces"></a>
 
 ChoreoBS has two namespaces:
 
@@ -943,7 +943,7 @@ beside a function of the same name shadows it, and the call the program meant
 to make would reach the variable instead. This is the same reasoning that
 reserves the runtime names in spec §6.2, applied to the program's own names.
 
-#### What holds a name, and for how long
+#### What holds a name, and for how long <a id="what-holds-a-name-and-for-how-long"></a>
 
 * An **endpoint name** is declared in `choreobs.json` (spec §2.2) and holds its
   name for the whole program, whether or not the source ever writes `@` with
@@ -995,14 +995,14 @@ function alice2@alice(): integer@alice { return 1@alice; }
 let aliceCount: integer@alice = alice2();
 ```
 
-### 6.2 Function Names
+### 6.2 Function Names <a id="function-names"></a>
 
 * Function overloading is not supported in v0.
 * Function names are global: a name may be defined only once, whatever the functions' locations, and a choreography function may not share a name with a local one.
 * A function name is held in the value namespace (spec §6.1), so no variable or parameter may take it, and it may not be an endpoint name either.
 * The **reserved runtime names** listed below cannot be used as a function name, a variable name, or a parameter name.
 
-#### Reserved Runtime Names
+#### Reserved Runtime Names <a id="reserved-runtime-names"></a>
 
 Generated BlueScript keeps the original ChoreoBS name (spec §13.3), so a user
 identifier that matches a name the generated code itself calls would capture
@@ -1051,7 +1051,7 @@ function f@bob(): void {
 }
 ```
 
-### 6.3 Function Declaration Hoisting
+### 6.3 Function Declaration Hoisting <a id="function-declaration-hoisting"></a>
 
 Function declarations are visible throughout the whole file.
 
@@ -1065,7 +1065,7 @@ function f@alice(): integer@alice {
 
 This is allowed.
 
-### 6.4 Variable Scope
+### 6.4 Variable Scope <a id="variable-scope"></a>
 
 `let` variables are block-scoped.
 
@@ -1101,7 +1101,7 @@ if (c) {
 }
 ```
 
-### 6.5 Top-Level Statements
+### 6.5 Top-Level Statements <a id="top-level-statements"></a>
 
 Non-function top-level statements are treated as the body of an implicit choreography context.
 
@@ -1126,7 +1126,7 @@ The implementation does not need to generate an actual function named `__top`.
 The analogy stops at `return`: there is no function to return from, so `return`
 is not allowed at top level (spec §5.12).
 
-### 6.6 Top-Level Let
+### 6.6 Top-Level Let <a id="top-level-let"></a>
 
 Top-level `let` declarations are local variables of the implicit top-level context.
 
@@ -1144,9 +1144,9 @@ function f@alice(): integer@alice {
 
 ***
 
-## 7. Type System
+## 7. Type System <a id="type-system"></a>
 
-### 7.1 Base Types
+### 7.1 Base Types <a id="base-types"></a>
 
 The base types in v0 are:
 
@@ -1161,7 +1161,7 @@ void
 
 `any` and `undefined` do not exist in v0.
 
-#### 7.1.1 Array Types
+#### 7.1.1 Array Types <a id="array-types"></a>
 
 The mutable array extension adds the following array types:
 
@@ -1214,7 +1214,7 @@ A transfer moves array contents by serialized value. The receiver obtains a fres
 
 A value of type `T[]@every` means that each endpoint has an independent local mutable array with the same contents. It is not shared memory.
 
-### 7.2 Located Types
+### 7.2 Located Types <a id="located-types"></a>
 
 Expressions fall into two kinds, and most rules in this specification are about
 the first:
@@ -1267,7 +1267,7 @@ boolean@every
 string@sensor
 ```
 
-### 7.3 Void
+### 7.3 Void <a id="void"></a>
 
 `void` is the return type of a function that does not return a value.
 
@@ -1302,7 +1302,7 @@ function f(): void {
 `void` is distinct from `null` (spec §7.4), which is an ordinary value type and
 does carry a location.
 
-### 7.4 Null
+### 7.4 Null <a id="null"></a>
 
 `null` is a singleton type.
 
@@ -1323,7 +1323,7 @@ Disallowed:
 let x: integer@alice = null@alice;
 ```
 
-### 7.5 Subtyping
+### 7.5 Subtyping <a id="subtyping"></a>
 
 The base type subtyping relation is:
 
@@ -1334,11 +1334,11 @@ T <: T
 
 There are no other base type subtyping relations.
 
-### 7.6 Location Matching and Residency
+### 7.6 Location Matching and Residency <a id="location-matching-and-residency"></a>
 
 Two distinct relations are used in this specification. They must not be confused.
 
-#### Location Matching (type system)
+#### Location Matching (type system) <a id="location-matching-type-system"></a>
 
 A value located at `Lvalue` may be used where a value at `Luse` is required only
 when the two locations are the same:
@@ -1372,7 +1372,7 @@ values (§7.13). It also subsumes the local function discipline: inside
 individual location is rejected by the same rule. The additional restrictions
 specific to local function declarations are stated in §8.2.
 
-#### Location Residency (endpoint projection)
+#### Location Residency (endpoint projection) <a id="location-residency-endpoint-projection"></a>
 
 Endpoint Projection needs a different question answered: which endpoints
 physically hold a copy of a value? Define `residesAt(L, P)`, where `P` is an
@@ -1393,7 +1393,7 @@ Residency does **not** imply matching. That an endpoint `alice` holds a copy of 
 `<-` transfer is still required. `residesAt` is used only by §12 and must
 never be used as a typing rule.
 
-### 7.7 Assignment Typing
+### 7.7 Assignment Typing <a id="assignment-typing"></a>
 
 Assignment:
 
@@ -1449,7 +1449,7 @@ let ys: float[]@alice = xs;      // invalid
 let ys: float[]@alice <- xs;     // valid: local copy
 ```
 
-### 7.8 Transfer Typing
+### 7.8 Transfer Typing <a id="transfer-typing"></a>
 
 The transfer operator:
 
@@ -1460,7 +1460,7 @@ a <- b;
 evaluates `b` at its own location and copies the resulting value to the location
 of `a`, storing it in `a`.
 
-#### Base Type Rule
+#### Base Type Rule <a id="base-type-rule"></a>
 
 For `a : T1@p` and `b : T2@q`, the transfer is well typed only when
 
@@ -1509,7 +1509,7 @@ let xs: integer[]@every = [1, 2]@every;
 let ys: float[]@alice <- xs;
 ```
 
-#### Location Rule
+#### Location Rule <a id="location-rule"></a>
 
 There is none. Any concrete location may appear as the source or the
 destination, in any combination. What the locations decide is not whether the
@@ -1533,7 +1533,7 @@ destination locations are the same.
 A transfer that performs no communication is ordinary and expected; it is not an
 error.
 
-#### The Source Is Evaluated Once
+#### The Source Is Evaluated Once <a id="the-source-is-evaluated-once"></a>
 
 The source of a transfer is an arbitrary expression and may call a function, so
 how many times it is evaluated is observable:
@@ -1546,7 +1546,7 @@ This needs saying because a broadcast uses the source value twice at the sender
 two uses must be the same value. Where the generated code needs the value more
 than once, EPP binds it to a temporary first (spec §12.9).
 
-#### Local Copy Is Always a Fresh Copy
+#### Local Copy Is Always a Fresh Copy <a id="local-copy-is-always-a-fresh-copy"></a>
 
 Whenever a transfer results in a local copy, the destination receives a **fresh**
 value, for scalars and for mutable arrays alike. For a mutable array this means
@@ -1581,7 +1581,7 @@ let y: integer@alice <- x;
 
 This is a local copy at `alice`.
 
-### 7.9 If Condition Typing
+### 7.9 If Condition Typing <a id="if-condition-typing"></a>
 
 An `if` condition must be a `boolean` located at the current context's location.
 
@@ -1592,7 +1592,7 @@ cond : boolean@L
 match(L, C)
 ```
 
-#### Choreography Context
+#### Choreography Context <a id="if-condition-choreography-context"></a>
 
 In a choreography function or at top level, the condition must be `boolean@every`. The same applies to `while` and `for` conditions (spec §7.10).
 
@@ -1603,7 +1603,7 @@ if (c) {
 }
 ```
 
-#### Local Context
+#### Local Context <a id="if-condition-local-context"></a>
 
 Inside `function@alice`, the condition must be `boolean@alice`.
 
@@ -1629,19 +1629,19 @@ function f@alice(c: boolean@every): void {
 }
 ```
 
-### 7.10 While and For Condition Typing
+### 7.10 While and For Condition Typing <a id="while-and-for-condition-typing"></a>
 
 The termination conditions of `while` and `for` follow the same rule as `if`.
 
 * In a choreography context, the condition must be `boolean@every`.
 * In a local `@p` context, the condition must be `boolean@p`. `boolean@every` is not allowed inside local functions.
 
-### 7.11 Operators
+### 7.11 Operators <a id="operators"></a>
 
 Every operator requires its operands to be scalars: no operator is defined over
 array types (spec §7.11.1). Sections 7.11 and 7.11.1 together cover all of them.
 
-#### Arithmetic Operators
+#### Arithmetic Operators <a id="arithmetic-operators"></a>
 
 ```text
 + - * / %
@@ -1666,7 +1666,7 @@ Both operands must be located at the same location (spec §7.6); the result is
 located there too. Mixing an `@every` operand with an individual-location operand
 is a compile-time error.
 
-#### String Concatenation
+#### String Concatenation <a id="string-concatenation"></a>
 
 `string + string` is allowed.
 
@@ -1676,7 +1676,7 @@ let s: string@alice = "hello "@alice + "world"@alice;
 
 The inferred result type is `string` at the operand location.
 
-#### Comparison Operators
+#### Comparison Operators <a id="comparison-operators"></a>
 
 ```text
 < <= > >=
@@ -1704,7 +1704,7 @@ let c = x < 10@alice;
 
 `c` is inferred as `boolean@alice`.
 
-#### Equality Operators
+#### Equality Operators <a id="equality-operators"></a>
 
 ```text
 ===
@@ -1733,7 +1733,7 @@ Nor is `void`. A void computation produces no value (spec §7.2), so there is
 nothing for `===` to compare — and `void === void` would otherwise slip past
 the same-base-type rule above (spec §16.43).
 
-#### Logical Operators
+#### Logical Operators <a id="logical-operators"></a>
 
 ```text
 &&
@@ -1751,7 +1751,7 @@ runs at every endpoint (spec §12.11), but only the endpoints holding the
 operand's value can tell whether the short circuit skipped it. See §16.46, and
 §17.6 for what lifting the restriction would take.
 
-#### Unary Operators
+#### Unary Operators <a id="unary-operators"></a>
 
 ```text
 -  !
@@ -1793,9 +1793,9 @@ let bad = !xs;            // invalid
 Unary operators bind tighter than every binary operator and are right
 associative (spec §5.14), so `-a * b` is `(-a) * b` and `!!c` is `!(!c)`.
 
-### 7.11.1 Array Typing
+### 7.11.1 Array Typing <a id="array-typing"></a>
 
-#### Array Invariance
+#### Array Invariance <a id="array-invariance"></a>
 
 Array types are invariant. `T1[]` is compatible with `T2[]` only when `T1` and `T2` are the same element type.
 
@@ -1816,7 +1816,7 @@ let xs: float[]@alice = [1, 2]@alice;
 
 This is allowed because each integer element is checked against the expected `float` element type. It is not an array subtyping conversion.
 
-#### Array Literal Typing
+#### Array Literal Typing <a id="array-literal-typing"></a>
 
 For an array literal `[e1, ..., en]@L`, each element must be located at `L`. Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types.
 
@@ -1856,7 +1856,7 @@ let xs = []@alice;
 let ys: integer[]@alice = [];
 ```
 
-#### Index Access
+#### Index Access <a id="index-access"></a>
 
 For an index expression `xs[i]`:
 
@@ -1874,7 +1874,7 @@ xs[i] : T@L
 
 The index expression must have type `integer`. Bounds checking is a runtime responsibility of BlueScript.
 
-#### Array Element Assignment
+#### Array Element Assignment <a id="array-element-assignment"></a>
 
 For an array element assignment `xs[i] = v;`:
 
@@ -1891,7 +1891,7 @@ then the assignment is valid.
 
 Only assignment targets of the form `Identifier[Expression]` are supported. General lvalues such as `f()[i]`, `xs[i][j]`, and property assignments are not supported.
 
-#### `.length`
+#### `.length` <a id="array-length"></a>
 
 `xs.length` is a compiler-known array operation (spec §5.14).
 
@@ -1909,7 +1909,7 @@ In this rule, `T` must be `integer`, `float`, or `boolean`. In particular
 `.length` is **not** defined on `string`: v0 has no string operations at all
 (spec §17.2).
 
-#### `.push`
+#### `.push` <a id="array-push"></a>
 
 `xs.push(v)` is a compiler-known expression (spec §5.14).
 
@@ -1942,7 +1942,7 @@ decides the endpoints that perform the append (spec §12.14.1).
 
 In this rule, `T` must be `integer`, `float`, or `boolean`.
 
-#### `@every` Arrays Are Not Special
+#### `@every` Arrays Are Not Special <a id="every-arrays-are-not-special"></a>
 
 The location rule of §7.6 applies to arrays exactly as it does to scalars; there
 is no array-specific restriction. This section only spells the rule out for
@@ -1989,7 +1989,7 @@ let xs: integer[]@alice = [1, 2, 3]@alice;
 let ys: integer[]@every <- xs;
 ```
 
-#### Array Equality
+#### Array Equality <a id="array-equality"></a>
 
 The equality operators `===` and `!==` are not defined for array types.
 
@@ -2000,7 +2000,7 @@ let xs: integer[]@alice = [1]@alice;
 xs === xs;
 ```
 
-### 7.12 Function Call Typing
+### 7.12 Function Call Typing <a id="function-call-typing"></a>
 
 Function calls do not specify locations at the call site.
 
@@ -2013,7 +2013,7 @@ Whether a function call is valid depends on the location of the function definit
 The inferred type of a function call expression is the declared or inferred return type of the called function.
 
 
-#### Function Argument Typing
+#### Function Argument Typing <a id="function-argument-typing"></a>
 
 For a function call:
 
@@ -2073,14 +2073,14 @@ average(arrAlice);
 A local function parameter explicitly declared as `T@every` is invalid for a
 separate reason, stated in §8.2.
 
-#### In a Choreography Context
+#### In a Choreography Context <a id="call-in-a-choreography-context"></a>
 
 The following function calls are allowed:
 
 * calls to choreography functions;
 * calls to local functions.
 
-#### In a Local Context
+#### In a Local Context <a id="call-in-a-local-context"></a>
 
 Inside `function@alice`, only `@alice` local functions may be called.
 
@@ -2092,7 +2092,7 @@ The following are disallowed:
 `.length` and `.push` are array operations, not calls (spec §5.14), so this rule
 does not reach them: they may be used in any context, local or choreography.
 
-### 7.13 Return Typing
+### 7.13 Return Typing <a id="return-typing"></a>
 
 When a function has an explicit return type:
 
@@ -2110,7 +2110,7 @@ is allowed only if the function return type is `void`.
 
 When a function omits its return type, the return type is inferred according to Section 7.14.
 
-#### Return Coverage
+#### Return Coverage <a id="return-coverage"></a>
 
 A function whose return type is not `void` must return a value on every
 execution path. This holds whether the return type is written or inferred, and
@@ -2128,13 +2128,13 @@ function bad@alice(c: boolean@alice): integer@alice {   // invalid (spec §16.41
 A `void` function needs no coverage: falling off the end is the same as
 `return;`.
 
-### 7.14 Type Inference
+### 7.14 Type Inference <a id="type-inference"></a>
 
 ChoreoBS Core v0 supports simple, local type inference. This feature does not perform general location inference. It only uses types and locations already determined by literals, identifiers, function signatures, and expression typing.
 
 The compiler should elaborate inferred constructs into a fully typed AST before Endpoint Projection.
 
-#### 7.14.1 Let Type Inference
+#### 7.14.1 Let Type Inference <a id="let-type-inference"></a>
 
 For an ordinary initialized `let` declaration:
 
@@ -2171,7 +2171,7 @@ let x: float@alice = 1@alice;
 
 This is valid because `integer <: float`.
 
-#### Partial Annotations
+#### Partial Annotations <a id="partial-annotations"></a>
 
 The location may be omitted from the type annotation of an initialized `let`. It
 is then taken from the initializer, while the base type comes from the
@@ -2193,7 +2193,7 @@ apply anywhere there is no initializer to read the location from — function
 parameters and return types still require an explicit location (spec §16.3) —
 nor to a transfer `let` (spec §7.14.3).
 
-#### 7.14.2 For Initializer Let Type Inference
+#### 7.14.2 For Initializer Let Type Inference <a id="for-initializer-let-type-inference"></a>
 
 For a C-style `for` initializer:
 
@@ -2215,7 +2215,7 @@ then:
 i : T@L
 ```
 
-#### 7.14.3 Transfer Let Does Not Infer Destination Type
+#### 7.14.3 Transfer Let Does Not Infer Destination Type <a id="transfer-let-does-not-infer-destination-type"></a>
 
 Transfer declarations keep the existing syntax:
 
@@ -2235,7 +2235,7 @@ let y <- x;
 let y: integer <- x;
 ```
 
-#### 7.14.4 Function Return Type Inference
+#### 7.14.4 Function Return Type Inference <a id="function-return-type-inference"></a>
 
 A function declaration may omit its return type:
 
@@ -2295,11 +2295,11 @@ function f@alice(c: boolean@alice) {
 
 The return type is inferred as `float@alice`.
 
-#### 7.14.5 Mixing `return;` and `return expr;`
+#### 7.14.5 Mixing `return;` and `return expr;` <a id="mixing-return-and-return-expr"></a>
 
 A function with an omitted return type must not mix bare `return;` and value-returning `return expr;`.
 
-#### 7.14.6 Return Coverage for Non-`void` Functions
+#### 7.14.6 Return Coverage for Non-`void` Functions <a id="return-coverage-for-non-void-functions"></a>
 
 If a function with an omitted return type contains any `return expr;`, then all execution paths must return a value. The same requirement applies to a function with a written non-`void` return type (spec §7.13).
 
@@ -2311,7 +2311,7 @@ Core v0 requires only a conservative syntactic return coverage analysis. At mini
 
 The compiler may reject programs whose totality is not proven by this conservative analysis.
 
-#### 7.14.7 Parameter Types Are Not Inferred
+#### 7.14.7 Parameter Types Are Not Inferred <a id="parameter-types-are-not-inferred"></a>
 
 Function parameter types are not inferred in Core v0.
 
@@ -2331,7 +2331,7 @@ function add@alice(a: integer@alice, b: integer@alice) {
 }
 ```
 
-#### 7.14.8 Inference and Recursion
+#### 7.14.8 Inference and Recursion <a id="inference-and-recursion"></a>
 
 Local function recursion is allowed, but recursive local functions must have explicit return types in Core v0.
 
@@ -2343,9 +2343,9 @@ Therefore:
 
 ***
 
-## 8. Location Annotation Rules
+## 8. Location Annotation Rules <a id="location-annotation-rules"></a>
 
-### 8.1 Explicit Location Annotations
+### 8.1 Explicit Location Annotations <a id="explicit-location-annotations"></a>
 
 Every type annotation and every literal must carry its own location annotation,
 except on an initialized `let`, where the location is taken from the initializer
@@ -2427,7 +2427,7 @@ from that literal's **own** annotation (§5.16), which reads no context:
 let xs: integer[]@alice = [1, 2, 3]@alice;   // valid
 ```
 
-### 8.2 Local Function Strict Location Rule
+### 8.2 Local Function Strict Location Rule <a id="local-function-strict-location-rule"></a>
 
 For a local function declared at an individual location `P`:
 
@@ -2515,7 +2515,7 @@ function bad@bob(x: integer@bob): integer@bob {
 
 This rule is intentionally stricter than ordinary location availability. In particular, `T@every` is not permitted in local function parameters, local function return types, or local function bodies.
 
-### 8.3 `@every` Literals
+### 8.3 `@every` Literals <a id="every-literals"></a>
 
 `@every` literals are allowed in choreography contexts.
 
@@ -2528,9 +2528,9 @@ null@every
 
 `@every` literals are not allowed inside local function bodies, because local functions use the Local Function Strict Location Rule.
 
-## 9. Statements and Expressions
+## 9. Statements and Expressions <a id="statements-and-expressions"></a>
 
-### 9.1 Semicolons
+### 9.1 Semicolons <a id="semicolons"></a>
 
 In v0, statement-ending semicolons are required.
 
@@ -2570,7 +2570,7 @@ The bodies are written out in full here because the location rules still apply
 inside them: every literal carries its own location (spec §8.1), and `return`
 only appears inside a function (spec §5.12).
 
-### 9.2 Let Statements
+### 9.2 Let Statements <a id="let-statements"></a>
 
 Only initialized `let` declarations are allowed.
 
@@ -2584,7 +2584,7 @@ Transfer declarations are also allowed.
 let y: integer@bob <- x;
 ```
 
-### 9.3 Assignment Statements
+### 9.3 Assignment Statements <a id="assignment-statements"></a>
 
 Assignment is a statement only.
 
@@ -2594,7 +2594,7 @@ x = y;
 
 Assignments do not produce values.
 
-### 9.4 Transfer Statements
+### 9.4 Transfer Statements <a id="transfer-statements"></a>
 
 A transfer is a statement only.
 
@@ -2604,7 +2604,7 @@ y <- x;
 
 Transfer statements do not produce values.
 
-### 9.5 If Statements
+### 9.5 If Statements <a id="if-statements"></a>
 
 `else` is optional.
 
@@ -2622,7 +2622,7 @@ if (c) {
 }
 ```
 
-### 9.6 While Statements
+### 9.6 While Statements <a id="while-statements"></a>
 
 `while` is a statement.
 
@@ -2632,7 +2632,7 @@ while (c) {
 }
 ```
 
-### 9.7 For Statements
+### 9.7 For Statements <a id="for-statements"></a>
 
 Only C-style `for` loops are supported.
 
@@ -2644,11 +2644,11 @@ for (let i = 0@every; i < 10@every; i = i + 1@every) {
 
 `for-of` and `for-in` are not supported.
 
-### 9.8 Break and Continue
+### 9.8 Break and Continue <a id="break-and-continue"></a>
 
 `break` and `continue` are not supported in v0.
 
-### 9.9 Expression Statements
+### 9.9 Expression Statements <a id="expression-statements"></a>
 
 Expression statements are allowed. The expression need not have an effect:
 `xs[0@alice];` and `xs.length;` are legal, if pointless. v0 performs no
@@ -2665,9 +2665,9 @@ stand in; using it as a subexpression or an initializer is a type error
 
 ***
 
-## 10. Function Rules
+## 10. Function Rules <a id="function-rules"></a>
 
-### 10.1 Function Kinds
+### 10.1 Function Kinds <a id="function-kinds"></a>
 
 ChoreoBS has two kinds of functions, distinguished by how many endpoints run
 them.
@@ -2679,7 +2679,7 @@ the other — a choreography function is not a local function with something lef
 out. Since it is not the function of any one endpoint, no single location names
 it, and its declaration carries none.
 
-#### Choreography Function
+#### Choreography Function <a id="choreography-function-kind"></a>
 
 Declared with no location:
 
@@ -2709,7 +2709,7 @@ function, so it always declares a local function and must be an individual
 location; `@every` is not a function location (spec §16.39). `@every` remains
 available as a value location, e.g. `boolean@every`.
 
-#### Local Function
+#### Local Function <a id="local-function-kind"></a>
 
 ```ts
 function f@alice(...): T@alice {
@@ -2733,7 +2733,7 @@ function f@alice(...) {
 - Allows return type inference.
 - Recursion is allowed only when the recursive function has an explicit return type.
 
-### 10.2 Calling Local Functions from a Choreography Context
+### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
 A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec §12.11). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec §13.9).
 
@@ -2775,7 +2775,7 @@ let arrAlice: float[]@alice <- arr;
 let avg: float@alice = average(arrAlice);
 ```
 
-### 10.3 Calling Functions from a Local Context
+### 10.3 Calling Functions from a Local Context <a id="calling-functions-from-a-local-context"></a>
 
 Inside `function@alice`, only `@alice` local functions may be called.
 
@@ -2815,7 +2815,7 @@ function g@alice(): void {
 }
 ```
 
-### 10.4 Recursion
+### 10.4 Recursion <a id="recursion"></a>
 
 * Local function recursion is allowed.
 * choreography function recursion is not supported in v0, whether direct or mutual;
@@ -2858,9 +2858,9 @@ function loop(n: integer@every): void {
 
 ***
 
-## 11. Transfer Semantics
+## 11. Transfer Semantics <a id="transfer-semantics"></a>
 
-### 11.1 Transfer Operator
+### 11.1 Transfer Operator <a id="transfer-operator"></a>
 
 ```ts
 a <- b;
@@ -2890,7 +2890,7 @@ Meaning:
 alice -> bob: x
 ```
 
-### 11.2 Direct Communication
+### 11.2 Direct Communication <a id="direct-communication"></a>
 
 If the source and destination are different individual locations, direct communication is used.
 
@@ -2912,7 +2912,7 @@ EPP at `bob`:
 let y: integer = receiveInteger("alice", "top_0");
 ```
 
-### 11.3 Broadcast Communication
+### 11.3 Broadcast Communication <a id="broadcast-communication"></a>
 
 If the destination is `@every` and the source is an individual location, the communication is treated as a broadcast.
 
@@ -2952,7 +2952,7 @@ broadcastFloatArray("top_0", xs);
 let ys: float[] = cloneFloatArray(xs);
 ```
 
-### 11.4 Local Copy
+### 11.4 Local Copy <a id="local-copy"></a>
 
 When the destination already holds the source payload, `<-` performs no network
 communication. It is a local copy instead. This covers three cases (spec §7.8):
@@ -3010,7 +3010,7 @@ let b: integer = a;
 No `send`, `receive`, `broadcast`, or communication tag is generated for a local
 copy.
 
-### 11.5 Communication Tags
+### 11.5 Communication Tags <a id="communication-tags"></a>
 
 Each transfer that performs communication — that is, each `direct` or `broadcast` transfer — is assigned a static tag. A local copy performs no communication and is given no tag (spec §11.4).
 
@@ -3058,9 +3058,9 @@ foo_1
 
 ***
 
-## 12. Endpoint Projection
+## 12. Endpoint Projection <a id="endpoint-projection"></a>
 
-### 12.1 Definition
+### 12.1 Definition <a id="epp-definition"></a>
 
 Endpoint Projection, EPP, transforms a ChoreoBS program into a BlueScript program for each endpoint.
 
@@ -3070,7 +3070,7 @@ EPP(program, endpoint) -> BlueScript program
 
 Before EPP, all inferred types must be elaborated into explicit located types in the internal AST.
 
-### 12.2 Type Projection
+### 12.2 Type Projection <a id="type-projection"></a>
 
 Projection of a located type `T@L` to endpoint `P` is:
 
@@ -3098,7 +3098,7 @@ integer@every projected to bob   -> integer
 void projected to bob            -> void
 ```
 
-### 12.3 Expression Projection
+### 12.3 Expression Projection <a id="expression-projection"></a>
 
 Two questions have to be kept apart, and conflating them is the single easiest
 way to get EPP wrong:
@@ -3110,7 +3110,7 @@ For most expression forms the two coincide. They come apart at a call: a
 choreography function runs at every endpoint (spec §12.11), so `P` must execute
 the call even when the result lives somewhere else entirely.
 
-#### The Rule
+#### The Rule <a id="expression-projection-rule"></a>
 
 Projection is a structural recursion over the expression. For an expression
 `e : T@L` at endpoint `P`:
@@ -3171,7 +3171,7 @@ receiver for the same reason `.length` does.
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
 Core v0 (spec §13.9, §17.6).
 
-#### Why the Operands Are Enough
+#### Why the Operands Are Enough <a id="why-the-operands-are-enough"></a>
 
 Whenever a composite expression's result is absent at `P`, the subexpressions
 that carry its value are absent at `P` too — the type rules leave no room for
@@ -3192,7 +3192,7 @@ must make. Nothing resident is discarded, and cleanup's deliberately blunt rule
 A transfer is the one place a location boundary is crossed on purpose, so its
 source needs the rule stated separately; see §12.9.
 
-#### Calls Survive an Absent Result
+#### Calls Survive an Absent Result <a id="calls-survive-an-absent-result"></a>
 
 An absent *value* does not mean absent *work*. A choreography function is
 projected to every endpoint and its body may communicate, so `P` must still
@@ -3242,7 +3242,7 @@ nothing(
 
 `get3`, `get3`, `get4` — the same order as the source, and each called once.
 
-#### A Discarded Result Is Not a Discarded Call
+#### A Discarded Result Is Not a Discarded Call <a id="a-discarded-result-is-not-a-discarded-call"></a>
 
 Where the projected expression sits in a statement whose value has nowhere to go
 at `P`, the statement becomes an evaluation-only expression statement (§12.8,
@@ -3279,7 +3279,7 @@ choose(c);
 When such a statement holds nothing `P` must run, it simplifies to `null` and
 disappears entirely (spec §13.9).
 
-#### Positions With No Room for a Statement
+#### Positions With No Room for a Statement <a id="positions-with-no-room-for-a-statement"></a>
 
 A call argument, a `return` value and a `for` header slot are expressions, not
 statements. Nothing special is needed there: the projection of §12.3 is already
@@ -3320,7 +3320,7 @@ runs against the matching send. Projecting the argument `get3()` to a bare
 `null` would drop that call, and `mcu` would block on the receive inside
 `get3` forever.
 
-### 12.4 Absent
+### 12.4 Absent <a id="absent"></a>
 
 `absent` is an internal intermediate representation used only during EPP.
 
@@ -3336,7 +3336,7 @@ artifacts and are kept apart. `absent` marks a value that does not exist here;
 both, finalization rewrites the first, and cleanup folds the second
 (spec §13.9).
 
-### 12.5 Literal Projection
+### 12.5 Literal Projection <a id="literal-projection"></a>
 
 ```ts
 14@alice
@@ -3360,7 +3360,7 @@ absent
 true
 ```
 
-### 12.6 Identifier Projection
+### 12.6 Identifier Projection <a id="identifier-projection"></a>
 
 For variable `x : T@L`, projection to endpoint `P` is:
 
@@ -3371,9 +3371,9 @@ else:
     absent
 ```
 
-### 12.7 Binary and Unary Operation Projection
+### 12.7 Binary and Unary Operation Projection <a id="binary-and-unary-operation-projection"></a>
 
-#### Strict Operators
+#### Strict Operators <a id="strict-operators"></a>
 
 `+ - * / %`, `< <= > >=` and `=== !==` always evaluate both operands. Where the
 result resides at `P`, the operator is preserved:
@@ -3419,7 +3419,7 @@ EPP at `bob`:
 nothing(relay(null));
 ```
 
-#### Short-Circuit Operators
+#### Short-Circuit Operators <a id="short-circuit-operators"></a>
 
 `&&` and `||` do **not** follow the rule above. `nothing(...)` evaluates every
 argument, so
@@ -3434,7 +3434,7 @@ project to `absent` where the result is absent, which loses nothing because
 §16.46 forbids choreography calls in either operand — the only work that would
 have to survive.
 
-### 12.8 Let Projection
+### 12.8 Let Projection <a id="let-projection"></a>
 
 ```ts
 let x = 1@alice;
@@ -3478,9 +3478,9 @@ EPP at `bob`:
 choreographyCall();
 ```
 
-### 12.9 Transfer Projection
+### 12.9 Transfer Projection <a id="transfer-projection"></a>
 
-#### The Source Is Evaluated at Every Endpoint
+#### The Source Is Evaluated at Every Endpoint <a id="the-source-is-evaluated-at-every-endpoint"></a>
 
 A transfer crosses a location boundary on purpose, so §12.3's reasoning about
 subexpressions does not carry over to it: the source expression belongs to the
@@ -3530,7 +3530,7 @@ Where the source value has to be used more than once at the sender — a
 broadcast, which both sends and keeps its own copy — a compiler-generated
 temporary holds it so that it is still evaluated exactly once (spec §7.8).
 
-#### Direct Communication
+#### Direct Communication <a id="epp-direct-communication"></a>
 
 ```ts
 let y: integer@bob <- x;
@@ -3550,7 +3550,7 @@ EPP at `bob`:
 let y: integer = receiveInteger("alice", "top_0");
 ```
 
-#### Broadcast
+#### Broadcast <a id="epp-broadcast"></a>
 
 For individual-to-`@every` communication, EPP generates a broadcast at the sender and a receive at all other endpoints.
 
@@ -3575,7 +3575,7 @@ EPP at `bob`:
 let ys: integer[] = receiveIntegerArray("alice", "top_0");
 ```
 
-#### Local Copy
+#### Local Copy <a id="epp-local-copy"></a>
 
 When the destination already holds the source payload (spec §11.4), the transfer is projected as a local copy at each endpoint the destination resides at. No `send`, `receive`, `broadcast`, or communication tag is generated.
 
@@ -3607,7 +3607,7 @@ let xs: float[] = [1.1, 2.2];
 let ys: float[] = cloneFloatArray(xs);
 ```
 
-#### Transfer Declaration Versus Transfer Assignment
+#### Transfer Declaration Versus Transfer Assignment <a id="transfer-decl-vs-assignment"></a>
 
 The rules above are those of a transfer **declaration**, `let y: T@L <- e;`,
 which introduces `y`. A transfer **assignment**, `y <- e;`, stores into a
@@ -3658,7 +3658,7 @@ would shadow the variable the program meant to update. For an array, the
 assignment replaces the destination's reference with the fresh clone, which is
 what makes `<-` differ from `=` at one location (spec §7.8).
 
-#### Single Evaluation at the Sender
+#### Single Evaluation at the Sender <a id="single-evaluation-at-the-sender"></a>
 
 A broadcast uses the source value twice at the sender, so when the source is not
 already a simple reference EPP binds it to a temporary and uses that in both
@@ -3686,7 +3686,7 @@ broadcast one value while keeping another. A source that is already an
 identifier or a literal is used directly, since re-reading it cannot call
 anything.
 
-### 12.10 Assignment Projection
+### 12.10 Assignment Projection <a id="assignment-projection"></a>
 
 ```ts
 x = y;
@@ -3741,9 +3741,9 @@ evaluation to preserve. Reproducing it would leave a `null` argument that
 carries no computation and that cleanup cannot fold away once a sibling
 argument holds one (spec §13.9.2).
 
-### 12.11 Function Projection
+### 12.11 Function Projection <a id="function-projection"></a>
 
-#### Local Function
+#### Local Function <a id="epp-local-function"></a>
 
 ```ts
 function add@alice(a: integer@alice, b: integer@alice) {
@@ -3806,7 +3806,7 @@ localFunction@mcu();
 nothing();  =>  null;  =>  removed
 ```
 
-#### Choreography Function
+#### Choreography Function <a id="epp-choreography-function"></a>
 
 ```ts
 function foo(a: integer@alice, b: integer@bob): integer@alice {
@@ -3835,7 +3835,7 @@ at every endpoint — including where its result is absent, since the body may
 communicate (spec §12.3). A `void` call has no result to reside anywhere and is
 likewise never removed for want of one.
 
-### 12.12 If Projection
+### 12.12 If Projection <a id="if-projection"></a>
 
 ```ts
 if (c) {
@@ -3857,7 +3857,7 @@ if (c) {
 }
 ```
 
-### 12.13 While Projection
+### 12.13 While Projection <a id="while-projection"></a>
 
 ```ts
 while (c) {
@@ -3873,7 +3873,7 @@ while (c) {
 }
 ```
 
-### 12.14 For Projection
+### 12.14 For Projection <a id="for-projection"></a>
 
 ```ts
 for (let i: integer@every = 0@every; i < 10@every; i = i + 1@every) {
@@ -3889,7 +3889,7 @@ for (let i: integer = 0; i < 10; i = i + 1) {
 }
 ```
 
-#### Absent Header Clauses
+#### Absent Header Clauses <a id="absent-header-clauses"></a>
 
 A `let` in the header keeps its binding at every endpoint, as `null` where the
 value is absent (spec §12.2), so the name stays declared.
@@ -3936,7 +3936,7 @@ The condition slot is not optional and is never replaced by `null`: it needs a
 boolean value, which the typing rules of §7.9 and §7.10 already guarantee is
 available at every endpoint.
 
-### 12.14.1 Array Projection
+### 12.14.1 Array Projection <a id="array-projection"></a>
 
 Array types, array literals, index expressions, element assignments, `xs.length`, and `xs.push(v)` are projected according to the location of the array value.
 
@@ -4019,7 +4019,7 @@ EPP at `bob`:
 let ys: integer[] = receiveIntegerArray("alice", "top_0");
 ```
 
-### 12.15 Top-Level Projection
+### 12.15 Top-Level Projection <a id="top-level-projection"></a>
 
 Top-level non-function statements are projected as the entry program for each endpoint.
 
@@ -4045,9 +4045,9 @@ let y: integer = receiveInteger("alice", "top_0");
 
 ***
 
-## 13. BlueScript Code Generation
+## 13. BlueScript Code Generation <a id="bluescript-code-generation"></a>
 
-### 13.1 Type Mapping
+### 13.1 Type Mapping <a id="type-mapping"></a>
 
 ```text
 ChoreoBS integer -> BlueScript integer
@@ -4061,7 +4061,7 @@ ChoreoBS float[]   -> BlueScript float[]
 ChoreoBS boolean[] -> BlueScript boolean[]
 ```
 
-### 13.2 Location Annotation Removal
+### 13.2 Location Annotation Removal <a id="location-annotation-removal"></a>
 
 BlueScript output does not contain location annotations.
 
@@ -4075,7 +4075,7 @@ EPP at `alice`:
 let x: integer = 1;
 ```
 
-### 13.2.1 Array Operation Code Generation
+### 13.2.1 Array Operation Code Generation <a id="array-operation-code-generation"></a>
 
 `xs.length` and `xs.push(v)` are emitted unchanged: BlueScript spells them the
 same way ChoreoBS does, so code generation for these two is the identity.
@@ -4088,7 +4088,7 @@ xs.push(v)
 These two are the whole of ChoreoBS's dot syntax. A program cannot access a
 field or call a method on anything else (spec §17.2).
 
-### 13.3 Function Names
+### 13.3 Function Names <a id="codegen-function-names"></a>
 
 Generated function names are the same as the original ChoreoBS function names.
 Because there is no renaming, the names the generated code relies on are
@@ -4104,7 +4104,7 @@ EPP at `alice`:
 function add(...)
 ```
 
-### 13.4 Output File Naming
+### 13.4 Output File Naming <a id="output-file-naming"></a>
 
 Input:
 
@@ -4127,15 +4127,15 @@ index_alice.bs
 index_bob.bs
 ```
 
-### 13.5 Local Functions
+### 13.5 Local Functions <a id="codegen-local-functions"></a>
 
 A local function is emitted only for the corresponding endpoint.
 
-### 13.6 Choreography Functions
+### 13.6 Choreography Functions <a id="codegen-choreography-functions"></a>
 
 A choreography function is emitted for all endpoints.
 
-### 13.7 Absent Finalization
+### 13.7 Absent Finalization <a id="absent-finalization"></a>
 
 Absent finalization is a stage of its own, between endpoint projection and
 cleanup:
@@ -4181,7 +4181,7 @@ After finalization the output contains no `absent`. The remaining `null;`
 statements and `nothing(...)` artifacts are removed where possible by the
 cleanup pass in Section 13.9.
 
-### 13.8 Communication API
+### 13.8 Communication API <a id="communication-api"></a>
 
 The generated BlueScript code uses type-specific communication APIs.
 
@@ -4244,7 +4244,7 @@ cloneFloatArray(value: float[]): float[];
 cloneBooleanArray(value: boolean[]): boolean[];
 ```
 
-### 13.9 Projected AST Cleanup
+### 13.9 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
 
 After absent finalization (spec §13.7) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
 
@@ -4252,7 +4252,7 @@ The purpose of this pass is to remove or simplify compiler-generated artifacts s
 
 This cleanup pass must operate on the projected AST or projected IR. It must not be implemented as string-based post-processing over generated BlueScript code.
 
-#### 13.9.1 A Single Bottom-Up Pass
+#### 13.9.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
 
 Cleanup is one pass in post order: every subexpression is simplified before its
 parent is considered, and statements are handled after their expressions.
@@ -4276,7 +4276,7 @@ array element assignment target, and the initializer, condition and update of a
 
 An `absent` reaching this pass is an internal error (spec §13.7).
 
-#### 13.9.2 Expression Simplification
+#### 13.9.2 Expression Simplification <a id="expression-simplification"></a>
 
 The only rule is:
 
@@ -4326,7 +4326,7 @@ nothing(nothing(null), null, null)
 => null
 ```
 
-#### 13.9.3 Nested `nothing(...)` Is Not Flattened
+#### 13.9.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
 
 Core v0 does not rewrite
 
@@ -4344,7 +4344,7 @@ The nesting mirrors the source expression's structure and evaluation
 boundaries, which keeps EPP a plain structural recursion and leaves room for
 runtime checks later. Flattening is listed under §17.6.
 
-#### 13.9.4 Simplification Inside Function Arguments
+#### 13.9.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
 
 Expression simplification must also be applied recursively inside ordinary function call arguments.
 
@@ -4362,7 +4362,7 @@ foo(null, null)
 
 The function call itself must not be removed by this cleanup rule.
 
-#### 13.9.5 Statement Cleanup
+#### 13.9.5 Statement Cleanup <a id="statement-cleanup"></a>
 
 After expression simplification, the compiler removes expression statements
 whose expression is exactly `null`, and only those.
@@ -4392,7 +4392,7 @@ x = null;
 f(null);
 ```
 
-#### 13.9.6 What This Cleanup Pass Must Not Remove
+#### 13.9.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
 
 This cleanup pass is intentionally conservative.
 
@@ -4438,7 +4438,7 @@ them without revisiting §12.3:
 * general dead-code elimination;
 * removal of ordinary function calls.
 
-#### 13.9.7 Source-Level `null`
+#### 13.9.7 Source-Level `null` <a id="source-level-null"></a>
 
 A `null` that came from a source-level `null` literal and a `null` produced by
 absent finalization are the same node by the time cleanup runs, and are treated
@@ -4447,9 +4447,9 @@ removing it is sound.
 
 ***
 
-## 14. Runtime Support Functions
+## 14. Runtime Support Functions <a id="runtime-support-functions"></a>
 
-### 14.1 `nothing`
+### 14.1 `nothing` <a id="nothing"></a>
 
 `nothing(e1, ..., en)` is a compiler-generated artifact, not a user-callable
 function and not an ordinary call. It is the projected IR node that preserves
@@ -4486,7 +4486,7 @@ BlueScript supports. If rest parameters are unavailable, it may emit
 fixed-arity helpers instead. Whatever it emits, the artifacts that can be
 removed are removed first (spec §13.9).
 
-### 14.2 Where It Appears
+### 14.2 Where It Appears <a id="nothing-where-it-appears"></a>
 
 `nothing(...)` appears wherever §12.3 preserves the operands of an operation
 this endpoint does not perform — in a statement, in a call argument, in a
@@ -4495,9 +4495,9 @@ this endpoint does not perform — in a statement, in a call argument, in a
 It does *not* wrap a call that the endpoint does make: the projected callee
 already returns `null` there, so the call stands on its own (spec §12.3).
 
-## 15. Examples
+## 15. Examples <a id="examples"></a>
 
-### 15.1 Direct Communication
+### 15.1 Direct Communication <a id="example-direct-communication"></a>
 
 Input:
 
@@ -4521,7 +4521,7 @@ let y: integer = receiveInteger("alice", "top_0");
 
 ***
 
-### 15.2 Broadcast
+### 15.2 Broadcast <a id="example-broadcast"></a>
 
 Input:
 
@@ -4578,7 +4578,7 @@ Note: ChoreoBS Core v0 cleanup does not remove empty `if` statements. Removing e
 
 ***
 
-### 15.3 Local Function
+### 15.3 Local Function <a id="example-local-function"></a>
 
 Input:
 
@@ -4608,7 +4608,7 @@ EPP at `bob`:
 
 ***
 
-### 15.4 Choreography Function
+### 15.4 Choreography Function <a id="example-choreography-function"></a>
 
 Input:
 
@@ -4663,7 +4663,7 @@ discarded (spec §12.3). Were the call dropped, any communication inside
 
 ***
 
-### 15.5 While with Transfer
+### 15.5 While with Transfer <a id="example-while-with-transfer"></a>
 
 Input:
 
@@ -4708,7 +4708,7 @@ while (cont) {
 
 ***
 
-### 15.6 For Loop
+### 15.6 For Loop <a id="example-for-loop"></a>
 
 Input:
 
@@ -4742,7 +4742,7 @@ for (let i: integer = 0; i < 3; i = i + 1) {
 
 ***
 
-### 15.7 Cleanup of `nothing(...)`
+### 15.7 Cleanup of `nothing(...)` <a id="example-cleanup-of-nothing"></a>
 
 Input after EPP:
 
@@ -4852,7 +4852,7 @@ After cleanup:
 nothing();  =>  null;  =>  removed
 ```
 
-### 15.8 Return Type Inference with Numeric LUB
+### 15.8 Return Type Inference with Numeric LUB <a id="example-return-type-inference"></a>
 
 Input:
 
@@ -4870,7 +4870,7 @@ The inferred return type is `float@alice`.
 
 ***
 
-### 15.9 Mutable Arrays
+### 15.9 Mutable Arrays <a id="example-mutable-arrays"></a>
 
 Input:
 
@@ -4912,11 +4912,11 @@ let xs: integer[] = [1, 2, 3];
 xs[0] = 10;
 ```
 
-## 16. Compile-time Errors
+## 16. Compile-time Errors <a id="compile-time-errors"></a>
 
 The following are compile-time errors.
 
-### 16.1 Unknown Endpoint
+### 16.1 Unknown Endpoint <a id="unknown-endpoint"></a>
 
 ```ts
 let x: integer@carol = 1@carol;
@@ -4924,7 +4924,7 @@ let x: integer@carol = 1@carol;
 
 This is an error if `carol` is not listed in `choreobs.json`.
 
-### 16.2 Using `every` as an Endpoint
+### 16.2 Using `every` as an Endpoint <a id="using-every-as-an-endpoint"></a>
 
 ```json
 {
@@ -4934,7 +4934,7 @@ This is an error if `carol` is not listed in `choreobs.json`.
 
 This is an error.
 
-### 16.3 Location Annotation Omission
+### 16.3 Location Annotation Omission <a id="location-annotation-omission"></a>
 
 A type annotation or a literal without a location annotation is an error, unless
 the location can be taken from an initializer (spec §7.14.1).
@@ -4949,7 +4949,7 @@ function f@alice(a: integer): integer@alice {   // no initializer to read
 }
 ```
 
-### 16.4 Location Omission in a Local Function
+### 16.4 Location Omission in a Local Function <a id="location-omission-in-a-local-function"></a>
 
 A local function's own location does not supply a default. Parameter types,
 return types, and literals must all be annotated explicitly (spec §8.1). An
@@ -4970,19 +4970,19 @@ function add@alice(a: integer@alice, b: integer@alice): integer@alice {
 }
 ```
 
-### 16.5 Uninitialized Let
+### 16.5 Uninitialized Let <a id="uninitialized-let"></a>
 
 ```ts
 let x: integer@alice;
 ```
 
-### 16.6 Type Mismatch
+### 16.6 Type Mismatch <a id="type-mismatch"></a>
 
 ```ts
 let x: integer@alice = "hello"@alice;
 ```
 
-### 16.7 Invalid Assignment Across Locations
+### 16.7 Invalid Assignment Across Locations <a id="invalid-assignment-across-locations"></a>
 
 ```ts
 let x: integer@alice = 1@alice;
@@ -5009,7 +5009,7 @@ Use a transfer instead:
 let d: boolean@alice <- c;
 ```
 
-### 16.8 Invalid Transfer Base Type
+### 16.8 Invalid Transfer Base Type <a id="invalid-transfer-base-type"></a>
 
 For `a <- b` with `a : T1@p` and `b : T2@q`, the source base type must be a
 subtype of the destination base type: `T2 <: T1` (spec §7.8).
@@ -5038,7 +5038,7 @@ let ys: float[]@alice <- xs;
 Note that the locations are unconstrained: a transfer whose source and
 destination share a location is valid and denotes a local copy (spec §11.4).
 
-### 16.9 Invalid If Condition
+### 16.9 Invalid If Condition <a id="invalid-if-condition"></a>
 
 ```ts
 function f(c: boolean@alice): void {
@@ -5048,7 +5048,7 @@ function f(c: boolean@alice): void {
 }
 ```
 
-### 16.10 Invalid While Condition
+### 16.10 Invalid While Condition <a id="invalid-while-condition"></a>
 
 ```ts
 function f(c: boolean@alice): void {
@@ -5058,7 +5058,7 @@ function f(c: boolean@alice): void {
 }
 ```
 
-### 16.11 Invalid For Condition
+### 16.11 Invalid For Condition <a id="invalid-for-condition"></a>
 
 ```ts
 function f(): void {
@@ -5071,7 +5071,7 @@ function f(): void {
 }
 ```
 
-### 16.12 Calling Another Endpoint's Local Function
+### 16.12 Calling Another Endpoint's Local Function <a id="calling-another-endpoints-local-function"></a>
 
 ```ts
 function f@bob(): integer@bob {
@@ -5083,7 +5083,7 @@ function g@alice(): integer@alice {
 }
 ```
 
-### 16.13 Calling a Choreography Function from a Local Function
+### 16.13 Calling a Choreography Function from a Local Function <a id="calling-choreography-from-local"></a>
 
 ```ts
 function f(): void {
@@ -5095,7 +5095,7 @@ function g@alice(): void {
 }
 ```
 
-### 16.14 Recursive Choreography Function
+### 16.14 Recursive Choreography Function <a id="recursive-choreography-function"></a>
 
 Direct recursion:
 
@@ -5117,7 +5117,7 @@ function g(): void {
 }
 ```
 
-### 16.15 Function Overloading
+### 16.15 Function Overloading <a id="function-overloading"></a>
 
 ```ts
 function f@alice(): void {
@@ -5129,7 +5129,7 @@ function f@bob(): void {
 }
 ```
 
-### 16.16 Break and Continue
+### 16.16 Break and Continue <a id="err-break-and-continue"></a>
 
 ```ts
 while (true@every) {
@@ -5143,7 +5143,7 @@ while (true@every) {
 }
 ```
 
-### 16.17 Unsupported Equality Operators
+### 16.17 Unsupported Equality Operators <a id="unsupported-equality-operators"></a>
 
 ```ts
 x == y;
@@ -5157,7 +5157,7 @@ x === y;
 x !== y;
 ```
 
-### 16.18 Transfer Let Without Type Annotation
+### 16.18 Transfer Let Without Type Annotation <a id="transfer-let-without-type-annotation"></a>
 
 ```ts
 let y <- x;
@@ -5165,7 +5165,7 @@ let y <- x;
 
 Transfer declarations require an explicit destination type.
 
-### 16.19 Cannot Infer Function Return Type
+### 16.19 Cannot Infer Function Return Type <a id="cannot-infer-function-return-type"></a>
 
 A function return type cannot be inferred if value-returning paths are not proven to return.
 
@@ -5177,7 +5177,7 @@ function maybe@alice(c: boolean@alice) {
 }
 ```
 
-### 16.20 Mixed Bare and Value Returns
+### 16.20 Mixed Bare and Value Returns <a id="mixed-bare-and-value-returns"></a>
 
 ```ts
 function bad@alice(c: boolean@alice) {
@@ -5188,7 +5188,7 @@ function bad@alice(c: boolean@alice) {
 }
 ```
 
-### 16.21 Incompatible Inferred Return Types
+### 16.21 Incompatible Inferred Return Types <a id="incompatible-inferred-return-types"></a>
 
 ```ts
 function bad@alice(c: boolean@alice) {
@@ -5200,7 +5200,7 @@ function bad@alice(c: boolean@alice) {
 }
 ```
 
-### 16.22 Incompatible Inferred Return Locations
+### 16.22 Incompatible Inferred Return Locations <a id="incompatible-inferred-return-locations"></a>
 
 ```ts
 function bad(c: boolean@every) {
@@ -5212,7 +5212,7 @@ function bad(c: boolean@every) {
 }
 ```
 
-### 16.23 Recursive Function With Omitted Return Type
+### 16.23 Recursive Function With Omitted Return Type <a id="recursive-function-with-omitted-return-type"></a>
 
 ```ts
 function fact@alice(n: integer@alice) {
@@ -5224,7 +5224,7 @@ function fact@alice(n: integer@alice) {
 }
 ```
 
-### 16.24 Parameter Type Omission
+### 16.24 Parameter Type Omission <a id="parameter-type-omission"></a>
 
 ```ts
 function add@alice(a, b) {
@@ -5236,7 +5236,7 @@ Parameter types are not inferred in Core v0.
 
 ***
 
-### 16.25 Invalid Local Function Parameter Location
+### 16.25 Invalid Local Function Parameter Location <a id="invalid-local-function-parameter-location"></a>
 
 A local function parameter must be located at the function's own individual location.
 
@@ -5264,7 +5264,7 @@ function add@bob(a: integer@bob, b: integer@bob): integer@bob {
 }
 ```
 
-### 16.26 Invalid Local Function Return Location
+### 16.26 Invalid Local Function Return Location <a id="invalid-local-function-return-location"></a>
 
 A local function return type must be located at the function's own individual location.
 
@@ -5292,7 +5292,7 @@ function ok@bob(): integer@bob {
 }
 ```
 
-### 16.27 Invalid Value Used Inside Local Function
+### 16.27 Invalid Value Used Inside Local Function <a id="invalid-value-used-inside-local-function"></a>
 
 Inside a local function declared at individual location `P`, every evaluated expression must be located at `P`.
 
@@ -5333,7 +5333,7 @@ function ok@bob(): integer@bob {
 }
 ```
 
-### 16.28 Invalid Function Argument Location
+### 16.28 Invalid Function Argument Location <a id="invalid-function-argument-location"></a>
 
 A function argument must be compatible with the corresponding parameter type
 using base type subtyping, and must be located at the parameter's location
@@ -5378,7 +5378,7 @@ function bad@alice(x: integer@every): integer@alice {
 
 This remains invalid because local function parameters must not be located at `every`.
 
-### 16.29 Unsupported Array Element Type
+### 16.29 Unsupported Array Element Type <a id="unsupported-array-element-type"></a>
 
 `string[]`, `null[]`, and `void[]` are not supported in the mutable array
 extension. They parse — the grammar admits an array of any base type
@@ -5392,7 +5392,7 @@ let ys: null[]@alice = []@alice;
 let zs: void[]@alice = []@alice;
 ```
 
-### 16.30 Nested Array
+### 16.30 Nested Array <a id="nested-array"></a>
 
 Nested arrays are not supported. Unlike §16.29, this one is ruled out by the
 grammar: `ArrayType` takes a single `[` `]` (spec §5.2), so it is reported as a
@@ -5404,7 +5404,7 @@ Disallowed:
 let xs: integer[][]@alice = []@alice;
 ```
 
-### 16.31 Array Literal Without Required Location
+### 16.31 Array Literal Without Required Location <a id="array-literal-without-required-location"></a>
 
 An array literal must carry its own location annotation (spec §5.16). The error
 is the missing annotation on the literal itself, whether or not its elements
@@ -5431,7 +5431,7 @@ let xs: integer[]@alice = [1, 2, 3]@alice;
 let ys = [a, b]@alice;
 ```
 
-### 16.32 Cannot Infer Empty Array Element Type
+### 16.32 Cannot Infer Empty Array Element Type <a id="cannot-infer-empty-array-element-type"></a>
 
 An empty array literal cannot infer its element type.
 
@@ -5447,7 +5447,7 @@ Allowed:
 let xs: integer[]@alice = []@alice;
 ```
 
-### 16.33 Array Type Invariance
+### 16.33 Array Type Invariance <a id="array-type-invariance"></a>
 
 Array types are invariant.
 
@@ -5458,7 +5458,7 @@ let xs: integer[]@alice = [1, 2]@alice;
 let ys: float[]@alice = xs;
 ```
 
-### 16.34 Invalid `@every` Array Assignment to Individual Location
+### 16.34 Invalid `@every` Array Assignment to Individual Location <a id="err-every-array-assignment"></a>
 
 A mutable array located at `@every` cannot be assigned to an individual-location
 array variable. This is an instance of the general location rule (§7.6, §16.7),
@@ -5471,7 +5471,7 @@ let xs: integer[]@every = [1, 2, 3]@every;
 let ys: integer[]@alice = xs;
 ```
 
-### 16.35 Invalid `@every` Array Argument to Individual Location Parameter
+### 16.35 Invalid `@every` Array Argument to Individual Location Parameter <a id="err-every-array-argument"></a>
 
 A mutable array located at `@every` cannot be passed to a function parameter
 located at an individual location. This is an instance of the general location
@@ -5487,7 +5487,7 @@ let xs: integer[]@every = [1, 2, 3]@every;
 f(xs);
 ```
 
-### 16.36 Invalid Array Equality
+### 16.36 Invalid Array Equality <a id="invalid-array-equality"></a>
 
 The equality operators `===` and `!==` are not defined for array types.
 
@@ -5498,7 +5498,7 @@ let xs: integer[]@alice = [1]@alice;
 xs === xs;
 ```
 
-### 16.37 Invalid Array Index Location
+### 16.37 Invalid Array Index Location <a id="invalid-array-index-location"></a>
 
 The index expression must be located at the array location.
 
@@ -5510,7 +5510,7 @@ let i: integer@bob = 0@bob;
 let x: integer@alice = xs[i];
 ```
 
-### 16.38 Invalid `.push` Element Type
+### 16.38 Invalid `.push` Element Type <a id="invalid-push-element-type"></a>
 
 The pushed value must be compatible with the array element type.
 
@@ -5521,7 +5521,7 @@ let xs: integer[]@alice = []@alice;
 xs.push(1.5@alice);
 ```
 
-### 16.39 `@every` on a Function Declaration
+### 16.39 `@every` on a Function Declaration <a id="every-on-a-function-declaration"></a>
 
 A location on a function declaration names the one endpoint that runs the
 function. It therefore declares a local function, and must be an individual
@@ -5547,7 +5547,7 @@ function f(): void {
 }
 ```
 
-### 16.40 Invalid Use of `void`
+### 16.40 Invalid Use of `void` <a id="invalid-use-of-void"></a>
 
 `void` has no location and is not a value type (spec §7.3).
 
@@ -5594,7 +5594,7 @@ f(xs.push(1@alice));                     // not assignable to the parameter
 `void[]` is rejected separately, as an unsupported array element type
 (spec §16.29).
 
-### 16.41 Missing Return in a Non-`void` Function
+### 16.41 Missing Return in a Non-`void` Function <a id="missing-return-in-a-non-void-function"></a>
 
 A function whose return type is not `void` must return a value on every path
 (spec §7.13, §7.14.6). This applies to a written return type just as it does to
@@ -5631,7 +5631,7 @@ function alsoRejected@alice(): integer@alice {
 }
 ```
 
-### 16.42 Invalid Unary Operand
+### 16.42 Invalid Unary Operand <a id="invalid-unary-operand"></a>
 
 `-` requires a numeric scalar and `!` requires a boolean scalar (spec §7.11).
 Neither accepts an array.
@@ -5651,7 +5651,7 @@ let s: string@alice = "x"@alice;
 let t: string@alice = -s;
 ```
 
-### 16.43 Invalid Comparison or Equality Operands
+### 16.43 Invalid Comparison or Equality Operands <a id="invalid-comparison-or-equality-operands"></a>
 
 `<`, `<=`, `>` and `>=` require numeric operands (spec §7.11):
 
@@ -5680,7 +5680,7 @@ let c: boolean@alice = xs.push(1@alice) === xs.push(2@alice);
 
 For array operands see §16.36.
 
-### 16.44 Invalid Array Operation Syntax
+### 16.44 Invalid Array Operation Syntax <a id="invalid-array-operation-syntax"></a>
 
 These are **parse** errors, reported before type checking.
 
@@ -5710,7 +5710,7 @@ let n: integer@alice = xs.length;
 Using `xs.push(v)` where a value is expected is not a syntax error but a type
 error, because its result is `void` (spec §7.11.1, §16.40).
 
-### 16.45 Missing `for` Condition
+### 16.45 Missing `for` Condition <a id="missing-for-condition"></a>
 
 The condition of a `for` loop is required (spec §5.11).
 
@@ -5721,7 +5721,7 @@ for (let i = 0@every; ; i = i + 1@every) {
 
 Use `while (true@every)` for an unbounded loop.
 
-### 16.46 Choreography Call in a Short-Circuit Operand
+### 16.46 Choreography Call in a Short-Circuit Operand <a id="choreography-call-in-a-short-circuit-operand"></a>
 
 Neither operand of `&&` or `||` may contain a call to a choreography function,
 directly or inside a nested expression.
@@ -5762,7 +5762,7 @@ The restriction is deliberately blunt in Core v0: it also rejects cases that
 would be safe, such as an operation at `@every`, where every endpoint holds the
 condition and would short-circuit identically. See §17.6.
 
-### 16.47 Invalid Endpoint Name
+### 16.47 Invalid Endpoint Name <a id="invalid-endpoint-name"></a>
 
 An endpoint name must be an identifier (spec §4.3), must not be a reserved word
 (spec §4.4), and must not begin with `__` (spec §6.2). See §2.2.
@@ -5800,7 +5800,7 @@ which reach the generated code only as string literals and file names:
 }
 ```
 
-### 16.48 Name Already Held in the Value Namespace
+### 16.48 Name Already Held in the Value Namespace <a id="err-name-already-held"></a>
 
 Location names, function names, and variable and parameter names share one
 namespace (spec §6.1). Endpoint names and function names are held for the whole
@@ -5858,11 +5858,11 @@ function f@alice(p: integer@alice): integer@alice {
 
 ***
 
-## 17. Non-goals and Future Extensions
+## 17. Non-goals and Future Extensions <a id="non-goals-and-future-extensions"></a>
 
 The following features are not part of ChoreoBS Core v0.
 
-### 17.1 Gradual Features
+### 17.1 Gradual Features <a id="gradual-features"></a>
 
 * location inference;
 * omitted locations on types and literals — omission is an error everywhere in v0, in local functions and choreography contexts alike (spec §8.1);
@@ -5873,7 +5873,7 @@ The following features are not part of ChoreoBS Core v0.
 * runtime location checks;
 * gradual choreographic typing.
 
-### 17.2 TypeScript / JavaScript Features
+### 17.2 TypeScript / JavaScript Features <a id="typescript-javascript-features"></a>
 
 * `const`;
 * object literals;
@@ -5893,7 +5893,7 @@ The following features are not part of ChoreoBS Core v0.
 * `async`;
 * `await`.
 
-### 17.3 Control Flow
+### 17.3 Control Flow <a id="future-control-flow"></a>
 
 * `break`;
 * `continue`;
@@ -5904,7 +5904,7 @@ The following features are not part of ChoreoBS Core v0.
 * `for-of`;
 * `for-in`.
 
-### 17.4 Communication Features
+### 17.4 Communication Features <a id="future-communication-features"></a>
 
 * asynchronous communication syntax;
 * timeout;
@@ -5915,7 +5915,7 @@ The following features are not part of ChoreoBS Core v0.
 * label selection;
 * non-blocking receive.
 
-### 17.5 Data Structures
+### 17.5 Data Structures <a id="future-data-structures"></a>
 
 * string arrays;
 * null arrays;
@@ -5926,7 +5926,7 @@ The following features are not part of ChoreoBS Core v0.
 * tuples;
 * maps.
 
-### 17.6 Future Work
+### 17.6 Future Work <a id="future-work"></a>
 
 Future versions may add:
 
@@ -5944,7 +5944,7 @@ Future versions may add:
   endpoints that need it, or by a projected IR form that preserves
   short-circuit evaluation.
 
-### 17.7 Future Cleanup Optimizations
+### 17.7 Future Cleanup Optimizations <a id="future-cleanup-optimizations"></a>
 
 ChoreoBS Core v0 only performs a minimal cleanup pass for compiler-generated `nothing(...)` and `null;` artifacts.
 
