@@ -8,7 +8,7 @@ import type {
   UnaryOperator,
 } from "../ast/operators.js";
 
-/** ChoreoBS `void` projects to `void` at every endpoint (spec §12.2). */
+/** ChoreoBS `void` projects to `void` at every endpoint (spec §type-projection). */
 export type ProjectedBaseType =
   | BaseType
   | "void"
@@ -17,7 +17,7 @@ export type ProjectedBaseType =
   | "boolean[]";
 
 /**
- * Projected type: present base type or internal absent (spec §12.2, §12.4).
+ * Projected type: present base type or internal absent (spec §type-projection, §absent).
  * Absent types finalize to `null` in BlueScript (not done in EPP).
  */
 export type ProjectedType =
@@ -25,11 +25,11 @@ export type ProjectedType =
   | { readonly kind: "AbsentType" };
 
 /**
- * Payload kinds the communication API can carry (spec §13.8).
+ * Payload kinds the communication API can carry (spec §communication-api).
  *
  * This is deliberately a closed set rather than `BaseType`: `void` has no value
- * to send (spec §7.3), and array element types are restricted to the three
- * supported ones (spec §7.1.1). Anything that is not listed here must be
+ * to send (spec §void), and array element types are restricted to the three
+ * supported ones (spec §array-types). Anything that is not listed here must be
  * rejected before EPP, never defaulted to some other kind.
  */
 export type CommKind =
@@ -59,7 +59,7 @@ export type ProjectedExpression =
   | ParenthesizedExpression
   | ReceiveExpression;
 
-/** Internal absent expression (spec §12.4). */
+/** Internal absent expression (spec §absent). */
 export interface AbsentExpression {
   readonly kind: "AbsentExpression";
   readonly span: Span;
@@ -140,7 +140,7 @@ export interface PropertyLengthExpression {
 }
 
 /**
- * Compiler-generated `nothing(...)` artifact (spec §12.4, §14.1).
+ * Compiler-generated `nothing(...)` artifact (spec §absent, §nothing).
  * Distinct from {@link CallExpression} so user-defined functions named `nothing` are preserved.
  */
 export interface NothingExpression {
@@ -155,7 +155,7 @@ export interface ParenthesizedExpression {
   readonly span: Span;
 }
 
-/** `receiveInteger("alice", "top_0")` etc. (spec §12.9). */
+/** `receiveInteger("alice", "top_0")` etc. (spec §transfer-projection). */
 export interface ReceiveExpression {
   readonly kind: "ReceiveExpression";
   readonly comm: CommKind;
@@ -271,7 +271,7 @@ export interface ProjectedForAssignmentInit {
  *
  * A for-header has no room for a statement, so when the assignment target is
  * absent at this endpoint the slot either disappears or — if the discarded
- * value still contains a call this endpoint must make (spec §12.3) — becomes
+ * value still contains a call this endpoint must make (spec §expression-projection) — becomes
  * the bare expression that keeps that call.
  */
 export interface ProjectedForExpressionInit {
@@ -317,7 +317,7 @@ export interface ProjectedFunction {
   readonly span: Span;
 }
 
-/** Per-endpoint projected program (spec §12.1, §12.15). */
+/** Per-endpoint projected program (spec §epp-definition, §top-level-projection). */
 export interface ProjectedProgram {
   readonly kind: "ProjectedProgram";
   readonly endpoint: string;

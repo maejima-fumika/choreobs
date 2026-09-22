@@ -115,7 +115,7 @@ let y: integer@bob <- x;`;
     }
   });
 
-  describe("array operation syntax (spec §5.14)", () => {
+  describe("array operation syntax (spec §expressions)", () => {
     function parseFail(source: string, needle: string): void {
       const { errors } = parse(source);
       assert.ok(errors.length > 0, `expected a parse error for: ${source}`);
@@ -138,7 +138,7 @@ let y: integer@bob <- x;`;
     });
 
     it("parses `xs.push(v);` as an expression statement", () => {
-      // `.push` is an expression of type `void` (spec §5.14, §7.11.1), so it
+      // `.push` is an expression of type `void` (spec §expressions, §array-typing), so it
       // reaches the tree as an ordinary expression statement. That it may not
       // appear anywhere else is a typing rule, checked in test/check.
       const { program, errors } = parse(`xs.push(1@alice);`);
@@ -151,7 +151,7 @@ let y: integer@bob <- x;`;
       assert.equal(stmt.statement.expression.kind, "PushExpression");
     });
 
-    it("parses `.push` in expression position (spec §5.14)", () => {
+    it("parses `.push` in expression position (spec §expressions)", () => {
       // Rejecting it is the type checker's job now — see test/check.
       for (const source of [`let n = xs.push(1@alice);`, `f(xs.push(1@alice));`]) {
         const { errors } = parse(source);
@@ -171,7 +171,7 @@ let y: integer@bob <- x;`;
     });
   });
 
-  it("requires a for condition (spec §5.11, §16.45)", () => {
+  it("requires a for condition (spec §for-statement, §missing-for-condition)", () => {
     const { errors } = parse(`for (let i = 0@every; ; i = i + 1@every) {\n}`);
     assert.ok(errors.length > 0);
     assert.ok(
@@ -180,7 +180,7 @@ let y: integer@bob <- x;`;
     );
   });
 
-  it("parses array element targets in for clauses (spec §5.11)", () => {
+  it("parses array element targets in for clauses (spec §for-statement)", () => {
     const source = `for (xs[0@alice] = 0@alice; c; xs[1@alice] = 1@alice) {
 }`;
     const { program, errors } = parse(source);
@@ -273,7 +273,7 @@ let y: integer@bob <- x;`;
     assert.ok(errors.some((e) => e.message.includes("=") || e.message.includes("<-")));
   });
 
-  it("parses let without type annotation (spec §5.6, §7.14.1)", () => {
+  it("parses let without type annotation (spec §let-statement, §let-type-inference)", () => {
     const { program, errors } = parse("let x = 1@alice;");
     assert.equal(errors.length, 0);
     const item = program?.items[0];
@@ -286,7 +286,7 @@ let y: integer@bob <- x;`;
     }
   });
 
-  it("parses for-loop let initializer without type annotation (spec §5.11, §7.14.2)", () => {
+  it("parses for-loop let initializer without type annotation (spec §for-statement, §for-initializer-let-type-inference)", () => {
     const { program, errors } = parse(
       "for (let i = 0@every; i < 3@every; i = i + 1@every) {}",
     );
@@ -304,7 +304,7 @@ let y: integer@bob <- x;`;
     }
   });
 
-  it("parses function without return type annotation (spec §5.3, §7.14.4)", () => {
+  it("parses function without return type annotation (spec §function-declaration, §function-return-type-inference)", () => {
     const { program, errors } = parse(`function f@alice(a: integer@alice) {
   return a;
 }`);
@@ -320,7 +320,7 @@ let y: integer@bob <- x;`;
     }
   });
 
-  it("rejects transfer let without type annotation (spec §7.14.3)", () => {
+  it("rejects transfer let without type annotation (spec §transfer-let-does-not-infer-destination-type)", () => {
     const { program, errors } = parse("let y <- x;");
     assert.equal(program, null);
     assert.ok(
@@ -328,7 +328,7 @@ let y: integer@bob <- x;`;
     );
   });
 
-  it("rejects function parameter without type annotation (spec §7.14.7)", () => {
+  it("rejects function parameter without type annotation (spec §parameter-types-are-not-inferred)", () => {
     const { program, errors } = parse(`function f@alice(a) {
   return a;
 }`);
@@ -350,7 +350,7 @@ xs.push(20@alice);
     assert.ok(program);
   });
 
-  it("parses array index as expression statement (spec §5.13)", () => {
+  it("parses array index as expression statement (spec §expression-statement)", () => {
     const { program, errors } = parse(`
 let arr = [1, 3, 5]@every;
 arr[2@every];

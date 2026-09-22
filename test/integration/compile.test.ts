@@ -83,7 +83,7 @@ let n: string@bob <- m;
     });
   });
 
-  describe("void projection (spec §7.3, §12.2)", () => {
+  describe("void projection (spec §void, §type-projection)", () => {
     it("keeps a void return type at every endpoint, never absent", () => {
       // A void return type used to carry a location, so at an endpoint it did
       // not reside at, the signature projected to `null` while the body kept a
@@ -102,7 +102,7 @@ g();
     });
   });
 
-  describe("choreography vs local functions (spec §10.1, §12.11)", () => {
+  describe("choreography vs local functions (spec §function-kinds, §function-projection)", () => {
     it("emits a choreography function at every endpoint", () => {
       const result = compile(`
 function pick(c: boolean@every): integer@alice {
@@ -134,7 +134,7 @@ let x: integer@alice = add(1@alice, 2@alice);
     });
   });
 
-  describe("transfer operator (spec §7.8, §11)", () => {
+  describe("transfer operator (spec §transfer-typing, §transfer-semantics)", () => {
     it("makes a scalar transfer between the same individual location a local copy", () => {
       const result = compile(`
 let x: integer@alice = 1@alice;
@@ -168,7 +168,7 @@ let b: integer@every <- a;
       }
     });
 
-    it("gives the broadcast sender its own fresh array copy (spec §11.3)", () => {
+    it("gives the broadcast sender its own fresh array copy (spec §broadcast-communication)", () => {
       const result = compile(`
 let ys: float[]@every = [0.0]@every;
 let xs: float[]@alice = [1.1, 2.2]@alice;
@@ -182,7 +182,7 @@ ys <- xs;
       assert.match(bs(result, "bob"), /ys = receiveFloatArray\("alice", "top_0"\);/);
     });
 
-    it("widens integer to float across a transfer (spec §7.8)", () => {
+    it("widens integer to float across a transfer (spec §transfer-typing)", () => {
       const result = compile(`
 let n: integer@alice = 3@alice;
 let m: float@bob <- n;
@@ -193,7 +193,7 @@ let m: float@bob <- n;
     });
   });
 
-  describe("@every residency vs location matching (spec §7.6, §12.2)", () => {
+  describe("@every residency vs location matching (spec §location-matching-and-residency, §type-projection)", () => {
     it("projects an @every value to every endpoint even though it is not usable as @alice", () => {
       const result = compile(`
 let c: boolean@every = true@every;
@@ -211,7 +211,7 @@ let d: boolean@alice <- c;
   });
 
   describe("functions and scoping", () => {
-    it("emits alice call and empty bob after cleanup for add(10@alice) (spec §10.2, §13.9)", () => {
+    it("emits alice call and empty bob after cleanup for add(10@alice) (spec §calling-local-from-choreography, §projected-ast-cleanup)", () => {
       const result = compile(`
 function add@alice(a: integer@alice) {
   return a;
@@ -224,7 +224,7 @@ add(10@alice);
       assert.equal(bs(result, "bob"), "");
     });
 
-    it("allows forward reference via function hoisting (spec §6.3)", () => {
+    it("allows forward reference via function hoisting (spec §function-declaration-hoisting)", () => {
       const result = compile(`
 let x: integer@alice = f();
 function f@alice(): integer@alice {
@@ -236,7 +236,7 @@ function f@alice(): integer@alice {
       assert.match(bs(result, "alice"), /function f\(/);
     });
 
-    it("rejects duplicate let in the same block (spec §6.4)", () => {
+    it("rejects duplicate let in the same block (spec §variable-scope)", () => {
       const result = compile(`
 let x: integer@alice = 1@alice;
 let x: integer@alice = 2@alice;
@@ -316,7 +316,7 @@ let x: integer@alice = 2@alice;
   });
 
   describe("invalid programs — full pipeline", () => {
-    it("§16.2 rejects every as a config endpoint", () => {
+    it("§using-every-as-an-endpoint rejects every as a config endpoint", () => {
       const result = compile(`let x: integer@alice = 1@alice;`, {
         endpoints: ["alice", "every"],
       });
@@ -329,7 +329,7 @@ let x: integer@alice = 2@alice;
       );
     });
 
-    it("§16.5 rejects uninitialized let", () => {
+    it("§uninitialized-let rejects uninitialized let", () => {
       const result = compile(`let x: integer@alice;`);
       expectFailure(result);
       assert.ok(
@@ -337,13 +337,13 @@ let x: integer@alice = 2@alice;
       );
     });
 
-    it("§16.6 rejects type mismatch", () => {
+    it("§type-mismatch rejects type mismatch", () => {
       const result = compile(`let x: integer@alice = "a"@alice;`);
       expectFailure(result);
       assert.ok(result.errors.some((e) => e.message.includes("cannot assign")));
     });
 
-    it("§16.14 rejects recursive choreography functions", () => {
+    it("§recursive-choreography-function rejects recursive choreography functions", () => {
       const result = compile(`
 function f(): void {
   f();
@@ -354,7 +354,7 @@ function f(): void {
       assert.ok(result.errors.some((e) => e.message.includes("recursive")));
     });
 
-    it("§16.15 rejects duplicate function names", () => {
+    it("§function-overloading rejects duplicate function names", () => {
       const result = compile(`
 function f@alice(): void { return; }
 function f@bob(): void { return; }
@@ -363,7 +363,7 @@ function f@bob(): void { return; }
       assert.ok(result.errors.some((e) => e.message.includes("duplicate function")));
     });
 
-    it("§16.16 rejects break", () => {
+    it("§err-break-and-continue rejects break", () => {
       const result = compile(`
 while (true@every) {
   break;
@@ -373,7 +373,7 @@ while (true@every) {
       assert.ok(result.errors.some((e) => e.message.includes("break")));
     });
 
-    it("§16.17 rejects == and != at lex time", () => {
+    it("§unsupported-equality-operators rejects == and != at lex time", () => {
       const result = compile(`
 let x: integer@alice = 1@alice;
 let y: integer@alice = 2@alice;
@@ -383,7 +383,7 @@ x == y;
       assert.ok(result.errors.some((e) => e.message.includes("===")));
     });
 
-    it("§16.10 rejects while with non-@every condition", () => {
+    it("§invalid-while-condition rejects while with non-@every condition", () => {
       const result = compile(`
 function f(): void {
   while (true@alice) {
@@ -395,7 +395,7 @@ function f(): void {
       assert.ok(result.errors.some((e) => e.message.includes("boolean@every")));
     });
 
-    it("§16.11 rejects for with non-@every condition in a choreography function", () => {
+    it("§invalid-for-condition rejects for with non-@every condition in a choreography function", () => {
       const result = compile(`
 function f(): void {
   for (let i: integer@alice = 0@alice; i < 10@alice; i = i + 1@alice) {
@@ -407,7 +407,7 @@ function f(): void {
       assert.ok(result.errors.some((e) => e.message.includes("boolean@every")));
     });
 
-    it("§10.1 allows transfers inside local functions as local copies", () => {
+    it("§function-kinds allows transfers inside local functions as local copies", () => {
       const result = compile(`
 function f@alice(): integer@alice {
   let xs: float[]@alice = [1.1, 2.2]@alice;
@@ -422,7 +422,7 @@ let n: integer@alice = f();
       assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
     });
 
-    it("§7.8 transfers a null value through the null communication API", () => {
+    it("§transfer-typing transfers a null value through the null communication API", () => {
       const result = compile(`
 let x: null@alice = null@alice;
 let y: null@bob <- x;
@@ -435,7 +435,7 @@ let y: null@bob <- x;
       assert.doesNotMatch(bs(result, "bob"), /receiveInteger/);
     });
 
-    it("§7.8 broadcasts a null value through the null communication API", () => {
+    it("§transfer-typing broadcasts a null value through the null communication API", () => {
       const result = compile(`
 let x: null@alice = null@alice;
 let y: null@every <- x;
@@ -445,7 +445,7 @@ let y: null@every <- x;
       assert.match(bs(result, "bob"), /receiveNull\("alice", "top_0"\)/);
     });
 
-    it("§2.2 rejects a duplicate endpoint name", () => {
+    it("§choreobs-json rejects a duplicate endpoint name", () => {
       const result = compile(`let x: integer@alice = 1@alice;`, {
         endpoints: ["alice", "alice", "bob"],
       });
@@ -456,7 +456,7 @@ let y: null@every <- x;
       );
     });
 
-    it("§11.5 keeps tags unique when a function is named after the top-level scope", () => {
+    it("§communication-tags keeps tags unique when a function is named after the top-level scope", () => {
       const result = compile(`
 function top(): void {
   let a: integer@alice = 1@alice;
@@ -474,7 +474,7 @@ top();
       assert.equal(new Set(tags).size, 2, `tags collided: ${tags.join(", ")}`);
     });
 
-    it("§7.8 evaluates a broadcast source exactly once at the sender", () => {
+    it("§transfer-typing evaluates a broadcast source exactly once at the sender", () => {
       const result = compile(`
 function nextValue(): integer@alice { return 1@alice; }
 let n: integer@every <- nextValue();
@@ -492,7 +492,7 @@ let n: integer@every <- nextValue();
       assert.match(alice, /let n: integer = __transfer_0;/);
     });
 
-    it("§7.8 clones the same array it broadcasts", () => {
+    it("§transfer-typing clones the same array it broadcasts", () => {
       const result = compile(`
 function makeArray(): integer[]@alice { return [1, 2]@alice; }
 let xs: integer[]@every <- makeArray();
@@ -507,7 +507,7 @@ let xs: integer[]@every <- makeArray();
       assert.match(alice, /let xs: integer\[\] = cloneIntegerArray\(__transfer_0\);/);
     });
 
-    it("§7.8 uses a plain identifier source directly, with no temporary", () => {
+    it("§transfer-typing uses a plain identifier source directly, with no temporary", () => {
       const result = compile(`
 let plain: boolean@alice = true@alice;
 let ok: boolean@every <- plain;
@@ -518,7 +518,7 @@ let ok: boolean@every <- plain;
       assert.doesNotMatch(alice, /__transfer/);
     });
 
-    it("§6.2 reserves the compiler's `__` identifier prefix", () => {
+    it("§function-names reserves the compiler's `__` identifier prefix", () => {
       const result = compile(`let __transfer_0: integer@alice = 1@alice;`);
       expectFailure(result);
       assert.ok(
@@ -543,7 +543,7 @@ let t: integer@alice = total(xs);
 `);
       expectSuccess(result);
       // Source and output spell these the same way, so code generation for the
-      // two array operations is the identity (spec §13.2.1).
+      // two array operations is the identity (spec §array-operation-code-generation).
       const alice = bs(result, "alice");
       assert.match(alice, /xs\.push\(3\);/);
       assert.match(alice, /let n: integer = xs\.length;/);
@@ -572,7 +572,7 @@ if (flag) {
       assert.doesNotMatch(bs(result, "alice"), /let z/);
     });
 
-    it("assigns @every values without communication (spec §7.8)", () => {
+    it("assigns @every values without communication (spec §transfer-typing)", () => {
       const result = compile(`
 let a: integer@every = 1@every;
 let b: integer@every = a;

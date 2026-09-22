@@ -7,7 +7,7 @@ import {
   type EmittedEndpointOutput,
 } from "./emitted.js";
 
-/** Verifies projected AST and generated BlueScript communication APIs (spec §11–§12). */
+/** Verifies projected AST and generated BlueScript communication APIs (spec §transfer-semantics–§endpoint-projection). */
 export function verifyCommunicationConsistency(
   projected: readonly ProjectedProgram[],
   emitted: readonly EmittedEndpointOutput[],

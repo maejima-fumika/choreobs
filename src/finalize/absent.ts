@@ -13,15 +13,15 @@ import {
 } from "../ir/traverse.js";
 
 /**
- * Absent finalization (spec §13.7) — the stage between endpoint projection and
+ * Absent finalization (spec §absent-finalization) — the stage between endpoint projection and
  * cleanup.
  *
  * EPP leaves two different artifacts behind: `absent`, the internal marker for
- * a value that does not exist at this endpoint (spec §12.4), and
+ * a value that does not exist at this endpoint (spec §absent), and
  * `nothing(...)`, which preserves computations whose result is discarded
- * (spec §14.1). This stage turns every remaining `absent` into the `null` it
+ * (spec §nothing). This stage turns every remaining `absent` into the `null` it
  * projects to, and does nothing else. Folding `nothing(...)` away is cleanup's
- * job (spec §13.9), and it depends on this stage having run first: its rule is
+ * job (spec §projected-ast-cleanup), and it depends on this stage having run first: its rule is
  * stated over arguments that are syntactically `null`, which an `absent` is
  * not.
  *

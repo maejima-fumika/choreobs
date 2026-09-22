@@ -31,7 +31,7 @@ function emitCleaned(body: ProjectedStatement[]): string {
   return emit(cleanupProgram(finalizeAbsentProgram(program(body)))).trimEnd();
 }
 
-describe("Projected AST cleanup (spec §13.9)", () => {
+describe("Projected AST cleanup (spec §projected-ast-cleanup)", () => {
   describe("expression simplification", () => {
     it("rejects an absent that absent finalization should have removed", () => {
       assert.throws(
@@ -150,7 +150,7 @@ describe("Projected AST cleanup (spec §13.9)", () => {
       );
     });
 
-    it("keeps return, let, assignment and call statements that hold null (§13.9.4)", () => {
+    it("keeps return, let, assignment and call statements that hold null (§simplification-inside-function-arguments)", () => {
       // Only a statement that is exactly `null;` goes. Everything else stays,
       // however much `null` it carries.
       const body: ProjectedStatement[] = [
@@ -237,10 +237,10 @@ describe("Projected AST cleanup (spec §13.9)", () => {
     // The IR-level tests above still exercise a *call* named `nothing` that is
     // not the compiler's artifact, because the distinction has to survive
     // inside cleanup. Source programs may no longer introduce that name: the
-    // emitted BlueScript keeps the source name (spec §13.3), so a user
+    // emitted BlueScript keeps the source name (spec §codegen-function-names), so a user
     // `nothing` would capture the compiler's own `nothing(...)` calls
-    // (spec §6.2, §14.1).
-    it("rejects a user function named nothing (spec §6.2, §13.3)", () => {
+    // (spec §function-names, §nothing).
+    it("rejects a user function named nothing (spec §function-names, §codegen-function-names)", () => {
       const result = compile(
         `
 function nothing@alice(a: null@alice): null@alice {

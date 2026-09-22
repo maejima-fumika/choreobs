@@ -126,7 +126,7 @@ function describeHolder(holder: "runtime" | "endpoint" | "function"): string {
 
 /**
  * The location a function's body is anchored at, for return type inference.
- * A choreography function is anchored at `every` (spec §7.14.4).
+ * A choreography function is anchored at `every` (spec §function-return-type-inference).
  */
 function functionLocationOf(decl: FunctionDeclaration): Location {
   return decl.at ?? { kind: "every" };
@@ -135,7 +135,7 @@ function functionLocationOf(decl: FunctionDeclaration): Location {
 /**
  * Thrown by {@link TypeChecker.error} to abandon the rest of type checking.
  *
- * Checking stops at the first error (spec §16). Continuing would mean inventing
+ * Checking stops at the first error (spec §compile-time-errors). Continuing would mean inventing
  * a type for the construct that just failed, and every later diagnostic derived
  * from that invented type would be noise.
  */
@@ -146,13 +146,13 @@ class TypeChecker {
   private readonly functions = new Map<string, FunctionDeclaration>();
   private readonly resolvedReturnTypes = new Map<string, LocatedType>();
   /** Used to check `@L` against the declared set; the set itself is validated
-   * by `validateEndpoints` before the checker runs (spec §2.2). */
+   * by `validateEndpoints` before the checker runs (spec §choreobs-json). */
   private readonly endpoints: Set<string>;
   private currentFunction: FunctionDeclaration | undefined;
   /** Resolved return type for the function currently being type-checked. */
   private currentFunctionReturnType: LocatedType | undefined;
   /**
-   * Set while inferring an omitted return type (spec §7.14.4). The body is
+   * Set while inferring an omitted return type (spec §function-return-type-inference). The body is
    * checked by the ordinary machinery, but there is no declared type yet to
    * check a `return` against, so each one is collected here instead.
    */
@@ -225,7 +225,7 @@ class TypeChecker {
     }
   }
 
-  /** Recursion rules (spec §7.14.8, §10.4), over the whole call graph. */
+  /** Recursion rules (spec §inference-and-recursion, §recursion), over the whole call graph. */
   private checkRecursion(): void {
     const names = [...this.functions.keys()];
     const callGraph = new Map<string, readonly string[]>();
@@ -320,7 +320,7 @@ class TypeChecker {
   }
 
   /**
-   * Infers one function's omitted return type by checking its body (§7.14.4).
+   * Infers one function's omitted return type by checking its body (§function-return-type-inference).
    *
    * The body goes through the ordinary `checkBlock`, in the same scope
    * `checkFunction` would open, with `returnCandidates` set so that each
@@ -478,7 +478,7 @@ class TypeChecker {
 
   /**
    * The scope a function body opens in: its parameters, resolved and checked
-   * (spec §7.12, §7.14.7).
+   * (spec §function-call-typing, §parameter-types-are-not-inferred).
    *
    * Shared with return type inference, which opens the same scope over the
    * same body. Two copies of this would be two chances to disagree about
@@ -534,9 +534,9 @@ class TypeChecker {
 
   /**
    * Return coverage for a function that *declares* a non-`void` return type
-   * (spec §7.13, §16.41).
+   * (spec §return-typing, §missing-return-in-a-non-void-function).
    *
-   * The inferred case is handled during inference (spec §7.14.6); this is the
+   * The inferred case is handled during inference (spec §return-coverage-for-non-void-functions); this is the
    * same conservative analysis applied to the explicit case, which otherwise
    * let a function fall off its end and emit BlueScript that returns nothing.
    *
@@ -623,8 +623,8 @@ class TypeChecker {
   /**
    * The type an omitted annotation infers from its initializer.
    *
-   * An annotated `let` reaches `resolveType`, which rejects `void` (spec §7.3,
-   * §16.40). The inferred path never sees an annotation, so the same rejection
+   * An annotated `let` reaches `resolveType`, which rejects `void` (spec §void,
+   * §invalid-use-of-void). The inferred path never sees an annotation, so the same rejection
    * has to happen here — otherwise a call to a `void` function would bind a
    * variable of a type that holds no value.
    */
@@ -636,7 +636,7 @@ class TypeChecker {
     return initializer.choreoType;
   }
 
-  /** Rejects a void computation where a value is required (spec §7.2). */
+  /** Rejects a void computation where a value is required (spec §located-types). */
   private requireValueExpression(expr: TypedExpression, span: Span): void {
     if (expr.choreoType.base === "void" && expr.choreoType.isArray !== true) {
       this.error(
@@ -652,8 +652,8 @@ class TypeChecker {
     span: Span,
   ): LocatedType {
     // An initialized `let` may omit the location; it comes from the
-    // initializer (spec §7.14.1). Transfer `let` goes through `resolveType`
-    // directly and keeps requiring an explicit destination (spec §7.14.3).
+    // initializer (spec §let-type-inference). Transfer `let` goes through `resolveType`
+    // directly and keeps requiring an explicit destination (spec §transfer-let-does-not-infer-destination-type).
     const choreoType = this.resolveType(
       ann,
       initializer.choreoType.location,
@@ -696,9 +696,9 @@ class TypeChecker {
     const choreoType = this.resolveType(stmt.type);
     // The destination of a transfer `let` is a variable the body declares, so
     // inside `function f@P` it must be located at `P` like any other local
-    // (spec §8.2). Without this the checker would accept a send out of a
+    // (spec §local-function-strict-location-rule). Without this the checker would accept a send out of a
     // function body that only exists at `P`, leaving the peer with no matching
-    // receive (spec §10.1).
+    // receive (spec §function-kinds).
     this.validateLocalFunctionLocatedType(
       this.currentFunction,
       choreoType,
@@ -708,7 +708,7 @@ class TypeChecker {
     const source = this.checkExpression(stmt.source, ctx);
     const transferMode = this.validateTransfer(choreoType, source.choreoType, stmt.span);
     this.defineLocal(stmt.name, choreoType, stmt.span);
-    // The tag is assigned after checking, by `assignCommTags` (spec §11.5).
+    // The tag is assigned after checking, by `assignCommTags` (spec §communication-tags).
     return { stmt, choreoType, source, transferMode };
   }
 
@@ -721,9 +721,9 @@ class TypeChecker {
   }
 
   /**
-   * Checks an assignment target against the value being stored (spec §5.7,
-   * §7.7, §7.11.1). Shared by assignment statements and `for` header clauses,
-   * which take the same target shapes (spec §5.11).
+   * Checks an assignment target against the value being stored (spec §assignment-statement,
+   * §assignment-typing, §array-typing). Shared by assignment statements and `for` header clauses,
+   * which take the same target shapes (spec §for-statement).
    */
   private checkAssignmentTarget(
     target: AssignmentTarget,
@@ -859,7 +859,7 @@ class TypeChecker {
     inFunction: boolean,
   ): TypedReturnStatement {
     // Inferring this function's return type: there is nothing to check the
-    // `return` against yet, so record what it produces (spec §7.14.4).
+    // `return` against yet, so record what it produces (spec §function-return-type-inference).
     if (this.returnCandidates !== undefined) {
       return this.collectReturnCandidate(stmt, ctx, this.returnCandidates);
     }
@@ -1011,15 +1011,15 @@ class TypeChecker {
 
   /**
    * `&&` and `||` evaluate their right operand only when the left one does not
-   * already decide the result (spec §5.17), and that decision is made from a
+   * already decide the result (spec §evaluation-order), and that decision is made from a
    * value that lives at one location. An endpoint where the result is absent
    * has no way to learn which way the branch went, so it cannot know whether to
    * run a choreography call hidden in either operand — and a choreography
-   * function runs at every endpoint (spec §12.11). Core v0 therefore forbids
-   * such a call in either operand outright (spec §16.46).
+   * function runs at every endpoint (spec §function-projection). Core v0 therefore forbids
+   * such a call in either operand outright (spec §choreography-call-in-a-short-circuit-operand).
    *
    * Looking for a call written directly in the operand is enough: a local
-   * function cannot call a choreography one (spec §16.13), so no call reachable
+   * function cannot call a choreography one (spec §calling-choreography-from-local), so no call reachable
    * from here can communicate unless it appears in the operand itself.
    */
   private requireShortCircuitOperandsCallFree(expr: BinaryExpression): void {
@@ -1094,7 +1094,7 @@ class TypeChecker {
       // `void === void` passes the same-base-type test below, so it needs its
       // own rejection: a void computation produces nothing to compare, and
       // letting it through emits BlueScript that compares two statements
-      // (spec §7.2, §16.43).
+      // (spec §located-types, §invalid-comparison-or-equality-operands).
       if (left.base === "void" || right.base === "void") {
         this.error(
           `operator '${operator}' requires operands that produce a value; \`void\` does not (spec §7.2, §16.43)`,
@@ -1125,7 +1125,7 @@ class TypeChecker {
     const operand = this.checkExpression(expr.operand, ctx);
     // Unary operators are scalar-only. Testing `base` alone would let a
     // `boolean[]` through `!` and an `integer[]` through `-`, since an array
-    // type carries its element type in `base` (spec §7.11, §16.42).
+    // type carries its element type in `base` (spec §operators, §invalid-unary-operand).
     if (expr.operator === "!") {
       if (operand.choreoType.isArray === true || operand.choreoType.base !== "boolean") {
         this.error(
@@ -1235,7 +1235,7 @@ class TypeChecker {
   }
 
   /**
-   * Reports a callee that names no function (spec §6.1).
+   * Reports a callee that names no function (spec §namespaces).
    *
    * Since one name is held by at most one thing, this can name what the callee
    * actually is instead of only reporting the absence of a function.
@@ -1290,13 +1290,13 @@ class TypeChecker {
   }
 
   /**
-   * `xs.push(v)` (spec §5.14, §7.11.1).
+   * `xs.push(v)` (spec §expressions, §array-typing).
    *
    * The result is `void`: appending produces nothing to bind, so every value
    * position rejects it exactly as it rejects a call to a `void` function
-   * (spec §7.2, §16.40). The location carried on that `void` is the array's,
-   * which is never written or shown (spec §7.3) but tells endpoint projection
-   * where the append happens (spec §12.14.1).
+   * (spec §located-types, §invalid-use-of-void). The location carried on that `void` is the array's,
+   * which is never written or shown (spec §void) but tells endpoint projection
+   * where the append happens (spec §array-projection).
    */
   private checkPush(
     expr: PushExpression,
@@ -1318,7 +1318,7 @@ class TypeChecker {
     };
   }
 
-  /** `xs.length` (spec §5.14, §7.11.1). */
+  /** `xs.length` (spec §expressions, §array-typing). */
   private checkLength(
     expr: LengthExpression,
     ctx: ExecutionContext,
@@ -1333,9 +1333,9 @@ class TypeChecker {
   }
 
   /**
-   * Both array operations take an array (spec §7.11.1). Neither is defined on
+   * Both array operations take an array (spec §array-typing). Neither is defined on
    * a scalar — `string` included, since v0 has no string operations at all
-   * (spec §17.2).
+   * (spec §typescript-javascript-features).
    */
   private requireArrayReceiver(
     member: string,
@@ -1391,7 +1391,7 @@ class TypeChecker {
     if (ctx === undefined) {
       return;
     }
-    // A choreography context may call anything (spec §10.2).
+    // A choreography context may call anything (spec §calling-local-from-choreography).
     if (ctx.kind === "choreography") {
       return;
     }
@@ -1455,7 +1455,7 @@ class TypeChecker {
     }
   }
 
-  /** Return value vs declared/inferred return type (spec §7.13; same rules as assignment). */
+  /** Return value vs declared/inferred return type (spec §return-typing; same rules as assignment). */
   private validateReturnLike(
     returnType: LocatedType,
     value: LocatedType,
@@ -1489,7 +1489,7 @@ class TypeChecker {
     const srcLoc = source.location;
     const dstLoc = target.location;
 
-    // There is no restriction on the source/destination locations (spec §7.8).
+    // There is no restriction on the source/destination locations (spec §transfer-typing).
     // A transfer is a local copy exactly when every endpoint the destination
     // resides at already holds the source payload — that is, when the source is
     // `@every`, or when the two locations are the same.
@@ -1583,7 +1583,7 @@ class TypeChecker {
     return type.base === "integer" || type.base === "float";
   }
 
-  /** Resolve a type in a value position; `void` is not a value type (spec §7.3). */
+  /** Resolve a type in a value position; `void` is not a value type (spec §void). */
   private resolveType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
     inferredLocation?: Location,
@@ -1597,7 +1597,7 @@ class TypeChecker {
     return this.resolveTypeAllowingVoid(ann, inferredLocation);
   }
 
-  /** Resolve a function return type, where `void` is allowed (spec §7.3). */
+  /** Resolve a function return type, where `void` is allowed (spec §void). */
   private resolveReturnType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
     decl: FunctionDeclaration,
@@ -1655,17 +1655,17 @@ class TypeChecker {
   }
 
   /**
-   * The single gate every declared name passes through (spec §6.1).
+   * The single gate every declared name passes through (spec §namespaces).
    *
    * Endpoints, functions and variables share one value name space, because
-   * generated BlueScript keeps the source name (spec §13.3) and has only one:
+   * generated BlueScript keeps the source name (spec §codegen-function-names) and has only one:
    * a variable emitted beside a function of the same name shadows it, and the
    * call the program meant to make would reach the variable instead.
    *
    * Endpoint names and function names are taken program-wide — endpoints
-   * because they are declared in `choreobs.json` (spec §2.2), functions
-   * because they are global and hoisted (spec §6.2, §6.3). Variables and
-   * parameters are block-scoped and may still shadow each other (spec §6.4);
+   * because they are declared in `choreobs.json` (spec §choreobs-json), functions
+   * because they are global and hoisted (spec §function-names, §function-declaration-hoisting). Variables and
+   * parameters are block-scoped and may still shadow each other (spec §variable-scope);
    * they may not take a name either of the other two already holds.
    */
   private rejectNameConflict(
@@ -1678,7 +1678,7 @@ class TypeChecker {
       return;
     }
     // A function redeclaration is reported by `collectFunctions` with its own,
-    // more specific message (spec §6.2).
+    // more specific message (spec §function-names).
     if (holder === "function" && role === "function") {
       return;
     }
@@ -1691,7 +1691,7 @@ class TypeChecker {
   }
 
   /**
-   * What already holds `name` in the value name space (spec §6.1), if
+   * What already holds `name` in the value name space (spec §namespaces), if
    * anything.
    *
    * One name is held by at most one of these, which is what lets a use of a
@@ -1743,7 +1743,7 @@ class TypeChecker {
       );
     }
     // Visible nowhere here, but declared at top level: a function body cannot
-    // see the top-level scope (spec §6.6), which is worth saying outright.
+    // see the top-level scope (spec §top-level-let), which is worth saying outright.
     if (this.topLevelEnv.has(name)) {
       this.error(
         `'${name}' is a top-level variable and is not visible inside a function (spec §6.6)`,

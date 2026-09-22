@@ -38,8 +38,8 @@ export function expectFailure(result: CompileResult): void {
 
 /**
  * Nothing choreographic may survive into the generated BlueScript: no location
- * annotation, no transfer operator, and no `absent` artifact (spec §13.2,
- * §13.7).
+ * annotation, no transfer operator, and no `absent` artifact (spec §location-annotation-removal,
+ * §absent-finalization).
  */
 export function assertNoChoreoResidue(source: string, label?: string): void {
   assert.doesNotMatch(source, /@/, label);

@@ -10,13 +10,13 @@ import {
  * Names the generated BlueScript relies on, and the sentinels EPP uses
  * internally.
  *
- * BlueScript output keeps the original ChoreoBS function names (spec §13.3), so
+ * BlueScript output keeps the original ChoreoBS function names (spec §codegen-function-names), so
  * a user-defined `nothing` or `sendInteger` would be emitted right next to — and
  * capture — the compiler's own call to it. These are therefore reserved
- * (spec §6.2).
+ * (spec §function-names).
  */
 
-/** Every payload kind the communication API supports (spec §13.8). */
+/** Every payload kind the communication API supports (spec §communication-api). */
 export const ALL_COMM_KINDS: readonly CommKind[] = [
   "integer",
   "float",
@@ -28,12 +28,12 @@ export const ALL_COMM_KINDS: readonly CommKind[] = [
   "booleanArray",
 ];
 
-/** The compiler-generated placeholder helper (spec §14.1). */
+/** The compiler-generated placeholder helper (spec §nothing). */
 export const NOTHING_HELPER = "nothing";
 
 /**
  * Internal callee sentinels. They never reach the output as calls — the emitter
- * turns them back into an array literal and a `.push(...)` (spec §13.2.1) — but
+ * turns them back into an array literal and a `.push(...)` (spec §array-operation-code-generation) — but
  * a user function of the same name would be rewritten the same way, so they are
  * reserved too.
  */
@@ -42,17 +42,17 @@ export const PUSH_SENTINEL = "__push";
 
 /**
  * Every compiler-introduced name starts with this, and the source language
- * reserves the prefix (spec §4.3, §6.2). That is what lets EPP mint temporaries
+ * reserves the prefix (spec §identifiers, §function-names). That is what lets EPP mint temporaries
  * — `__transfer_0` and the like — without checking them against the program.
  */
 export const COMPILER_NAME_PREFIX = "__";
 
-/** Temporaries that keep a transfer source to a single evaluation (spec §7.8). */
+/** Temporaries that keep a transfer source to a single evaluation (spec §transfer-typing). */
 export const TRANSFER_TEMP_PREFIX = "__transfer_";
 
 // The array operation names `length` and `push` are *not* here, and are not
 // reserved: they mean something only after a `.`, so a program may still use
-// them as ordinary identifiers (spec §6.2). They are grammar, and live with
+// them as ordinary identifiers (spec §function-names). They are grammar, and live with
 // the parser that reads them.
 
 /**

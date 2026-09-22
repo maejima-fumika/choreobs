@@ -21,7 +21,7 @@ let y: integer@bob <- x;`;
     assert.equal(tokens.at(-1)?.kind, TokenKind.EOF);
   });
 
-  it("distinguishes `<-` from `<` followed by unary minus (spec §4.6)", () => {
+  it("distinguishes `<-` from `<` followed by unary minus (spec §operators-and-punctuation)", () => {
     // Maximal munch on the raw character stream, as in Go: the character
     // immediately after `<` decides, so whitespace disambiguates.
     assert.deepEqual(

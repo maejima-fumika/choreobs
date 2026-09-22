@@ -6,7 +6,7 @@ import type {
 } from "./operators.js";
 
 /**
- * Expression AST (spec §5.14).
+ * Expression AST (spec §expressions).
  *
  * Flattened to a small set of node kinds for uniform visitors and EPP walks.
  * Precedence is resolved by the parser; the tree shape does not encode levels.
@@ -52,7 +52,7 @@ export interface IdentifierExpression extends AstNode {
   readonly name: string;
 }
 
-/** `f(a, b)` — callee is always a simple identifier in v0 (spec §5.14). */
+/** `f(a, b)` — callee is always a simple identifier in v0 (spec §expressions). */
 export interface CallExpression extends AstNode {
   readonly kind: "CallExpression";
   readonly callee: string;
@@ -66,8 +66,8 @@ export interface IndexExpression extends AstNode {
 }
 
 /**
- * The two array member operations, `xs.length` and `xs.push(v)` (spec §5.14,
- * §7.11.1).
+ * The two array member operations, `xs.length` and `xs.push(v)` (spec §expressions,
+ * §array-typing).
  *
  * Both take an identifier as their receiver by grammar: with no nested arrays
  * and no objects, a variable is the only receiver that could mean anything.
@@ -82,7 +82,7 @@ export interface LengthExpression extends AstNode {
 /**
  * `xs.push(v)` — appends to a mutable array.
  *
- * An expression of type `void` (spec §7.2, §7.11.1), so the only place it can
+ * An expression of type `void` (spec §located-types, §array-typing), so the only place it can
  * stand is an expression statement; every value position rejects it the same
  * way it rejects a call to a `void` function.
  */

@@ -61,11 +61,11 @@ import { parseError, type ParseError } from "./errors.js";
 import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-utils.js";
 
 /**
- * The two array operation names, written after `.` (spec §5.14, §7.11.1).
+ * The two array operation names, written after `.` (spec §expressions, §array-typing).
  *
  * Grammar, not function names: they mean something only after a `.`, so a
  * program may still use `length` and `push` as ordinary identifiers
- * (spec §6.2) — which is why they are not among the reserved runtime names.
+ * (spec §function-names) — which is why they are not among the reserved runtime names.
  */
 const LENGTH_PROPERTY = "length";
 const PUSH_METHOD = "push";
@@ -138,7 +138,7 @@ class Parser {
   }
 
   // -------------------------------------------------------------------------
-  // Top level (spec §5.1)
+  // Top level (spec §program)
   // -------------------------------------------------------------------------
 
   private functionDeclaration(): FunctionDeclaration {
@@ -146,7 +146,7 @@ class Parser {
     const nameTok = this.consumeIdentifierToken("expected function name");
     // A location names the one endpoint that runs the function, making it a
     // local function; a choreography function runs at every endpoint and has
-    // none (spec §10.1).
+    // none (spec §function-kinds).
     const at = this.match(TokenKind.At) ? this.parseLocation() : undefined;
     this.consume(TokenKind.LParen, "expected '(' after function name");
     const params = this.check(TokenKind.RParen) ? [] : this.parameterList();
@@ -202,7 +202,7 @@ class Parser {
   }
 
   // -------------------------------------------------------------------------
-  // Types and locations (spec §5.2)
+  // Types and locations (spec §types)
   // -------------------------------------------------------------------------
 
   private parseType(): TypeAnnotation {
@@ -270,7 +270,7 @@ class Parser {
   }
 
   // -------------------------------------------------------------------------
-  // Statements (spec §5.5)
+  // Statements (spec §statements)
   // -------------------------------------------------------------------------
 
   private parseBlock(): Block {
@@ -480,9 +480,9 @@ class Parser {
       init = this.parseForInit();
     }
     this.consume(TokenKind.Semicolon, "expected ';' after for initializer");
-    // The condition is required (spec §5.11). An omitted one would have to mean
+    // The condition is required (spec §for-statement). An omitted one would have to mean
     // an implicit `true`, and a literal has no location to take from context
-    // (spec §8.1); `while (true@every)` says the same thing explicitly.
+    // (spec §explicit-location-annotations); `while (true@every)` says the same thing explicitly.
     const condition = this.parseExpression();
     this.consume(TokenKind.Semicolon, "expected ';' after for condition");
     let update: ForAssignmentInit | undefined;
@@ -501,7 +501,7 @@ class Parser {
     };
   }
 
-  /** spec §5.11 — for-init: let-with-`=` or assignment only */
+  /** spec §for-statement — for-init: let-with-`=` or assignment only */
   private parseForInit(): ForInit {
     if (this.match(TokenKind.Let)) {
       const start = this.previous();
@@ -530,7 +530,7 @@ class Parser {
 
   /**
    * `i = e` or `xs[i] = e`. The target is the same shape an assignment
-   * statement takes (spec §5.7, §5.11).
+   * statement takes (spec §assignment-statement, §for-statement).
    */
   private parseForAssignmentInit(): ForAssignmentInit {
     const start = this.current();
@@ -588,7 +588,7 @@ class Parser {
   }
 
   // -------------------------------------------------------------------------
-  // Expressions (spec §5.14) — precedence climbing via recursive descent
+  // Expressions (spec §expressions) — precedence climbing via recursive descent
   // -------------------------------------------------------------------------
 
   private parseExpression(): Expression {
@@ -701,7 +701,7 @@ class Parser {
 
   /**
    * `xs.length` and `xs.push(v)` — the two array member operations
-   * (spec §5.14, §7.11.1).
+   * (spec §expressions, §array-typing).
    *
    * Both take a variable as their receiver. The member token is checked before
    * being consumed, because `fail` reports at the current token.

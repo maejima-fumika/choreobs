@@ -1,13 +1,13 @@
 import type { SourceSpan } from "./position.js";
 
 /**
- * Token kinds recognized by the ChoreoBS lexer (spec §4).
+ * Token kinds recognized by the ChoreoBS lexer (spec §lexical-specification).
  *
  * Keywords are distinct kinds (not generic `identifier`) so the parser
  * can match them without a separate keyword table.
  */
 export const TokenKind = {
-  // Literals (spec §4.5)
+  // Literals (spec §literals)
   IntegerLiteral: "IntegerLiteral",
   FloatLiteral: "FloatLiteral",
   StringLiteral: "StringLiteral",
@@ -15,7 +15,7 @@ export const TokenKind = {
   // Identifiers (non-reserved words)
   Identifier: "Identifier",
 
-  // Keywords — language (spec §4.4)
+  // Keywords — language (spec §keywords)
   Function: "Function",
   Let: "Let",
   If: "If",
@@ -33,7 +33,7 @@ export const TokenKind = {
   String: "String",
   Void: "Void",
 
-  // Keywords — reserved but unsupported in v0 (spec §4.4)
+  // Keywords — reserved but unsupported in v0 (spec §keywords)
   Break: "Break",
   Continue: "Continue",
   Const: "Const",
@@ -45,7 +45,7 @@ export const TokenKind = {
   Import: "Import",
   Export: "Export",
 
-  // Operators and punctuation (spec §4.6)
+  // Operators and punctuation (spec §operators-and-punctuation)
   Plus: "Plus",
   Minus: "Minus",
   Star: "Star",

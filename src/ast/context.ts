@@ -1,7 +1,7 @@
 import type { Location } from "./location.js";
 
 /**
- * Where a statement or expression is executed (spec §6.5, §8, §10).
+ * Where a statement or expression is executed (spec §top-level-statements, §location-annotation-rules, §function-rules).
  *
  * - Top-level items use {@link CHOREOGRAPHY_CONTEXT}.
  * - A choreography function, which runs at every endpoint, uses `choreography`.
@@ -14,7 +14,7 @@ export type ExecutionContext =
   | { readonly kind: "choreography" }
   | { readonly kind: "local"; readonly endpoint: string };
 
-/** Implicit context for top-level statements (spec §6.5). */
+/** Implicit context for top-level statements (spec §top-level-statements). */
 export const CHOREOGRAPHY_CONTEXT: ExecutionContext = { kind: "choreography" };
 
 /**

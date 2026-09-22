@@ -6,15 +6,15 @@ import type { LocatedType } from "../ast/typed.js";
 import { locatedType } from "../types/located.js";
 
 /**
- * Resolve a written type annotation (spec §8.1).
+ * Resolve a written type annotation (spec §explicit-location-annotations).
  *
  * The location is never inferred from the surrounding *context*. `inferred` is
  * supplied only where the location follows from the declaration itself — an
- * initialized `let` takes it from the initializer (spec §7.14.1). A written
+ * initialized `let` takes it from the initializer (spec §let-type-inference). A written
  * `@L` always wins.
  *
  * `void` is the exception: it holds no value, so it has no location and must not
- * be written with one (spec §7.3). The checker still stores a location on it so
+ * be written with one (spec §void). The checker still stores a location on it so
  * that it travels through the ordinary machinery; that location is internal and
  * is never shown or compared against a written one.
  */
@@ -41,7 +41,7 @@ export function resolveTypeAnnotation(
   return locatedType(ann.base, location);
 }
 
-/** Resolve a written literal (spec §8.1); the location is never inferred. */
+/** Resolve a written literal (spec §explicit-location-annotations); the location is never inferred. */
 export function resolveLiteralType(lit: LocatedLiteral): LocatedType {
   const base = rawLiteralBaseType(lit.literal);
   if (lit.location === undefined) {
@@ -53,7 +53,7 @@ export function resolveLiteralType(lit: LocatedLiteral): LocatedType {
   return locatedType(base, lit.location.location);
 }
 
-/** Array element base types are restricted (spec §16.29). Unrelated to locations. */
+/** Array element base types are restricted (spec §unsupported-array-element-type). Unrelated to locations. */
 export function validateArrayTypeAnnotation(ann: TypeAnnotation): void {
   if (!ann.isArray) {
     return;

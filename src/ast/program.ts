@@ -6,7 +6,7 @@ import type { Statement } from "./statements.js";
 export type TopLevelItem = FunctionDeclaration | TopLevelStatement;
 
 /**
- * A top-level statement executed in the implicit `@every` context (spec §6.5).
+ * A top-level statement executed in the implicit `@every` context (spec §top-level-statements).
  *
  * `context.kind` is always `"every"`; it is stored on the node so
  * statement checking and EPP can treat top-level and function bodies uniformly.
@@ -17,7 +17,7 @@ export interface TopLevelStatement extends AstNode {
   readonly statement: Statement;
 }
 
-/** Root node: `TopLevelItem*` (spec §5.1). */
+/** Root node: `TopLevelItem*` (spec §program). */
 export interface Program extends AstNode {
   readonly kind: "Program";
   readonly items: readonly TopLevelItem[];

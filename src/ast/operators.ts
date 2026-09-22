@@ -1,10 +1,10 @@
-/** Arithmetic and remainder (spec §7.11). */
+/** Arithmetic and remainder (spec §operators). */
 export type ArithmeticOperator = "+" | "-" | "*" | "/" | "%";
 
-/** Ordered comparison on numeric values (spec §7.11). */
+/** Ordered comparison on numeric values (spec §operators). */
 export type RelationalOperator = "<" | "<=" | ">" | ">=";
 
-/** Strict equality (spec §4.6 — `==` / `!=` are not in v0). */
+/** Strict equality (spec §operators-and-punctuation — `==` / `!=` are not in v0). */
 export type EqualityOperator = "===" | "!==";
 
 export type LogicalOperator = "&&" | "||";

@@ -52,11 +52,11 @@ export function tokenize(source: string): TokenizeResult {
 
 /**
  * Whether `name` is something the source could write as an identifier
- * (spec §4.3): the right shape, and not a reserved word (spec §4.4).
+ * (spec §identifiers): the right shape, and not a reserved word (spec §keywords).
  *
  * Answered by running the real lexer rather than by a second copy of the rule,
  * so that a change to identifier syntax or to {@link KEYWORDS} cannot leave
- * this behind. Endpoint names are checked with it (spec §2.2): a name the
+ * this behind. Endpoint names are checked with it (spec §choreobs-json): a name the
  * source cannot write after `@` names an endpoint no program can reach.
  */
 export function isIdentifierName(name: string): boolean {

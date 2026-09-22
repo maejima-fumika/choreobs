@@ -107,6 +107,25 @@ function stepLinks(doc: SpecDocument): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * The files the migration rewrites.
+ *
+ * `src/spec/` and `scripts/spec/` are the machinery that defines the notation
+ * and explains its hazards, so their own `§7.8`s are examples, not citations.
+ * `load.test.ts` asserts `validateEndpoints`'s messages in full, so its
+ * expectations have to move in the same commit as the messages.
+ */
+function migratable(): readonly string[] {
+  return sourceFiles().filter((path) => {
+    const rel = relative(REPO_ROOT, path);
+    return (
+      !rel.startsWith("src/spec/") &&
+      !rel.startsWith("scripts/spec/") &&
+      rel !== "test/config/load.test.ts"
+    );
+  });
+}
+
+/**
  * Where a `§` sits in a TypeScript file. The destination differs by region — a
  * comment keeps a bare `§slug`, a test title too, and a compiler message hands
  * its citation to the reporting call — so the classification has to be exact,
@@ -123,8 +142,8 @@ function regionsOf(text: string, fileName: string): readonly Region[] {
   const regions: Region[] = [];
   const seenComment = new Set<number>();
 
-  const addComments = (pos: number): void => {
-    for (const r of ts.getLeadingCommentRanges(text, pos) ?? []) {
+  const addComments = (ranges: readonly ts.CommentRange[] | undefined): void => {
+    for (const r of ranges ?? []) {
       if (!seenComment.has(r.pos)) {
         seenComment.add(r.pos);
         regions.push({ kind: "comment", start: r.pos, end: r.end });
@@ -133,7 +152,10 @@ function regionsOf(text: string, fileName: string): readonly Region[] {
   };
 
   const visit = (node: ts.Node): void => {
-    addComments(node.pos);
+    addComments(ts.getLeadingCommentRanges(text, node.pos));
+    // A comment on the last line of a block trails its statement and leads no
+    // node at all, because the `}` that follows is a token, not a child.
+    addComments(ts.getTrailingCommentRanges(text, node.end));
     if (
       ts.isStringLiteralLike(node) ||
       ts.isTemplateHead(node) ||
@@ -146,7 +168,7 @@ function regionsOf(text: string, fileName: string): readonly Region[] {
   };
 
   visit(sf);
-  addComments(sf.endOfFileToken.pos);
+  addComments(ts.getLeadingCommentRanges(text, sf.endOfFileToken.pos));
   return regions;
 }
 
@@ -202,7 +224,7 @@ function eachRef(
  * templates that churn on every renumber.
  */
 function stepRefs(doc: SpecDocument): void {
-  for (const path of sourceFiles()) {
+  for (const path of migratable()) {
     const text = readFileSync(path, "utf8");
     if (!text.includes("§")) {
       continue;
@@ -213,8 +235,15 @@ function stepRefs(doc: SpecDocument): void {
     const edits: Edit[] = [];
 
     eachRef(text, regions, rel, (m, region) => {
-      if (region.kind === "literal" && !inTests) {
-        return;
+      if (region.kind === "literal") {
+        if (!inTests) {
+          return;
+        }
+        // A literal that is nothing but the reference is matched against what
+        // the compiler prints, so it moves with the messages, not here.
+        if (text.slice(region.start + 1, region.end - 1) === m[0]) {
+          return;
+        }
       }
       const slug = requireNumber(doc, m[1]!, rel).slug;
       edits.push({ start: m.index, end: m.index + m[0].length, text: `§${slug}` });
@@ -275,7 +304,7 @@ function enclosingCall(node: ts.Node): ts.CallExpression | ts.NewExpression | un
 function stepMessages(doc: SpecDocument): void {
   const skipped: string[] = [];
 
-  for (const path of sourceFiles()) {
+  for (const path of migratable()) {
     const rel = relative(REPO_ROOT, path);
     if (rel.startsWith("test/")) {
       continue;

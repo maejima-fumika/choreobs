@@ -69,7 +69,7 @@ function tags(typed: TypedProgram): (string | null)[] {
   return transfers(typed).map((t) => t.tag ?? null);
 }
 
-describe("comm — assignCommTags (spec §11.5)", () => {
+describe("comm — assignCommTags (spec §communication-tags)", () => {
   it("numbers top-level transfers in source order", () => {
     const typed = tagSource(`
 let a: integer@alice = 1@alice;
@@ -116,7 +116,7 @@ let b: integer@bob <- a;
     assert.deepEqual(assigned, ["top_0", "top_1"]);
   });
 
-  it("assigns no tag to a local copy (spec §7.8)", () => {
+  it("assigns no tag to a local copy (spec §transfer-typing)", () => {
     const typed = tagSource(`
 let e: integer@every = 1@every;
 let same: integer@alice = 2@alice;

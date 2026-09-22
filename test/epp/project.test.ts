@@ -67,7 +67,7 @@ function findIf(stmts: readonly ProjectedStatement[]): IfStatement | undefined {
 }
 
 describe("Endpoint Projection (EPP)", () => {
-  it("projects direct communication (spec §15.1)", () => {
+  it("projects direct communication (spec §example-direct-communication)", () => {
     const source = `
 let x: integer@alice = 1@alice;
 let y: integer@bob <- x;
@@ -96,7 +96,7 @@ let y: integer@bob <- x;
     assert.equal(findStmt(bob.body, "SendStatement"), undefined);
   });
 
-  it("projects broadcast (spec §15.2)", () => {
+  it("projects broadcast (spec §example-broadcast)", () => {
     const source = `
 let localOk: boolean@alice = true@alice;
 let ok: boolean@every <- localOk;
@@ -112,7 +112,7 @@ let ok: boolean@every <- localOk;
     }
   });
 
-  it("omits local functions at other endpoints (spec §12.11)", () => {
+  it("omits local functions at other endpoints (spec §function-projection)", () => {
     const source = `
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
   return a + b;
@@ -124,7 +124,7 @@ function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     assert.equal(bob.functions.length, 0);
   });
 
-  it("projects choreography functions with absent parameters (spec §12.11)", () => {
+  it("projects choreography functions with absent parameters (spec §function-projection)", () => {
     const source = `
 function foo(a: integer@alice, b: integer@bob): integer@alice {
   return a;
@@ -137,11 +137,11 @@ function foo(a: integer@alice, b: integer@bob): integer@alice {
     assert.equal(bob.functions[0]?.returnType.kind, "AbsentType");
   });
 
-  it("omits unavailable top-level lets at other endpoints (spec §12.8)", () => {
+  it("omits unavailable top-level lets at other endpoints (spec §let-projection)", () => {
     const source = `let x: integer@alice = 1@alice;`;
     const bob = epp(source, "bob");
     // The binding is gone, but the initializer's evaluation is kept as an
-    // evaluation-only statement (spec §12.8). Here it holds nothing bob owes,
+    // evaluation-only statement (spec §let-projection). Here it holds nothing bob owes,
     // so it is an `absent` that finalization and cleanup remove.
     assert.ok(
       bob.body.every(
@@ -164,7 +164,7 @@ function foo(a: integer@alice, b: integer@bob): integer@alice {
     );
   });
 
-  it("drops a bob-only let inside a nested if at alice (spec §15.2 EPP)", () => {
+  it("drops a bob-only let inside a nested if at alice (spec §example-broadcast EPP)", () => {
     const source = `
 let flag: boolean@every = true@every;
 if (flag) {
@@ -181,7 +181,7 @@ if (flag) {
     const inner = findIf(outer.then.statements);
     assert.ok(inner);
     // The initializer holds no call alice has to make, so the whole statement
-    // goes; the `if` stays because its condition is `@every` (spec §12.12).
+    // goes; the `if` stays because its condition is `@every` (spec §if-projection).
     const innerThen = inner.then.statements;
     assert.equal(innerThen.length, 1);
     assert.equal(innerThen[0]?.kind, "ExpressionStatement");
@@ -191,7 +191,7 @@ if (flag) {
     assert.equal(findStmt(inner.then.statements, "LetStatement"), undefined);
   });
 
-  it("projects bob-only let at alice as absent or nothing before cleanup (spec §12.8)", () => {
+  it("projects bob-only let at alice as absent or nothing before cleanup (spec §let-projection)", () => {
     const source = `let z: integer@bob = 0@bob;`;
     const alice = epp(source, "alice");
     const stmt = alice.body[0];
@@ -222,7 +222,7 @@ y <- x;
     }
   });
 
-  it("projects a scalar local copy without communication APIs (spec §11.4)", () => {
+  it("projects a scalar local copy without communication APIs (spec §local-copy)", () => {
     const source = `
 let x: integer@every = 1@every;
 let y: integer@alice <- x;
@@ -249,7 +249,7 @@ let y: integer@alice <- x;
     );
   });
 
-  it("projects an array local copy with clone at destination (spec §11.4)", () => {
+  it("projects an array local copy with clone at destination (spec §local-copy)", () => {
     const source = `
 let xs: float[]@every = [1.1, 2.2]@every;
 let ys: float[]@alice <- xs;

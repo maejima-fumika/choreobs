@@ -12,13 +12,13 @@ import { projectSource } from "../support/pipeline.js";
 function pipeline(source: string, endpoint: string): string {
   const projected = projectSource(source).find((p) => p.endpoint === endpoint);
   assert.ok(projected, `missing projection for ${endpoint}`);
-  // Absent must be finalized before emission (spec §13.7); cleanup is skipped
+  // Absent must be finalized before emission (spec §absent-finalization); cleanup is skipped
   // here on purpose, so the raw projected shape stays visible.
   return emit(finalizeAbsentProgram(projected));
 }
 
 describe("BlueScript emitter", () => {
-  it("emits direct communication for alice (spec §15.1)", () => {
+  it("emits direct communication for alice (spec §example-direct-communication)", () => {
     const code = pipeline(
       `
 let x: integer@alice = 42@alice;
@@ -31,7 +31,7 @@ let y: integer@bob <- x;
     assert.doesNotMatch(code, /@/);
   });
 
-  it("emits receive for bob (spec §15.1)", () => {
+  it("emits receive for bob (spec §example-direct-communication)", () => {
     const code = pipeline(
       `
 let x: integer@alice = 42@alice;
@@ -42,7 +42,7 @@ let y: integer@bob <- x;
     assert.match(code, /let y: integer = receiveInteger\("alice", "top_0"\);/);
   });
 
-  it("emits broadcast (spec §15.2)", () => {
+  it("emits broadcast (spec §example-broadcast)", () => {
     const alice = pipeline(
       `
 let localOk: boolean@alice = true@alice;
@@ -63,7 +63,7 @@ let ok: boolean@every <- localOk;
     assert.match(bob, /let ok: boolean = receiveBoolean\("alice", "top_0"\)/);
   });
 
-  it("drops a call to another endpoint's local function entirely (spec §10.2, §12.3)", () => {
+  it("drops a call to another endpoint's local function entirely (spec §calling-local-from-choreography, §expression-projection)", () => {
     const bob = pipeline(
       `
 function add@alice(a: integer@alice, b: integer@alice): integer@alice { return a + b; }
@@ -73,14 +73,14 @@ let x: integer@alice = add(1@alice, 2@alice);
     );
     // `add` is not generated at bob, so the call itself disappears; its
     // arguments are still projected, in case one of them held a choreography
-    // call (spec §12.11). These two are literals, so what is left is
+    // call (spec §function-projection). These two are literals, so what is left is
     // `nothing(null, null);`, which cleanup removes — see the next test, since
     // `pipeline` deliberately stops before cleanup.
     assert.doesNotMatch(bob, /add/);
     assert.equal(bob.trim(), "nothing(null, null);");
   });
 
-  it("removes bob output after cleanup when top level calls alice (spec §10.2, §13.9)", () => {
+  it("removes bob output after cleanup when top level calls alice (spec §calling-local-from-choreography, §projected-ast-cleanup)", () => {
     const result = compile(`
 function add@alice(a: integer@alice) {
   return a;
@@ -100,7 +100,7 @@ add(10@alice);
     assert.match(code, /function f\(\): void/);
   });
 
-  it("emits function with inferred return type through EPP (spec §7.14.4)", () => {
+  it("emits function with inferred return type through EPP (spec §function-return-type-inference)", () => {
     const code = pipeline(
       `function add@alice(a: integer@alice, b: integer@alice) {
   return a + b;
@@ -145,7 +145,7 @@ let y: integer@bob <- x;
     }
   });
 
-  it("emits a scalar local copy as local assignment (spec §11.4)", () => {
+  it("emits a scalar local copy as local assignment (spec §local-copy)", () => {
     const alice = pipeline(
       `
 let x: integer@every = 1@every;
@@ -160,7 +160,7 @@ let y: integer@alice <- x;
     assert.doesNotMatch(alice, /broadcastInteger/);
   });
 
-  it("emits an array local copy with clone helper (spec §11.4)", () => {
+  it("emits an array local copy with clone helper (spec §local-copy)", () => {
     const alice = pipeline(
       `
 let xs: float[]@every = [1.1, 2.2]@every;

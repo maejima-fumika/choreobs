@@ -1,6 +1,6 @@
 import type { CommTag } from "../ast/typed.js";
 
-/** Assigns communication tags per scope (spec §11.5). */
+/** Assigns communication tags per scope (spec §communication-tags). */
 export class CommTagGenerator {
   private readonly counters = new Map<string, number>();
 

@@ -32,9 +32,9 @@ function functionDecl(typed: NonNullable<ReturnType<typeof typeCheck>["typed"]>,
   return item;
 }
 
-describe("type inference (spec §7.14)", () => {
+describe("type inference (spec §type-inference)", () => {
   describe("positive", () => {
-    it("infers ordinary let from initializer (§7.14.1)", () => {
+    it("infers ordinary let from initializer (§let-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`let x = 1@alice;`);
       const item = typed.items[0];
       if (
@@ -50,7 +50,7 @@ describe("type inference (spec §7.14)", () => {
       }
     });
 
-    it("infers chained let bindings (§7.14.1)", () => {
+    it("infers chained let bindings (§let-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function f@alice(): void {
   let x = 1@alice;
@@ -75,7 +75,7 @@ function f@alice(): void {
       }
     });
 
-    it("infers comparison result type (§7.14.1, §7.11)", () => {
+    it("infers comparison result type (§let-type-inference, §operators)", () => {
       const typed = expectTypeCheckSuccess(`
 function f@alice(): void {
   let x = 1@alice;
@@ -93,7 +93,7 @@ function f@alice(): void {
       }
     });
 
-    it("infers let type in a local function from its initializer (§7.14.1)", () => {
+    it("infers let type in a local function from its initializer (§let-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function f@alice(): integer@alice {
   let x = 1@alice;
@@ -116,7 +116,7 @@ function f@alice(): integer@alice {
       }
     });
 
-    it("infers for-loop let initializer type (§7.14.2)", () => {
+    it("infers for-loop let initializer type (§for-initializer-let-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 for (let i = 0@every; i < 3@every; i = i + 1@every) {
   let x: integer@alice <- i;
@@ -142,7 +142,7 @@ for (let i = 0@every; i < 3@every; i = i + 1@every) {
       }
     });
 
-    it("infers function return type from return expressions (§7.14.4)", () => {
+    it("infers function return type from return expressions (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function add@alice(a: integer@alice, b: integer@alice) {
   return a + b;
@@ -155,7 +155,7 @@ function add@alice(a: integer@alice, b: integer@alice) {
       }
     });
 
-    it("infers return type through inferred let binding (§7.14.1, §7.14.4)", () => {
+    it("infers return type through inferred let binding (§let-type-inference, §function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function add@alice(a: integer@alice, b: integer@alice) {
   let c = a + b;
@@ -169,7 +169,7 @@ function add@alice(a: integer@alice, b: integer@alice) {
       }
     });
 
-    it("collects returns from nested blocks (§7.14.4)", () => {
+    it("collects returns from nested blocks (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function f@alice(c: boolean@alice) {
   if (c) {
@@ -186,12 +186,12 @@ function f@alice(c: boolean@alice) {
       assert.equal(functionDecl(typed, 0).returnType.base, "float");
     });
 
-    it("infers void return for empty body (§7.14.4)", () => {
+    it("infers void return for empty body (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`function noop@alice() {}`);
       assert.equal(functionDecl(typed, 0).returnType.base, "void");
     });
 
-    it("infers void return when all returns are bare (§7.14.4)", () => {
+    it("infers void return when all returns are bare (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function log@alice() {
   return;
@@ -200,7 +200,7 @@ function log@alice() {
       assert.equal(functionDecl(typed, 0).returnType.base, "void");
     });
 
-    it("infers numeric LUB for conditional returns (§7.14.4)", () => {
+    it("infers numeric LUB for conditional returns (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function f@alice(c: boolean@alice) {
   if (c) {
@@ -213,7 +213,7 @@ function f@alice(c: boolean@alice) {
       assert.equal(functionDecl(typed, 0).returnType.base, "float");
     });
 
-    it("infers return type for choreography function binary at alice (§7.11, §7.14.4)", () => {
+    it("infers return type for choreography function binary at alice (§operators, §function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function add(a: integer@alice, b: integer@alice) {
   return a + b;
@@ -226,7 +226,7 @@ function add(a: integer@alice, b: integer@alice) {
       }
     });
 
-    it("accepts explicit alice return type for @every binary (§7.11)", () => {
+    it("accepts explicit alice return type for @every binary (§operators)", () => {
       expectTypeCheckSuccess(`
 function add(a: integer@alice, b: integer@alice): integer@alice {
   return a + b;
@@ -234,7 +234,7 @@ function add(a: integer@alice, b: integer@alice): integer@alice {
 `);
     });
 
-    it("keeps @every return of alice value valid (§12.11 regression)", () => {
+    it("keeps @every return of alice value valid (§function-projection regression)", () => {
       expectTypeCheckSuccess(`
 function add(a: integer@alice, b: integer@alice) {
   return a;
@@ -242,7 +242,7 @@ function add(a: integer@alice, b: integer@alice) {
 `);
     });
 
-    it("sees transfer-let bindings while inferring the return type (§7.14.1, §7.14.4)", () => {
+    it("sees transfer-let bindings while inferring the return type (§let-type-inference, §function-return-type-inference)", () => {
       // Return-type inference walks the body building its own scope; it used to
       // skip `let ... <- ...`, so the binding looked undefined at the return.
       const typed = expectTypeCheckSuccess(`
@@ -254,7 +254,7 @@ function f@alice() {
       assert.equal(functionDecl(typed, 0).returnType.base, "integer");
     });
 
-    it("sees transfer-let bindings in a choreography function (§7.14.4)", () => {
+    it("sees transfer-let bindings in a choreography function (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function f() {
   let t: integer@alice <- 1@alice;
@@ -265,7 +265,7 @@ function f() {
       assert.equal(functionDecl(typed, 0).returnType.base, "integer");
     });
 
-    it("resolves a dependency chain of omitted return types (§7.14.4)", () => {
+    it("resolves a dependency chain of omitted return types (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function g@alice() { return 1@alice; }
 function f@alice() { return g() + 1@alice; }
@@ -275,7 +275,7 @@ let r: integer@alice = f();
       assert.equal(functionDecl(typed, 1).returnType.base, "integer");
     });
 
-    it("resolves that chain regardless of declaration order (§7.14.4)", () => {
+    it("resolves that chain regardless of declaration order (§function-return-type-inference)", () => {
       // `f` is declared before the `g` it depends on, so inference has to
       // defer it and come back — the reason the resolution loop iterates.
       const typed = expectTypeCheckSuccess(`
@@ -287,7 +287,7 @@ let r: integer@alice = f();
       assert.equal(functionDecl(typed, 1).returnType.base, "integer");
     });
 
-    it("widens along a chain of omitted return types (§7.14.4)", () => {
+    it("widens along a chain of omitted return types (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function g@alice() { return 1.5@alice; }
 function f@alice() { return g(); }
@@ -296,7 +296,7 @@ let r: float@alice = f();
       assert.equal(functionDecl(typed, 1).returnType.base, "float");
     });
 
-    it("allows explicit return type on recursive local function (§7.14.8)", () => {
+    it("allows explicit return type on recursive local function (§inference-and-recursion)", () => {
       expectTypeCheckSuccess(`
 function fact@alice(n: integer@alice): integer@alice {
   if (n <= 1@alice) {
@@ -310,7 +310,7 @@ function fact@alice(n: integer@alice): integer@alice {
   });
 
   describe("negative", () => {
-    it("rejects transfer let without type annotation (§7.14.3)", () => {
+    it("rejects transfer let without type annotation (§transfer-let-does-not-infer-destination-type)", () => {
       const { program, errors } = parse("let y <- x;");
       assert.equal(program, null);
       assert.ok(
@@ -320,11 +320,11 @@ function fact@alice(n: integer@alice): integer@alice {
       );
     });
 
-    it("rejects top-level let when initializer omits location (§8.1)", () => {
+    it("rejects top-level let when initializer omits location (§explicit-location-annotations)", () => {
       expectTypeCheckFailure("let x = 1;", "location");
     });
 
-    it("rejects let in a choreography function when initializer omits location (§8.1)", () => {
+    it("rejects let in a choreography function when initializer omits location (§explicit-location-annotations)", () => {
       expectTypeCheckFailure(
         `
 function f() {
@@ -335,7 +335,7 @@ function f() {
       );
     });
 
-    it("rejects function parameters without type annotations (§7.14.7)", () => {
+    it("rejects function parameters without type annotations (§parameter-types-are-not-inferred)", () => {
       const { program, errors } = parse(`
 function add@alice(a, b) {
   return a + b;
@@ -345,7 +345,7 @@ function add@alice(a, b) {
       assert.ok(errors.some((e) => e.message.includes("expected ':' after parameter name")));
     });
 
-    it("rejects mixed bare and value returns (§7.14.5)", () => {
+    it("rejects mixed bare and value returns (§mixing-return-and-return-expr)", () => {
       expectTypeCheckFailure(
         `
 function bad@alice(c: boolean@alice) {
@@ -359,7 +359,7 @@ function bad@alice(c: boolean@alice) {
       );
     });
 
-    it("rejects inferred non-void function without return coverage (§7.14.6)", () => {
+    it("rejects inferred non-void function without return coverage (§return-coverage-for-non-void-functions)", () => {
       expectTypeCheckFailure(
         `
 function bad@alice(c: boolean@alice) {
@@ -372,7 +372,7 @@ function bad@alice(c: boolean@alice) {
       );
     });
 
-    it("rejects incompatible inferred return base types (§7.14.4)", () => {
+    it("rejects incompatible inferred return base types (§function-return-type-inference)", () => {
       expectTypeCheckFailure(
         `
 function bad@alice(c: boolean@alice) {
@@ -387,7 +387,7 @@ function bad@alice(c: boolean@alice) {
       );
     });
 
-    it("rejects incompatible inferred return locations (§7.14.4)", () => {
+    it("rejects incompatible inferred return locations (§function-return-type-inference)", () => {
       expectTypeCheckFailure(
         `
 function bad(c: boolean@every) {
@@ -402,7 +402,7 @@ function bad(c: boolean@every) {
       );
     });
 
-    it("rejects @every binary with different individual operand locations (§7.11)", () => {
+    it("rejects @every binary with different individual operand locations (§operators)", () => {
       expectTypeCheckFailure(
         `
 function bad(a: integer@alice, b: integer@bob) {
@@ -413,7 +413,7 @@ function bad(a: integer@alice, b: integer@bob) {
       );
     });
 
-    it("reports a duplicate parameter, not a return-type conflict (§7.14.7)", () => {
+    it("reports a duplicate parameter, not a return-type conflict (§parameter-types-are-not-inferred)", () => {
       // Inference walks the body in the same scope the full check opens, so a
       // duplicate parameter is caught there rather than showing up later as
       // an incompatible least upper bound between the two parameter types.
@@ -425,7 +425,7 @@ function bad(a: integer@alice, b: integer@bob) {
       );
     });
 
-    it("rejects a void-valued let inside an inferred function (§16.40)", () => {
+    it("rejects a void-valued let inside an inferred function (§invalid-use-of-void)", () => {
       expectTypeCheckFailure(
         `function g@alice(): void { return; }
 function f@alice() { let x = g(); return 1@alice; }`,
@@ -433,7 +433,7 @@ function f@alice() { let x = g(); return 1@alice; }`,
       );
     });
 
-    it("rejects an empty array let inside an inferred function (§16.32)", () => {
+    it("rejects an empty array let inside an inferred function (§cannot-infer-empty-array-element-type)", () => {
       expectTypeCheckFailure(
         `function f@alice() { let xs = []@alice; return 1@alice; }`,
         "cannot infer empty array element type",
@@ -457,7 +457,7 @@ function f@alice() { let x = g(); return 1@alice; }`,
       );
     });
 
-    it("rejects recursive local function with omitted return type (§7.14.8)", () => {
+    it("rejects recursive local function with omitted return type (§inference-and-recursion)", () => {
       expectTypeCheckFailure(
         `
 function fact@alice(n: integer@alice) {
@@ -472,7 +472,7 @@ function fact@alice(n: integer@alice) {
       );
     });
 
-    it("rejects indirect recursive local functions with omitted return types (§7.14.8)", () => {
+    it("rejects indirect recursive local functions with omitted return types (§inference-and-recursion)", () => {
       const { typed, errors } = checkSource(`
 function f@alice(n: integer@alice) {
   return g(n);

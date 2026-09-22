@@ -26,7 +26,7 @@ export function checkSource(
 /**
  * Parses, type-checks and assigns communication tags, asserting the first two
  * stages are clean. For tests that read `commTag` off the typed AST — the
- * checker no longer sets it (spec §11.5).
+ * checker no longer sets it (spec §communication-tags).
  */
 export function tagSource(
   source: string,

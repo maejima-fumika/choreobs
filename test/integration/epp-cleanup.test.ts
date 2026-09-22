@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 import { aliceBob, aliceBobCarol } from "../support/config.js";
 import { compile, bs, expectSuccess } from "../support/compile.js";
 
-describe("EPP and cleanup — full pipeline (spec §13.9, §15)", () => {
-  describe("§15.7 cleanup via compileSource", () => {
+describe("EPP and cleanup — full pipeline (spec §projected-ast-cleanup, §examples)", () => {
+  describe("§example-cleanup-of-nothing cleanup via compileSource", () => {
     it("removes bob body for alice-only top-level let", () => {
       const source = `let x: integer@alice = 1@alice;`;
       const result = compile(source);
@@ -26,7 +26,7 @@ let b: integer@bob = 2@bob;
     });
   });
 
-  describe("§15.4 choreography function — the call survives at bob", () => {
+  describe("§example-choreography-function choreography function — the call survives at bob", () => {
     const chooseSource = `
 function choose(c: boolean@every): integer@alice {
   if (c) {
@@ -39,7 +39,7 @@ let c: boolean@every = true@every;
 let x: integer@alice = choose(c);
 `;
 
-    it("keeps the call as a bare statement on bob (spec §12.3)", () => {
+    it("keeps the call as a bare statement on bob (spec §expression-projection)", () => {
       const result = compile(chooseSource);
       expectSuccess(result);
       const bob = bs(result, "bob");
@@ -60,7 +60,7 @@ let x: integer@alice = choose(c);
     });
   });
 
-  describe("§15.2 broadcast — if branch cleanup at alice", () => {
+  describe("§example-broadcast broadcast — if branch cleanup at alice", () => {
     it("removes nothing from empty if branches on alice after cleanup", () => {
       const source = `
 let localOk: boolean@alice = true@alice;
@@ -100,7 +100,7 @@ if (ok) {
     });
   });
 
-  describe("multi-endpoint broadcast (spec §11.3)", () => {
+  describe("multi-endpoint broadcast (spec §broadcast-communication)", () => {
     it("emits broadcast on sender and receive on all other endpoints", () => {
       const source = `
 let x: boolean@alice = true@alice;
@@ -126,7 +126,7 @@ let ok: boolean@every <- x;
     });
   });
 
-  describe("for-loop communication EPP (spec §15.6)", () => {
+  describe("for-loop communication EPP (spec §example-for-loop)", () => {
     it("reuses top_0 tag on each loop iteration at both endpoints", () => {
       const source = `
 for (
@@ -148,7 +148,7 @@ for (
     });
   });
 
-  describe("§12.3 a call the endpoint still makes survives an absent result", () => {
+  describe("§expression-projection a call the endpoint still makes survives an absent result", () => {
     // `relay` is a choreography function: bob runs its body and answers alice's
     // send. Erasing the *call* at bob leaves alice blocked on the receive, and
     // the post-EPP consistency check does not see it because both ends of the
@@ -179,7 +179,7 @@ let x: integer@alice = 1@alice;
 
     it("keeps a call under a unary operator", () => {
       // The negation itself is not performed here — there is no value to
-      // negate — but its operand is still evaluated (spec §12.7).
+      // negate — but its operand is still evaluated (spec §binary-and-unary-operation-projection).
       assert.match(
         bobBody("let y: integer@alice = -relay(x);"),
         /^nothing\(relay\(null\)\);$/m,
@@ -192,7 +192,7 @@ let x: integer@alice = 1@alice;
 
     it("keeps a call under a binary operator", () => {
       // Both operands are evaluated, left to right, and the addition is not
-      // performed (spec §12.7). The literal operand leaves a `null` behind.
+      // performed (spec §binary-and-unary-operation-projection). The literal operand leaves a `null` behind.
       assert.match(
         bobBody("let y: integer@alice = relay(x) + 1@alice;"),
         /^nothing\(relay\(null\), null\);$/m,
@@ -228,7 +228,7 @@ while (i < 1@every) {
       // at bob. Projecting the argument to a bare `null` dropped it, and alice
       // then blocked on the receive inside `zero`.
       // The projected `zero` returns `null` here, so the call stands in for the
-      // absent argument value by itself — no wrapper is needed (spec §12.3).
+      // absent argument value by itself — no wrapper is needed (spec §expression-projection).
       const bob = bobBody("let y: integer@alice = relay(zero());");
       assert.match(bob, /^relay\(zero\(\)\);$/m);
     });
@@ -244,7 +244,7 @@ let y: integer@alice = outer();
       assert.match(bs(result, "bob"), /return zero\(\);/);
     });
 
-    it("still erases a call to a local function at another endpoint (spec §15.3)", () => {
+    it("still erases a call to a local function at another endpoint (spec §example-local-function)", () => {
       const result = compile(`
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
   return a + b;
@@ -265,7 +265,7 @@ let n: integer@alice = xs.length;
     });
   });
 
-  describe("§5.11 for-header assignment clauses", () => {
+  describe("§for-statement for-header assignment clauses", () => {
     it("accepts an array element target in the init and update clauses", () => {
       const result = compile(`
 let c: boolean@every = true@every;
@@ -277,7 +277,7 @@ for (xs[0@alice] = 0@alice; c; xs[1@alice] = xs[1@alice] + 1@alice) {
       assert.match(bs(result, "alice"), /for \(xs\[0\] = 0; c; xs\[1\] = xs\[1\] \+ 1\)/);
     });
 
-    it("§12.14 omits a header clause whose target is absent here", () => {
+    it("§for-projection omits a header clause whose target is absent here", () => {
       const result = compile(`
 let c: boolean@every = true@every;
 let i: integer@alice = 0@alice;
@@ -292,7 +292,7 @@ for (i = 0@alice; c; i = i + 1@alice) {
       assert.doesNotMatch(bob, /i = null/);
     });
 
-    it("§12.14 omits an absent array element clause rather than emitting null[null]", () => {
+    it("§for-projection omits an absent array element clause rather than emitting null[null]", () => {
       const result = compile(`
 let c: boolean@every = true@every;
 let xs: integer[]@alice = [0, 0]@alice;
@@ -308,13 +308,13 @@ for (xs[0@alice] = 0@alice; c; xs[1@alice] = 1@alice) {
 
 
   // -------------------------------------------------------------------------
-  // Structural projection (spec §12.3): the evaluation of the subexpressions
+  // Structural projection (spec §expression-projection): the evaluation of the subexpressions
   // is preserved even where the result is not. Before this was structural, a
   // separate pass walked the tree picking out calls, and each of the first
   // three cases below was a place it looked in the wrong slot — every one of
   // them deadlocked, with one side sending and the other never receiving.
   // -------------------------------------------------------------------------
-  describe("§12.3 structural projection of a discarded expression", () => {
+  describe("§expression-projection structural projection of a discarded expression", () => {
     // `sends` communicates and returns at alice, so bob must call it even
     // though the result never lands there.
     const CALLS = `
@@ -336,7 +336,7 @@ function sends2(): integer@alice {
       return bs(result, "bob");
     }
 
-    it("keeps operand order under nested strict operators (§11.1)", () => {
+    it("keeps operand order under nested strict operators (§transfer-operator)", () => {
       // The nesting mirrors the source tree, and `nothing` evaluates its
       // arguments left to right, so the call order is the source's.
       assert.match(
@@ -345,7 +345,7 @@ function sends2(): integer@alice {
       );
     });
 
-    it("keeps the arguments of a local call the endpoint does not make (§11.2)", () => {
+    it("keeps the arguments of a local call the endpoint does not make (§direct-communication)", () => {
       assert.match(
         bobOf(`
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
@@ -357,9 +357,9 @@ add(sends(), sends2());
       );
     });
 
-    it("removes a zero-argument local call, via nothing() (§11.3)", () => {
+    it("removes a zero-argument local call, via nothing() (§broadcast-communication)", () => {
       // EPP leaves `nothing()`, which folds to `null` and then disappears
-      // (spec §13.9); no CALLS prefix here, so bob's output is empty.
+      // (spec §projected-ast-cleanup); no CALLS prefix here, so bob's output is empty.
       const result = compile(`
 function here@alice(): integer@alice {
   return 1@alice;
@@ -422,7 +422,7 @@ xs.push(sends());
     });
   });
 
-  describe("§12.9 a transfer source is evaluated at every endpoint", () => {
+  describe("§transfer-projection a transfer source is evaluated at every endpoint", () => {
     const G = `
 function g(): integer@alice {
   let b: integer@bob = 7@bob;
@@ -456,7 +456,7 @@ function g(): integer@alice {
       const result = compile(`${G}let y: integer@every <- g();`, aliceBobCarol);
       expectSuccess(result);
       // The source goes into a compiler temp so the payload and the sender's
-      // own copy share one evaluation (spec §7.8, §11.3).
+      // own copy share one evaluation (spec §transfer-typing, §broadcast-communication).
       const alice = bs(result, "alice");
       const body = alice
         .split("\n")
@@ -486,12 +486,12 @@ let y: integer@alice <- x;
       );
       expectSuccess(result);
       // `x` resides at bob, but bob owes the transfer no computation, so
-      // nothing is left behind (spec §12.9).
+      // nothing is left behind (spec §transfer-projection).
       assert.doesNotMatch(bs(result, "bob"), /^x;$/m);
     });
   });
 
-  describe("§16.46 short-circuit operands", () => {
+  describe("§choreography-call-in-a-short-circuit-operand short-circuit operands", () => {
     const PING = `
 function ping(): boolean@alice {
   let b: integer@bob = 1@bob;
@@ -541,11 +541,11 @@ let d: boolean@alice = c && yes();
     });
   });
 
-  describe("§13.9 what cleanup may and may not remove", () => {
+  describe("§projected-ast-cleanup what cleanup may and may not remove", () => {
     it("keeps return, bindings, stores and ordinary calls that hold null", () => {
       // `relay` returns at alice, so at bob the parameter, the binding, the
       // store and the return value are all `null` — and every one of those
-      // statements stays (spec §13.9.5).
+      // statements stays (spec §statement-cleanup).
       const result = compile(`
 function relay(a: integer@alice): integer@alice {
   let b: integer@bob <- a;
@@ -564,7 +564,7 @@ let v: integer@alice = outer(1@alice);
       // `return null;` stays — only a statement that is exactly `null;` goes.
       assert.match(bob, /^\s*return null;$/m);
       // The store to `keep` is dropped, but the call on its right-hand side is
-      // not, and it keeps its `null` argument (spec §13.9.5).
+      // not, and it keeps its `null` argument (spec §statement-cleanup).
       assert.match(bob, /^\s*relay\(null\);$/m);
       assert.match(bob, /^outer\(null\);$/m);
       assert.doesNotMatch(bob, /^\s*null;$/m);

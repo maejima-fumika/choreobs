@@ -11,7 +11,7 @@ export function formatCommConsistencyErrors(
   return errors.map((e) => e.message).join("\n");
 }
 
-/** Asserts projected programs have paired send/receive/broadcast (spec §11–§12). */
+/** Asserts projected programs have paired send/receive/broadcast (spec §transfer-semantics–§endpoint-projection). */
 export function assertCommConsistent(programs: readonly ProjectedProgram[]): void {
   const result = checkCommunicationConsistency(programs);
   assert.equal(

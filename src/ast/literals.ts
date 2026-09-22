@@ -1,7 +1,7 @@
 import type { AstNode } from "./span.js";
 import type { LocationAnnotation } from "./location.js";
 
-/** Raw literal before optional `@` location (spec §5.15). */
+/** Raw literal before optional `@` location (spec §located-literals). */
 export type RawLiteral =
   | IntegerLiteral
   | FloatLiteral
@@ -34,10 +34,10 @@ export interface NullLiteral extends AstNode {
 }
 
 /**
- * Literal with optional location annotation: `1@alice`, `true@every` (spec §5.15).
+ * Literal with optional location annotation: `1@alice`, `true@every` (spec §located-literals).
  *
  * Syntactically optional, but the checker requires it: locations are never
- * inferred from context (spec §8.1).
+ * inferred from context (spec §explicit-location-annotations).
  */
 export interface LocatedLiteral extends AstNode {
   readonly kind: "LocatedLiteral";

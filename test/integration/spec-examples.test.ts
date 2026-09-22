@@ -8,7 +8,7 @@ import {
 } from "../support/compile.js";
 
 describe("spec.md examples — generated .bs output", () => {
-  it("§15.1 direct communication", () => {
+  it("§example-direct-communication direct communication", () => {
     const result = compile(`
 let x: integer@alice = 42@alice;
 let y: integer@bob <- x;
@@ -25,7 +25,7 @@ sendInteger("bob", "top_0", x);`,
     );
   });
 
-  it("§15.2 broadcast", () => {
+  it("§example-broadcast broadcast", () => {
     const result = compile(`
 let localOk: boolean@alice = true@alice;
 let ok: boolean@every <- localOk;
@@ -57,7 +57,7 @@ if (ok) {
     );
   });
 
-  it("§15.3 local function", () => {
+  it("§example-local-function local function", () => {
     const result = compile(`
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
     return a + b;
@@ -76,7 +76,7 @@ let x: integer = add(1, 2);`,
     assert.equal(bs(result, "bob"), "");
   });
 
-  it("§7.14 type inference — add, inferred let, and communication", () => {
+  it("§type-inference type inference — add, inferred let, and communication", () => {
     const result = compile(`
 function add@alice(a: integer@alice, b: integer@alice) {
   let c = a + b;
@@ -102,7 +102,7 @@ sendInteger("bob", "top_0", x);`,
     );
   });
 
-  it("§15.4 choreography function", () => {
+  it("§example-choreography-function choreography function", () => {
     const result = compile(`
 function choose(c: boolean@every): integer@alice {
     if (c) {
@@ -142,7 +142,7 @@ choose(c);`,
     );
   });
 
-  it("§15.5 while with communication", () => {
+  it("§example-while-with-transfer while with communication", () => {
     const result = compile(`
 let cont: boolean@every = true@every;
 
@@ -176,7 +176,7 @@ while (cont) {
     );
   });
 
-  it("§15.6 for loop", () => {
+  it("§example-for-loop for loop", () => {
     const result = compile(`
 for (
     let i: integer@every = 0@every;
@@ -204,14 +204,14 @@ for (
   });
 });
 
-describe("spec.md §16 — invalid programs", () => {
-  it("§16.1 unknown endpoint", () => {
+describe("spec.md §compile-time-errors — invalid programs", () => {
+  it("§unknown-endpoint unknown endpoint", () => {
     const result = compile(`let x: integer@carol = 1@carol;`);
     expectFailure(result);
     assert.ok(result.errors.some((e) => e.message.includes("carol")));
   });
 
-  it("§16.7 invalid assignment across locations", () => {
+  it("§invalid-assignment-across-locations invalid assignment across locations", () => {
     const result = compile(`
 let x: integer@alice = 1@alice;
 let y: integer@bob = x;
@@ -222,7 +222,7 @@ let y: integer@bob = x;
     );
   });
 
-  it("§16.8 invalid transfer base type", () => {
+  it("§invalid-transfer-base-type invalid transfer base type", () => {
     const result = compile(`
 let x: float@alice = 1.5@alice;
 let y: integer@bob <- x;
@@ -234,7 +234,7 @@ let y: integer@bob <- x;
     );
   });
 
-  it("§16.12 cross-node local function call", () => {
+  it("§calling-another-endpoints-local-function cross-node local function call", () => {
     const result = compile(`
 function f@bob(): integer@bob { return 1@bob; }
 function g@alice(): integer@alice { return f(); }
@@ -243,7 +243,7 @@ function g@alice(): integer@alice { return f(); }
     assert.ok(result.errors.some((e) => e.message.includes("cannot call")));
   });
 
-  it("§16.13 choreography function from local function", () => {
+  it("§calling-choreography-from-local choreography function from local function", () => {
     const result = compile(`
 function h(): void { return; }
 function g@alice(): void { h(); return; }
@@ -257,7 +257,7 @@ function g@alice(): void { h(); return; }
     );
   });
 
-  it("§16.3 location omission with nothing to infer from", () => {
+  it("§location-annotation-omission location omission with nothing to infer from", () => {
     const result = compile(`
 function f@alice(a: integer): integer@alice {
   return a;

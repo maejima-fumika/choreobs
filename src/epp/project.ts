@@ -201,7 +201,7 @@ class Projector {
 
   /**
    * A transfer statement's parts, independent of whether it was written as a
-   * `let` declaration or as a store into an existing variable (spec §5.8).
+   * `let` declaration or as a store into an existing variable (spec §transfer-statement).
    *
    * The two typed nodes share no field for the destination's type — one calls
    * it `choreoType`, the other `targetType` — so projection works from this
@@ -247,7 +247,7 @@ class Projector {
   }
 
   /**
-   * Projects a transfer (spec §12.9).
+   * Projects a transfer (spec §transfer-projection).
    *
    * The source is evaluated once at every endpoint that evaluates the
    * statement: as the payload at the sender, and for its computations alone
@@ -261,7 +261,7 @@ class Projector {
 
     if (parts.mode === "localCopy") {
       // Nothing is sent, so an endpoint that does not hold the destination is
-      // left with the source's computations alone (spec §11.4).
+      // left with the source's computations alone (spec §local-copy).
       if (!this.residesHere(parts.type.location)) {
         return this.discardStatement(span, source);
       }
@@ -279,7 +279,7 @@ class Projector {
     const tag = parts.commTag;
     if (tag === undefined) {
       // Every non-`localCopy` transfer is tagged by `assignCommTags`
-      // (spec §11.5). Reaching here means that pass was skipped or disagrees
+      // (spec §communication-tags). Reaching here means that pass was skipped or disagrees
       // with the checker about the transfer mode; emitting an untagged
       // send/receive pair would produce output that looks well formed and
       // pairs the wrong ends.
@@ -318,7 +318,7 @@ class Projector {
     return this.discardStatement(span, source);
   }
 
-  /** Broadcast to `@every`: the sender broadcasts, everyone else receives (spec §11.3). */
+  /** Broadcast to `@every`: the sender broadcasts, everyone else receives (spec §broadcast-communication). */
   private projectBroadcastTransfer(
     parts: TransferParts,
     bind: BindTransfer,
@@ -331,7 +331,7 @@ class Projector {
 
     if (src.kind === "individual" && src.name === this.endpoint) {
       // The sender needs the value twice — as the payload and as its own copy
-      // — so a temporary keeps it to one evaluation (spec §7.8).
+      // — so a temporary keeps it to one evaluation (spec §transfer-typing).
       const { setup, value } = this.evaluateOnce(
         this.projectExpression(source),
         parts.type,
@@ -404,7 +404,7 @@ class Projector {
     };
   }
 
-  /** Where the value an assignment target names lives (spec §12.10). */
+  /** Where the value an assignment target names lives (spec §assignment-projection). */
   private assignmentTargetLocation(
     target: import("../ast/typed.js").TypedAssignmentTarget,
   ): Location {
@@ -475,9 +475,9 @@ class Projector {
   /**
    * A for-header slot holds an expression, not a statement, so an assignment
    * whose target is absent here cannot become the evaluation-only *statement*
-   * §12.10 would produce. The discarded expressions go into a `nothing(...)`
+   * §assignment-projection would produce. The discarded expressions go into a `nothing(...)`
    * that stays in the slot instead; cleanup drops the slot altogether if that
-   * simplifies to `null` (spec §12.14).
+   * simplifies to `null` (spec §for-projection).
    */
   private projectForAssignmentInit(
     init: TypedForAssignmentInit,
@@ -532,7 +532,7 @@ class Projector {
   }
 
   /**
-   * Projects an expression to this endpoint (spec §12.3).
+   * Projects an expression to this endpoint (spec §expression-projection).
    *
    * Where the result value resides here, the expression is preserved as it
    * stands. Where it does not, the outer operation is not performed at all and
@@ -601,7 +601,7 @@ class Projector {
         };
       }
       case "PushExpression": {
-        // `xs.push(v)` is emitted unchanged (spec §13.2.1). The `void` result
+        // `xs.push(v)` is emitted unchanged (spec §array-operation-code-generation). The `void` result
         // carries the array's location, so this arm is reached exactly at the
         // endpoints that hold the array.
         const push = expr as TypedPushExpression;
@@ -628,14 +628,14 @@ class Projector {
   }
 
   /**
-   * Projects an expression whose result value is not wanted here (spec §12.3).
+   * Projects an expression whose result value is not wanted here (spec §expression-projection).
    *
    * The outer operator or callee is not reproduced: either this endpoint has
    * no value to apply it to, or — for a discarded transfer source — nobody
    * here wants the result. What is reproduced is the *evaluation* of the
    * operands, structurally and in source order, inside a `nothing(...)` that
-   * discards their values and yields `null` (spec §14.1). A choreography
-   * function runs at every endpoint (spec §12.11), so a call nested anywhere
+   * discards their values and yields `null` (spec §nothing). A choreography
+   * function runs at every endpoint (spec §function-projection), so a call nested anywhere
    * in here survives even though its result does not.
    *
    * The recursion stays on this side throughout: a subexpression whose value
@@ -644,7 +644,7 @@ class Projector {
    * values, so {@link projectCall} projects them normally.
    *
    * Nested `nothing(...)` artifacts are left nested; flattening them is not
-   * part of Core v0 (spec §13.9).
+   * part of Core v0 (spec §projected-ast-cleanup).
    */
   private projectDiscarded(expr: TypedExpression): ProjectedExpression {
     const span = expr.expr.span;
@@ -656,7 +656,7 @@ class Projector {
         const bin = expr as TypedBinaryExpression;
         // `&&` and `||` evaluate their right operand conditionally, so their
         // operands cannot be hoisted into `nothing(...)`, which evaluates all
-        // of its arguments. §16.46 keeps calls out of both operands precisely
+        // of its arguments. §choreography-call-in-a-short-circuit-operand keeps calls out of both operands precisely
         // so that there is nothing left to preserve here.
         if (bin.expr.operator === "&&" || bin.expr.operator === "||") {
           return this.absentExpr(span);
@@ -687,15 +687,15 @@ class Projector {
         );
       }
       case "LengthExpression": {
-        // The receiver is a variable (spec §5.14), so reading it cannot call
+        // The receiver is a variable (spec §expressions), so reading it cannot call
         // anything and the length itself is not taken here: nothing is left to
-        // evaluate. Cleanup removes the `nothing()` (spec §13.9).
+        // evaluate. Cleanup removes the `nothing()` (spec §projected-ast-cleanup).
         return this.nothingExpression([], span);
       }
       case "PushExpression": {
         // The append belongs to the array, so it does not happen here; the
-        // argument is still evaluated (spec §5.17). The receiver is a variable
-        // (spec §5.14), so evaluating it has no effect to preserve — the same
+        // argument is still evaluated (spec §evaluation-order). The receiver is a variable
+        // (spec §expressions), so evaluating it has no effect to preserve — the same
         // reason `discardedTargetParts` drops it for `xs[i] = v`.
         const push = expr as TypedPushExpression;
         return this.nothingExpression([this.projectDiscarded(push.value)], span);
@@ -730,13 +730,13 @@ class Projector {
   /**
    * A call projects to a call wherever this endpoint runs the callee — that is
    * at every endpoint for a choreography function, and only at its own for a
-   * local one (spec §12.11).
+   * local one (spec §function-projection).
    *
    * Where the callee is not generated here, the call itself disappears but its
    * arguments do not: they are ordinary expressions that may hold choreography
-   * calls of their own, so their projections are kept in order (spec §12.3).
+   * calls of their own, so their projections are kept in order (spec §expression-projection).
    * A local function with no arguments therefore leaves `nothing()`, which
-   * cleanup removes (spec §13.9).
+   * cleanup removes (spec §projected-ast-cleanup).
    */
   private projectCall(expr: TypedCallExpression): ProjectedExpression {
     const span = expr.expr.span;
@@ -764,12 +764,12 @@ class Projector {
   }
 
   /**
-   * BlueScript type name for a resident located type (spec §13.1).
+   * BlueScript type name for a resident located type (spec §type-mapping).
    *
    * Exhaustive on purpose: the array arm used to fall back to `boolean[]` for
    * anything that was not `integer` or `float`, which quietly rendered an
    * unsupported element type as a supported one. The checker rejects those
-   * (spec §7.1.1, §16.29), so reaching the throw is an internal bug.
+   * (spec §array-types, §unsupported-array-element-type), so reaching the throw is an internal bug.
    */
   private projectedBase(
     type: LocatedType,
@@ -792,11 +792,11 @@ class Projector {
   }
 
   /**
-   * A compiler-generated `nothing(e1, ..., en)` artifact (spec §14.1).
+   * A compiler-generated `nothing(e1, ..., en)` artifact (spec §nothing).
    *
    * It evaluates each part once, left to right, discards their values and
    * yields `null`. Cleanup folds it away when every part turns out to be a
-   * plain `null`, including the zero-argument `nothing()` (spec §13.9).
+   * plain `null`, including the zero-argument `nothing()` (spec §projected-ast-cleanup).
    */
   private nothingExpression(
     parts: readonly ProjectedExpression[],
@@ -810,9 +810,9 @@ class Projector {
    *
    * The store is dropped, but the expressions the original semantics evaluates
    * are kept as an evaluation-only expression statement, in source order
-   * (spec §12.3). Cleanup deletes the statement if it simplifies to `null`,
+   * (spec §expression-projection). Cleanup deletes the statement if it simplifies to `null`,
    * which is what happens when none of the expressions owed this endpoint any
-   * computation (spec §13.9).
+   * computation (spec §projected-ast-cleanup).
    */
   private discardStatement(
     span: Span,
@@ -827,11 +827,11 @@ class Projector {
 
   /**
    * The statements an endpoint runs for a transfer's source expression before
-   * its own receive or copy (spec §12.9).
+   * its own receive or copy (spec §transfer-projection).
    *
    * A transfer evaluates its source once at every endpoint that evaluates it,
    * not only at the sender: the source may call a choreography function, and
-   * that function runs everywhere (spec §12.11). The sender evaluates it as the
+   * that function runs everywhere (spec §function-projection). The sender evaluates it as the
    * payload; everyone else evaluates it for its computations alone, and must do
    * so before the receive so that the calls inside it line up with the sender's.
    * When it owes this endpoint nothing, cleanup removes the statement again.
@@ -844,7 +844,7 @@ class Projector {
    * One expression that evaluates `exprs` in order and yields `null`.
    *
    * A single expression needs no wrapper: its own projection already discards
-   * whatever value is left (spec §12.3). Two or more need `nothing(...)` to
+   * whatever value is left (spec §expression-projection). Two or more need `nothing(...)` to
    * hold them in one slot.
    */
   private discardedValue(
@@ -857,7 +857,7 @@ class Projector {
 
   /**
    * The expressions an assignment still evaluates when its target is absent
-   * here, in the order the source evaluates them (spec §5.17).
+   * here, in the order the source evaluates them (spec §evaluation-order).
    *
    * For `xs[i] = v` that is the index and then the value; the receiver `xs` is
    * an identifier in Core v0, so evaluating it has no effect to preserve.
@@ -881,7 +881,7 @@ class Projector {
    * and once for the sender's own binding. The source is an arbitrary
    * expression and may call a function, so projecting it into both positions
    * would evaluate it twice and could send one value while keeping another.
-   * The transfer's source is evaluated exactly once (spec §7.8), so anything
+   * The transfer's source is evaluated exactly once (spec §transfer-typing), so anything
    * that is not already a stable reference is bound to a temporary first.
    */
   private evaluateOnce(
@@ -940,12 +940,12 @@ class Projector {
   }
 
   /**
-   * Scalar payload kind for a transferred base type (spec §13.8).
+   * Scalar payload kind for a transferred base type (spec §communication-api).
    *
    * Exhaustive on purpose. An earlier version defaulted every unrecognised base
    * type to `"integer"`, which silently emitted `sendInteger` for values that
    * were not integers at all. Anything not transferable must be rejected by the
-   * checker (spec §7.8), so reaching the throws below is an internal bug.
+   * checker (spec §transfer-typing), so reaching the throws below is an internal bug.
    */
   private commKind(base: LocatedType["base"]): CommKind {
     switch (base) {
@@ -986,7 +986,7 @@ class Projector {
     return this.commKind(type.base);
   }
 
-  /** Does this endpoint hold a copy of a value at `location`? (spec §7.6, §12.2) */
+  /** Does this endpoint hold a copy of a value at `location`? (spec §location-matching-and-residency, §type-projection) */
   private residesHere(location: Location): boolean {
     return residesAt(location, this.endpoint);
   }

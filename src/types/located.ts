@@ -3,7 +3,7 @@ import type { Location } from "../ast/location.js";
 import type { ExecutionContext } from "../ast/context.js";
 import type { LocatedType } from "../ast/typed.js";
 
-/** Base type subtyping (spec §7.5). */
+/** Base type subtyping (spec §subtyping). */
 export function isSubtype(source: BaseType, target: BaseType): boolean {
   if (source === target) {
     return true;
@@ -19,7 +19,7 @@ export function isArraySubtype(source: LocatedType, target: LocatedType): boolea
 }
 
 /**
- * Location matching (spec §7.6).
+ * Location matching (spec §location-matching-and-residency).
  *
  * A value located at `a` may be used where `b` is required only when the two
  * locations are the same. `every` and the individual locations are independent:
@@ -37,7 +37,7 @@ export function locationsEqual(a: Location, b: Location): boolean {
 }
 
 /**
- * `residesAt(L, P)` (spec §7.6) — does endpoint `P` hold a copy of a value
+ * `residesAt(L, P)` (spec §location-matching-and-residency) — does endpoint `P` hold a copy of a value
  * located at `L`?
  *
  * This is the EPP presence relation and is deliberately *not* the typing rule
@@ -60,7 +60,7 @@ export function contextAsLocation(ctx: ExecutionContext): Location {
 export function formatLocatedType(type: LocatedType): string {
   const head = type.isArray ? `${type.base}[]` : type.base;
   if (type.base === "void" && type.isArray !== true) {
-    return head; // `void` has no location (spec §7.3)
+    return head; // `void` has no location (spec §void)
   }
   const loc =
     type.location.kind === "every" ? "every" : type.location.name;

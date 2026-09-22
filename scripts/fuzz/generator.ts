@@ -1,5 +1,5 @@
 /**
- * Random well-typed ChoreoBS program generator (spec §5–§8).
+ * Random well-typed ChoreoBS program generator (spec §syntax–§location-annotation-rules).
  *
  * The generator is written to only ever emit programs the specification says
  * are well typed, so that a type error from the compiler is itself a finding:
@@ -20,16 +20,16 @@ interface Binding {
   readonly name: string;
   readonly ty: Ty;
   readonly loc: Loc;
-  /** Block nesting level the binding was declared at, for shadowing (spec §6.4). */
+  /** Block nesting level the binding was declared at, for shadowing (spec §variable-scope). */
   readonly depth: number;
 }
 
 interface FnSig {
   readonly name: string;
-  /** `undefined` for a choreography function (spec §10.1). */
+  /** `undefined` for a choreography function (spec §function-kinds). */
   readonly at?: string;
   readonly params: readonly Binding[];
-  /** `undefined` means the function returns `void` (spec §7.3). */
+  /** `undefined` means the function returns `void` (spec §void). */
   readonly ret?: { readonly ty: Ty; readonly loc: Loc };
 }
 
@@ -57,7 +57,7 @@ export interface GeneratedProgram {
   readonly injected?: { readonly id: string; readonly context: string };
 }
 
-/** Array element types are restricted to these (spec §7.11.1, §16.29). */
+/** Array element types are restricted to these (spec §array-typing, §unsupported-array-element-type). */
 const ARRAY_BASES: readonly Base[] = ["integer", "float", "boolean"];
 const ALL_BASES: readonly Base[] = ["integer", "float", "boolean", "string"];
 
@@ -88,7 +88,7 @@ function sameTy(a: Ty, b: Ty): boolean {
   return a.base === b.base && a.isArray === b.isArray;
 }
 
-/** spec §7.5: `integer <: float`, plus reflexivity. Arrays are invariant (§7.11.1). */
+/** spec §subtyping: `integer <: float`, plus reflexivity. Arrays are invariant (§array-typing). */
 function subtypesOf(ty: Ty): readonly Ty[] {
   if (ty.isArray) {
     return [ty];
@@ -116,10 +116,10 @@ const GENERATED_LITERAL_NAMES = ["sendInteger", "nosuchendpoint"];
 /**
  * Rejects an endpoint set the generator cannot safely generate against.
  *
- * Endpoints, functions and variables share one name space (spec §6.1), so an
+ * Endpoints, functions and variables share one name space (spec §namespaces), so an
  * endpoint named like something the generator mints — `f1`, `v2`, the
  * `sendInteger` it uses for the reserved-name violation — would make its
- * *valid* programs violate §6.1 or §6.2. `run.ts` would then report those
+ * *valid* programs violate §namespaces or §function-names. `run.ts` would then report those
  * rejections as compiler bugs, and `violate.ts` would count them as caught
  * violations for the wrong reason. The prefixes are load-bearing, so the
  * assumption is checked rather than left implicit.
@@ -219,7 +219,7 @@ class Generator {
 
   /**
    * A new binding name, sometimes reusing one from an enclosing block so the
-   * declaration shadows it (spec §6.4). The shadowed binding is dropped from
+   * declaration shadows it (spec §variable-scope). The shadowed binding is dropped from
    * this view of the scope so later expressions see the new type.
    */
   private declareName(prefix: string, scope: Binding[], depth: number): string {
@@ -244,7 +244,7 @@ class Generator {
 
   /**
    * Locations usable in this context. A local function body may only mention
-   * its own endpoint, never `every` or another endpoint (spec §8.2).
+   * its own endpoint, never `every` or another endpoint (spec §local-function-strict-location-rule).
    */
   private someLocation(ctx: Ctx): Loc {
     if (ctx.kind === "local") {
@@ -266,7 +266,7 @@ class Generator {
 
   // --- coverage ---------------------------------------------------------
 
-  /** spec §7.8: the location pair decides how a transfer is carried out. */
+  /** spec §transfer-typing: the location pair decides how a transfer is carried out. */
   private transferMode(src: Loc, dst: Loc): "localCopy" | "broadcast" | "direct" {
     if (src === "every" || src === dst) {
       return "localCopy";
@@ -310,7 +310,7 @@ class Generator {
     return `${this.bareLiteral(base)}@${loc}`;
   }
 
-  /** Array literal elements carry no location of their own (spec §5.16). */
+  /** Array literal elements carry no location of their own (spec §array-literals). */
   private bareLiteral(base: Base): string {
     switch (base) {
       case "integer":
@@ -330,7 +330,7 @@ class Generator {
 
   /**
    * `callFree` forbids choreography calls anywhere below this point. It is set
-   * inside `&&` / `||` operands, where spec §16.46 rejects them: the endpoints
+   * inside `&&` / `||` operands, where spec §choreography-call-in-a-short-circuit-operand rejects them: the endpoints
    * that do not hold the result cannot know whether the operand was evaluated.
    */
   private genExpr(
@@ -373,7 +373,7 @@ class Generator {
     const subCallFree = (t: Ty) => this.genExpr(t, loc, scope, ctx, next, true);
 
     if (!ty.isArray) {
-      // Index access: xs[i] where xs : T[]@loc (spec §7.11.1).
+      // Index access: xs[i] where xs : T[]@loc (spec §array-typing).
       const arrays = this.varsOf(scope, { base: ty.base, isArray: true }, loc);
       if (arrays.length > 0) {
         choices.push(() => `${this.pick(arrays).name}[${sub(INTEGER)}]`);
@@ -388,7 +388,7 @@ class Generator {
     }
 
     if (!ty.isArray && (ty.base === "integer" || ty.base === "float")) {
-      // Both operands at the same location; result is there too (spec §7.11).
+      // Both operands at the same location; result is there too (spec §operators).
       choices.push(() => `(${sub(ty)} ${this.pick(["+", "-", "*"])} ${sub(ty)})`);
     }
 
@@ -407,7 +407,7 @@ class Generator {
       );
       choices.push(() => `!(${sub(BOOLEAN)})`);
       choices.push(() => {
-        // `===` / `!==` are undefined for array types (spec §7.11.1).
+        // `===` / `!==` are undefined for array types (spec §array-typing).
         const operand: Ty = { base: this.pick(ALL_BASES), isArray: false };
         return `(${sub(operand)} ${this.pick(["===", "!=="])} ${sub(operand)})`;
       });
@@ -438,7 +438,7 @@ class Generator {
   }
 
   /**
-   * spec §10.2, §10.3: a choreography context may call anything; a local
+   * spec §calling-local-from-choreography, §calling-functions-from-a-local-context: a choreography context may call anything; a local
    * function may only call local functions at its own endpoint.
    */
   private callableFrom(fn: FnSig, ctx: Ctx): boolean {
@@ -537,7 +537,7 @@ class Generator {
     const loc = this.someLocation(ctx);
     const name = this.declareName("v", scope, depth);
     // An empty array literal is only allowed against an explicit array type
-    // with its own location annotation (spec §7.11.1).
+    // with its own location annotation (spec §array-typing).
     const init =
       ty.isArray && this.chance(0.15)
         ? `[]@${loc}`
@@ -569,7 +569,7 @@ class Generator {
     scope.push({ name, ty, loc, depth });
   }
 
-  /** `let y: T2@L2 <- e;` — needs `T1 <: T2`, locations unrestricted (spec §7.8). */
+  /** `let y: T2@L2 <- e;` — needs `T1 <: T2`, locations unrestricted (spec §transfer-typing). */
   private genLetTransfer(
     scope: Binding[],
     ctx: Ctx,
@@ -696,7 +696,7 @@ class Generator {
     return candidates.length === 0 ? undefined : this.pick(candidates);
   }
 
-  /** Conditions must be `boolean` at the context's location (spec §7.9, §7.10). */
+  /** Conditions must be `boolean` at the context's location (spec §if-condition-typing, §while-and-for-condition-typing). */
   private genCondition(scope: readonly Binding[], ctx: Ctx): string {
     return this.genExpr(BOOLEAN, this.ctxLocation(ctx), scope, ctx, 1);
   }
@@ -743,7 +743,7 @@ class Generator {
     this.emit(indent, `}`);
   }
 
-  /** Bindings declared inside a block do not escape it (spec §6.4). */
+  /** Bindings declared inside a block do not escape it (spec §variable-scope). */
   private genBlock(
     scope: readonly Binding[],
     ctx: Ctx,
@@ -759,7 +759,7 @@ class Generator {
 
   // --- functions --------------------------------------------------------
 
-  /** Violations that can only be broken inside a local function body (spec §8.2). */
+  /** Violations that can only be broken inside a local function body (spec §local-function-strict-location-rule). */
   private static readonly LOCAL_ONLY_VIOLATIONS = new Set([
     "everyValueInLocalFunction",
     "otherLocationInLocalFunction",
@@ -815,7 +815,7 @@ class Generator {
     const name = `f${this.fnCounter}`;
 
     // Body names restart per function so they repeat across functions; a
-    // function body is its own scope (spec §6.4, §6.6).
+    // function body is its own scope (spec §variable-scope, §top-level-let).
     const savedCounter = this.counter;
     this.counter = 0;
 
@@ -836,7 +836,7 @@ class Generator {
       : undefined;
 
     // The return type may be omitted; the single trailing return makes it
-    // inferable, and nothing generated here is recursive (spec §7.14.4, §7.14.8).
+    // inferable, and nothing generated here is recursive (spec §function-return-type-inference, §inference-and-recursion).
     const omitReturnType = this.chance(0.3);
     if (omitReturnType) {
       this.features.add("function:inferred return type");
@@ -858,9 +858,9 @@ class Generator {
       for (let i = 0; i < count; i += 1) {
         this.genStatement(scope, ctx, 1, "    ");
       }
-      // §16.41: a written non-`void` return type with no return at all. Only
+      // §missing-return-in-a-non-void-function: a written non-`void` return type with no return at all. Only
       // possible when the type is written, since an omitted one would infer
-      // `void` instead of failing coverage (spec §7.14.4).
+      // `void` instead of failing coverage (spec §function-return-type-inference).
       const dropReturn =
         this.options.violation === "missingReturnValue" &&
         this.injected === undefined &&
@@ -883,7 +883,7 @@ class Generator {
 
     // Registered only after its body is generated, so no function can call
     // itself or a later one: recursion is banned for choreography functions
-    // and needs an explicit return type otherwise (spec §10.4, §7.14.8).
+    // and needs an explicit return type otherwise (spec §recursion, §inference-and-recursion).
     this.fns.push({ name, at, params, ret });
   }
 
@@ -921,7 +921,7 @@ class Generator {
     // A location values may legitimately sit at, here.
     const p = choreography ? this.pick(this.endpoints) : ctx.endpoint;
     const q = this.endpoints.find((e) => e !== p)!;
-    // A location a condition may not sit at, here (spec §7.9, §7.10).
+    // A location a condition may not sit at, here (spec §if-condition-typing, §while-and-for-condition-typing).
     const condBad = choreography ? p : "every";
     const here = this.ctxLocation(ctx);
     const n = this.fresh("bad");
@@ -991,7 +991,7 @@ class Generator {
         break;
       case "voidEquality":
         // Two void computations share a base type, so the same-base-type rule
-        // does not stop them (spec §16.43).
+        // does not stop them (spec §invalid-comparison-or-equality-operands).
         lines.push(`let ${n}: integer[]@${p} = [1]@${p};`);
         lines.push(
           `let ${n}b: boolean@${p} = ${n}.push(1@${p}) === ${n}.push(2@${p});`,
@@ -1002,7 +1002,7 @@ class Generator {
         lines.push(`let ${n}b: integer@${p} = ${n}.push(1@${p});`);
         break;
       case "voidValue": {
-        // The annotated form is caught by §16.40; this is the inferred path,
+        // The annotated form is caught by §invalid-use-of-void; this is the inferred path,
         // where the `let` takes its type straight from the initializer.
         const target = this.fns.find(
           (f) =>
@@ -1021,7 +1021,7 @@ class Generator {
         break;
       case "arrayLiteralWithLocatedElements":
         // Every element is located, but the literal itself still needs its own
-        // annotation (spec §5.16).
+        // annotation (spec §array-literals).
         lines.push(`let ${n}: integer@${p} = 1@${p};`);
         lines.push(`let ${n}b = [${n}, ${n}];`);
         break;
@@ -1029,7 +1029,7 @@ class Generator {
         lines.push(`let ${n}: void@${p} = 1@${p};`);
         break;
       case "reservedRuntimeName":
-        // The emitted BlueScript keeps the source name (spec §13.3), so this
+        // The emitted BlueScript keeps the source name (spec §codegen-function-names), so this
         // variable would shadow the runtime send API.
         lines.push(`let sendInteger: integer@${p} = 1@${p};`);
         break;
@@ -1039,7 +1039,7 @@ class Generator {
         break;
       case "transferDestinationInLocalFunction":
         // Legal in a choreography context; inside `function@p` the destination
-        // is a variable of that body and must be at `p` (spec §8.2).
+        // is a variable of that body and must be at `p` (spec §local-function-strict-location-rule).
         if (choreography) return false;
         lines.push(`let ${n}: integer@${q} <- 1@${p};`);
         break;
@@ -1054,17 +1054,17 @@ class Generator {
         lines.push(`let ${n}: integer@${p} = 2@${p};`);
         break;
       case "endpointNameAsVariable":
-        // Endpoints, functions and variables share one name space (spec §6.1),
+        // Endpoints, functions and variables share one name space (spec §namespaces),
         // so a declared endpoint's name is not available to a variable. `q` is
         // deliberately not the location written after `@`, matching the
-        // example in spec §16.48.
+        // example in spec §err-name-already-held.
         lines.push(`let ${q}: integer@${p} = 1@${p};`);
         break;
       case "functionNameAsVariable": {
         // `fns` holds the functions emitted above this point. Not filtered by
         // `callableFrom`: a conflict with a local function at another endpoint
         // is an error all the same, because the rule is stated over the whole
-        // program and not per output file (spec §6.1).
+        // program and not per output file (spec §namespaces).
         const taken = this.fns[0];
         if (taken === undefined) return false;
         lines.push(`let ${taken.name}: integer@${p} = 1@${p};`);
@@ -1083,7 +1083,7 @@ class Generator {
         lines.push(`let ${n}: integer@${p};`);
         break;
       case "literalWithoutLocation":
-        // Locations are never inferred from the expected type (spec §8.1).
+        // Locations are never inferred from the expected type (spec §explicit-location-annotations).
         lines.push(`let ${n}: integer@${p} = 1;`);
         break;
       case "emptyArrayWithoutType":
@@ -1152,8 +1152,8 @@ class Generator {
       case "shortCircuitChoreographyCall": {
         // The endpoints that do not hold the result cannot know whether the
         // short-circuited operand ran, so a choreography call is banned from
-        // both operands (spec §16.46). It has to be a choreography context:
-        // a local function may not call one at all, which §16.13 catches first.
+        // both operands (spec §choreography-call-in-a-short-circuit-operand). It has to be a choreography context:
+        // a local function may not call one at all, which §calling-choreography-from-local catches first.
         if (!choreography) return false;
         const target = this.fns.find(
           (f) => f.at === undefined && f.ret !== undefined && !f.ret.ty.isArray,
@@ -1164,7 +1164,7 @@ class Generator {
           `${target.name}(${target.params
             .map((param) => this.genExpr(param.ty, param.loc, scope, ctx, 2))
             .join(", ")})`;
-        // `&&` needs boolean operands at one location (spec §7.11); a call that
+        // `&&` needs boolean operands at one location (spec §operators); a call that
         // does not already return boolean is compared with itself to get one.
         const operand =
           target.ret.ty.base === "boolean"

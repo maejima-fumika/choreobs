@@ -142,7 +142,7 @@ class BlueScriptEmitter {
   private emitExpr(expr: ProjectedExpression): string {
     switch (expr.kind) {
       case "AbsentExpression":
-        // Finalized to `null` before cleanup (spec §13.7); reaching the
+        // Finalized to `null` before cleanup (spec §absent-finalization); reaching the
         // emitter means a projection slot was never traversed.
         throw new Error(
           "internal error: absent reached code generation (spec §13.7)",

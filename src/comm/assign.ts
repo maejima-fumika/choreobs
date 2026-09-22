@@ -14,7 +14,7 @@ import type {
 import { CommTagGenerator, TOP_SCOPE } from "./tags.js";
 
 /**
- * Communication tag assignment (spec §11.5) — the stage between type checking
+ * Communication tag assignment (spec §communication-tags) — the stage between type checking
  * and endpoint projection.
  *
  * A tag names exactly one transfer in the choreography. Assigning it here, in
@@ -29,7 +29,7 @@ import { CommTagGenerator, TOP_SCOPE } from "./tags.js";
  * that no statement would keep.
  *
  * Only `direct` and `broadcast` transfers get a tag; a `localCopy` sends
- * nothing (spec §7.8), and EPP relies on the absence of a tag to mean exactly
+ * nothing (spec §transfer-typing), and EPP relies on the absence of a tag to mean exactly
  * that.
  */
 export function assignCommTags(typed: TypedProgram): TypedProgram {
@@ -42,7 +42,7 @@ export function assignCommTags(typed: TypedProgram): TypedProgram {
 
 /**
  * The scope a tag is numbered within: the enclosing function, or the top level
- * (spec §11.5).
+ * (spec §communication-tags).
  *
  * One generator is shared across all scopes, so a function named `top` draws
  * from the same counter as the top-level scope rather than colliding with it.

@@ -10,8 +10,8 @@ import type {
 /**
  * Structural traversal of the projected IR.
  *
- * Three passes walk this IR — absent finalization (spec §13.7), cleanup
- * (spec §13.9) and the communication consistency check (spec §11.5) — and each
+ * Three passes walk this IR — absent finalization (spec §absent-finalization), cleanup
+ * (spec §projected-ast-cleanup) and the communication consistency check (spec §communication-tags) — and each
  * used to carry its own copy of the shape. That is how cleanup came to miss the
  * index expression of `xs[i] = v`, which then reached code generation as a
  * stray artifact. The shape lives here now, once.

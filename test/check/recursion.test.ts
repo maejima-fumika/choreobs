@@ -6,7 +6,7 @@ import {
 } from "../../src/check/recursion.js";
 import { compileSource } from "../../src/driver/index.js";
 
-describe("function call graph SCC (spec §7.14.8)", () => {
+describe("function call graph SCC (spec §inference-and-recursion)", () => {
   it("detects direct self-recursion", () => {
     const graph = new Map<string, readonly string[]>([
       ["f", ["f"]],
@@ -44,7 +44,7 @@ describe("function call graph SCC (spec §7.14.8)", () => {
 describe("recursion detection sees calls in every expression position", () => {
   // `collectCalleeNames` builds the call graph these rules run on. It used to
   // skip an `if` condition and an index-assignment target, so a recursive call
-  // hiding in either escaped §10.4 and §7.14.8 entirely.
+  // hiding in either escaped §recursion and §inference-and-recursion entirely.
   function expectRejected(source: string, messageIncludes: string): void {
     const result = compileSource(source, "index.cbs", {
       endpoints: ["alice", "bob"],
@@ -60,7 +60,7 @@ describe("recursion detection sees calls in every expression position", () => {
     );
   }
 
-  it("rejects a recursive choreography function called from an if condition (§10.4)", () => {
+  it("rejects a recursive choreography function called from an if condition (§recursion)", () => {
     expectRejected(
       `
 function g(): boolean@every {
@@ -74,7 +74,7 @@ function g(): boolean@every {
     );
   });
 
-  it("rejects mutual recursion through if conditions (§10.4)", () => {
+  it("rejects mutual recursion through if conditions (§recursion)", () => {
     expectRejected(
       `
 function a(): boolean@every {
@@ -94,7 +94,7 @@ function b(): boolean@every {
     );
   });
 
-  it("rejects a recursive call in an index assignment target (§10.4)", () => {
+  it("rejects a recursive call in an index assignment target (§recursion)", () => {
     expectRejected(
       `
 function g(): integer@every {
@@ -107,7 +107,7 @@ function g(): integer@every {
     );
   });
 
-  it("rejects a recursive local function with an omitted return type called from an if condition (§7.14.8)", () => {
+  it("rejects a recursive local function with an omitted return type called from an if condition (§inference-and-recursion)", () => {
     expectRejected(
       `
 function f@alice(n: integer@alice) {

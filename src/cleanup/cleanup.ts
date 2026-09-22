@@ -67,7 +67,7 @@ const MAPPERS: StatementMappers = {
 
 /**
  * Two kinds can lose something and are handled by hand; the rest just need
- * their expressions simplified and their blocks cleaned (spec §13.9.5).
+ * their expressions simplified and their blocks cleaned (spec §statement-cleanup).
  */
 function cleanupStatement(stmt: ProjectedStatement): ProjectedStatement | undefined {
   if (stmt.kind === "ExpressionStatement") {
@@ -110,7 +110,7 @@ function cleanupForInit(init: ProjectedForInit): ProjectedForInit | undefined {
 /**
  * A header slot that holds only a discarded expression disappears once that
  * expression simplifies to `null` — the `for` equivalent of dropping a `null;`
- * statement (spec §12.14, §13.9.4). A binding or a real assignment stays.
+ * statement (spec §for-projection, §simplification-inside-function-arguments). A binding or a real assignment stays.
  */
 function cleanupForUpdate(
   update: ProjectedForUpdate,
@@ -123,17 +123,17 @@ function cleanupForUpdate(
 }
 
 /**
- * Expression simplification (spec §13.9.2), bottom-up: every argument is
+ * Expression simplification (spec §expression-simplification), bottom-up: every argument is
  * simplified before its parent is considered.
  *
  * Only {@link NothingExpression} artifacts fold to `null`, and only when every
  * argument is syntactically `null` after simplification. Ordinary calls are
  * preserved whatever their type says they return, because a call may
- * communicate (spec §13.9.5).
+ * communicate (spec §statement-cleanup).
  */
 export function simplifyExpression(expr: ProjectedExpression): ProjectedExpression {
   if (expr.kind === "AbsentExpression") {
-    // Absent finalization runs first and leaves none behind (spec §13.7).
+    // Absent finalization runs first and leaves none behind (spec §absent-finalization).
     // The rule below is stated over arguments that are syntactically `null`,
     // which an `absent` is not, so reaching here would silently keep a
     // `nothing(...)` alive that should have folded away.

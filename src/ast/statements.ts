@@ -14,8 +14,8 @@ export type Statement =
   | ExpressionStatement;
 
 /**
- * Ordinary initialized `let` (spec §5.6).
- * `type` is present for `let x: T = e;`, omitted for `let x = e;` (inferred in §7.14.1).
+ * Ordinary initialized `let` (spec §let-statement).
+ * `type` is present for `let x: T = e;`, omitted for `let x = e;` (inferred in §let-type-inference).
  */
 export interface LetStatement extends AstNode {
   readonly kind: "LetStatement";
@@ -25,7 +25,7 @@ export interface LetStatement extends AstNode {
 }
 
 /**
- * Transfer `let` (spec §5.6, §7.14.3).
+ * Transfer `let` (spec §let-statement, §transfer-let-does-not-infer-destination-type).
  * `type` is always required; destination type/location are not inferred.
  */
 export interface LetTransferStatement extends AstNode {
@@ -35,7 +35,7 @@ export interface LetTransferStatement extends AstNode {
   readonly source: Expression;
 }
 
-/** `x = e;` — lhs is always an identifier (spec §5.7). */
+/** `x = e;` — lhs is always an identifier (spec §assignment-statement). */
 export interface AssignmentStatement extends AstNode {
   readonly kind: "AssignmentStatement";
   readonly target: AssignmentTarget;
@@ -55,14 +55,14 @@ export interface IndexAssignmentTarget extends AstNode {
   readonly index: Expression;
 }
 
-/** `y <- x;` — transfer statement (spec §5.8). */
+/** `y <- x;` — transfer statement (spec §transfer-statement). */
 export interface TransferStatement extends AstNode {
   readonly kind: "TransferStatement";
   readonly name: string;
   readonly source: Expression;
 }
 
-/** `if (e) { … } else { … }?` — condition is not an expression result (spec §5.9). */
+/** `if (e) { … } else { … }?` — condition is not an expression result (spec §if-statement). */
 export interface IfStatement extends AstNode {
   readonly kind: "IfStatement";
   readonly condition: Expression;
@@ -70,18 +70,18 @@ export interface IfStatement extends AstNode {
   readonly else?: Block;
 }
 
-/** `while (e) { … }` (spec §5.10). */
+/** `while (e) { … }` (spec §while-statement). */
 export interface WhileStatement extends AstNode {
   readonly kind: "WhileStatement";
   readonly condition: Expression;
   readonly body: Block;
 }
 
-/** C-style `for` only (spec §5.11). */
+/** C-style `for` only (spec §for-statement). */
 export interface ForStatement extends AstNode {
   readonly kind: "ForStatement";
   readonly init?: ForInit;
-  /** Required: an omitted condition has no location to take (spec §5.11). */
+  /** Required: an omitted condition has no location to take (spec §for-statement). */
   readonly condition: Expression;
   readonly update?: ForUpdate;
   readonly body: Block;
@@ -90,7 +90,7 @@ export interface ForStatement extends AstNode {
 export type ForInit = ForLetInit | ForAssignmentInit;
 
 /**
- * `let i: T = e` or `let i = e` in for-header (spec §5.11, §7.14.2).
+ * `let i: T = e` or `let i = e` in for-header (spec §for-statement, §for-initializer-let-type-inference).
  * `type` omitted when inferred from `initializer`.
  */
 export interface ForLetInit extends AstNode {
@@ -104,7 +104,7 @@ export interface ForLetInit extends AstNode {
  * `i = e` or `xs[i] = e` in a for-header (no trailing `;`).
  *
  * The target is the same `AssignmentTarget` an assignment statement takes
- * (spec §5.7, §5.11); the two forms of assignment are not meant to differ
+ * (spec §assignment-statement, §for-statement); the two forms of assignment are not meant to differ
  * inside and outside a for-header.
  */
 export interface ForAssignmentInit extends AstNode {
@@ -115,13 +115,13 @@ export interface ForAssignmentInit extends AstNode {
 
 export type ForUpdate = ForAssignmentInit;
 
-/** `return e;` or `return;` (spec §5.12). */
+/** `return e;` or `return;` (spec §return-statement). */
 export interface ReturnStatement extends AstNode {
   readonly kind: "ReturnStatement";
   readonly value?: Expression;
 }
 
-/** `e;` (spec §5.13). */
+/** `e;` (spec §expression-statement). */
 export interface ExpressionStatement extends AstNode {
   readonly kind: "ExpressionStatement";
   readonly expression: Expression;

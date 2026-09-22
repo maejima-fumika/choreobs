@@ -24,7 +24,7 @@ function parseFunctionBody(bodySource: string): Block {
   return (fn as FunctionDeclaration).body;
 }
 
-describe("return inference utilities (spec §7.14.4)", () => {
+describe("return inference utilities (spec §function-return-type-inference)", () => {
   describe("lubBase", () => {
     it("computes numeric lubs", () => {
       const ii = lubBase("integer", "integer");
@@ -167,7 +167,7 @@ let x = 1@alice;
     });
     const bare: ReturnCandidate = { kind: "void", span };
 
-    it("infers void when there are no returns (§7.14.4)", () => {
+    it("infers void when there are no returns (§function-return-type-inference)", () => {
       const body = parseFunctionBody("let x = 1@alice;");
       const r = inferReturnTypeFromCandidates(body, alice, []);
       assert.equal(r.ok, true);
@@ -177,7 +177,7 @@ let x = 1@alice;
       }
     });
 
-    it("infers float from mixed integer and float returns (§7.14.4)", () => {
+    it("infers float from mixed integer and float returns (§function-return-type-inference)", () => {
       const body = parseFunctionBody(`
 if (true@alice) {
   return 1@alice;
@@ -196,7 +196,7 @@ if (true@alice) {
       }
     });
 
-    it("rejects mixing bare and value returns (§7.14.5)", () => {
+    it("rejects mixing bare and value returns (§mixing-return-and-return-expr)", () => {
       const body = parseFunctionBody(`
 return;
 return 1@alice;
@@ -211,7 +211,7 @@ return 1@alice;
       }
     });
 
-    it("rejects value returns without coverage (§7.14.6)", () => {
+    it("rejects value returns without coverage (§return-coverage-for-non-void-functions)", () => {
       const body = parseFunctionBody(`
 if (true@alice) {
   return 1@alice;

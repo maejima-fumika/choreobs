@@ -40,7 +40,7 @@ function parseArgs(argv: readonly string[]) {
   };
 }
 
-/** Checks the emitted BlueScript carries no choreographic residue (spec §13.2). */
+/** Checks the emitted BlueScript carries no choreographic residue (spec §location-annotation-removal). */
 function inspectOutputs(
   result: ReturnType<typeof compileSource>,
   endpoints: readonly string[],

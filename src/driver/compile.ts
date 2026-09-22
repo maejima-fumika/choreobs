@@ -65,7 +65,7 @@ export function compileSource(
   // `compileSource` is the single funnel for every compilation path, and it
   // takes a `ChoreoBSConfig` that need not have come from `loadConfig`
   // (the fuzz scripts build one from a raw `--endpoints` string). The endpoint
-  // set is validated here so that no caller can slip past it (spec §2.2).
+  // set is validated here so that no caller can slip past it (spec §choreobs-json).
   const invalidConfig = validateEndpoints(config.endpoints);
   if (invalidConfig !== undefined) {
     return { success: false, outputs: [], errors: [{ message: invalidConfig }] };
@@ -86,7 +86,7 @@ export function compileSource(
   }
 
   // Tagging -> EPP -> absent finalization -> cleanup -> emission
-  // (spec §11.5, §13.7, §13.9).
+  // (spec §communication-tags, §absent-finalization, §projected-ast-cleanup).
   const tagged = assignCommTags(checked.typed);
   const projected = projectAll(tagged, config.endpoints);
   const finalized = finalizeAbsentAll(projected);

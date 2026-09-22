@@ -22,9 +22,9 @@ function hasAbsent(value: unknown): boolean {
   return Object.values(node).some(hasAbsent);
 }
 
-describe("Absent finalization (spec §13.7)", () => {
+describe("Absent finalization (spec §absent-finalization)", () => {
   it("replaces absent with null and leaves the nesting alone", () => {
-    // Folding is cleanup's job (spec §13.9); this stage only rewrites leaves,
+    // Folding is cleanup's job (spec §projected-ast-cleanup); this stage only rewrites leaves,
     // so the `nothing(...)` structure survives untouched.
     const result = finalizeExpression(
       nothingExpr(absent(), nothingExpr(absent(), absent())),

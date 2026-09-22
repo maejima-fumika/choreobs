@@ -35,7 +35,7 @@ import type { ExecutionContext } from "./context.js";
 import type { Location } from "./location.js";
 
 /**
- * Fully resolved located type `T@L` after type-checking (spec §7.2).
+ * Fully resolved located type `T@L` after type-checking (spec §located-types).
  * Attached to typed AST nodes for EPP and diagnostics.
  */
 export interface LocatedType {
@@ -44,10 +44,10 @@ export interface LocatedType {
   readonly location: Location;
 }
 
-/** Communication tag assigned before EPP (spec §11.5). */
+/** Communication tag assigned before EPP (spec §communication-tags). */
 export type CommTag = string;
 
-/** How `<-` transfers a value (spec §7.8). */
+/** How `<-` transfers a value (spec §transfer-typing). */
 export type TransferMode = "direct" | "broadcast" | "localCopy";
 
 // ---------------------------------------------------------------------------
@@ -241,7 +241,7 @@ export interface TypedCallExpression {
 
 export interface TypedLengthExpression {
   readonly expr: LengthExpression;
-  /** Always `integer@L`, where `L` is the array's location (spec §7.11.1). */
+  /** Always `integer@L`, where `L` is the array's location (spec §array-typing). */
   readonly choreoType: LocatedType;
   readonly target: TypedExpression;
 }
@@ -249,8 +249,8 @@ export interface TypedLengthExpression {
 export interface TypedPushExpression {
   readonly expr: PushExpression;
   /**
-   * Always `void` (spec §7.11.1). The location is the array's, and is never
-   * written or shown (spec §7.3): it is what tells endpoint projection which
+   * Always `void` (spec §array-typing). The location is the array's, and is never
+   * written or shown (spec §void): it is what tells endpoint projection which
    * endpoints perform the append.
    */
   readonly choreoType: LocatedType;
@@ -271,7 +271,7 @@ export interface TypedParenthesizedExpression {
   readonly expression: TypedExpression;
 }
 
-/** Resolved function for calls and EPP (spec §7.12, §10, §12.11). */
+/** Resolved function for calls and EPP (spec §function-call-typing, §function-rules, §function-projection). */
 export interface FunctionSymbol {
   readonly name: string;
   readonly context: ExecutionContext;

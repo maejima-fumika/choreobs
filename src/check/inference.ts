@@ -17,14 +17,14 @@ export function inferenceError(message: string): InferErr {
   return { ok: false, message };
 }
 
-/** Resolved type of a `return expr;` candidate (spec §7.14.4). */
+/** Resolved type of a `return expr;` candidate (spec §function-return-type-inference). */
 export type ValueReturnCandidate = {
   readonly kind: "value";
   readonly type: LocatedType;
   readonly span: Span;
 };
 
-/** Bare `return;` candidate (spec §7.14.4). */
+/** Bare `return;` candidate (spec §function-return-type-inference). */
 export type UnitReturnCandidate = {
   readonly kind: "void";
   readonly span: Span;
@@ -32,7 +32,7 @@ export type UnitReturnCandidate = {
 
 export type ReturnCandidate = ValueReturnCandidate | UnitReturnCandidate;
 
-/** Least upper bound on base types for return inference (spec §7.14.4). */
+/** Least upper bound on base types for return inference (spec §function-return-type-inference). */
 export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
   if (a === b) {
     return inferenceOk(a);
@@ -48,7 +48,7 @@ export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
   );
 }
 
-/** Least upper bound on locations for return inference (spec §7.14.4). */
+/** Least upper bound on locations for return inference (spec §function-return-type-inference). */
 export function lubLocation(a: Location, b: Location): InferResult<Location> {
   if (locationsEqual(a, b)) {
     return inferenceOk(a);
@@ -60,7 +60,7 @@ export function lubLocation(a: Location, b: Location): InferResult<Location> {
   );
 }
 
-/** Least upper bound on located types for return inference (spec §7.14.4). */
+/** Least upper bound on located types for return inference (spec §function-return-type-inference). */
 export function lubLocatedType(
   a: LocatedType,
   b: LocatedType,
@@ -89,7 +89,7 @@ export function lubLocatedType(
 }
 
 /**
- * Conservative syntactic check that all paths return a value (spec §7.14.6).
+ * Conservative syntactic check that all paths return a value (spec §return-coverage-for-non-void-functions).
  * Accepts a final `return expr;` and `if`/`else` with both branches returning.
  */
 export function checkReturnCoverage(block: Block): boolean {
@@ -118,7 +118,7 @@ function statementDefinitelyReturnsValue(stmt: Statement): boolean {
 }
 
 /**
- * Merges collected return candidates into a function return type (spec §7.14.4–§7.14.6).
+ * Merges collected return candidates into a function return type (spec §function-return-type-inference–§return-coverage-for-non-void-functions).
  */
 export function inferReturnTypeFromCandidates(
   body: Block,

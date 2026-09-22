@@ -5,8 +5,8 @@ import type { TypeAnnotation } from "./syntax-types.js";
 import type { Block } from "./statements.js";
 
 /**
- * Function declaration (spec §5.3).
- * `returnType` is present for `function f@L(...): T { ... }`, omitted when inferred (§7.14.4).
+ * Function declaration (spec §function-declaration).
+ * `returnType` is present for `function f@L(...): T { ... }`, omitted when inferred (§function-return-type-inference).
  */
 export interface FunctionDeclaration extends AstNode {
   readonly kind: "FunctionDeclaration";
@@ -15,10 +15,10 @@ export interface FunctionDeclaration extends AstNode {
    * Location written after `@` on the function name: the one endpoint that runs
    * the function, which makes it a local function. A choreography function runs
    * at every endpoint, so no single location names it and this is absent
-   * (spec §10.1).
+   * (spec §function-kinds).
    *
    * `every` can be written here syntactically, but the checker rejects it
-   * (spec §16.39).
+   * (spec §every-on-a-function-declaration).
    */
   readonly at?: Location;
   /**
@@ -31,7 +31,7 @@ export interface FunctionDeclaration extends AstNode {
   readonly body: Block;
 }
 
-/** Function parameter; type annotation is always required (spec §7.14.7). */
+/** Function parameter; type annotation is always required (spec §parameter-types-are-not-inferred). */
 export interface Parameter extends AstNode {
   readonly kind: "Parameter";
   readonly name: string;

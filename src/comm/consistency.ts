@@ -11,7 +11,7 @@ import type {
 import { childExpressions } from "../ir/traverse.js";
 import { TOP_SCOPE } from "./tags.js";
 
-/** Scope key for communication tags (spec §11.5): top-level or function name. */
+/** Scope key for communication tags (spec §communication-tags): top-level or function name. */
 export type CommScopeId = string;
 
 export interface CommConsistencyError {
@@ -36,10 +36,10 @@ type CommRole = "send" | "receive" | "broadcast";
 /**
  * One end of a communication, located by the control path it sits on.
  *
- * A tag identifies exactly one transfer in the source (spec §11.5), so the ends
+ * A tag identifies exactly one transfer in the source (spec §communication-tags), so the ends
  * of a single communication must agree on more than their existence: they must
  * sit at the same point in the control structure, which endpoint projection
- * replicates identically at every endpoint (spec §12.12–§12.14).
+ * replicates identically at every endpoint (spec §if-projection–§for-projection).
  */
 interface Occurrence {
   readonly endpoint: string;
@@ -223,7 +223,7 @@ class CommConsistencyChecker {
   /**
    * Finds receives anywhere in an expression, not just as the whole
    * initializer. Endpoint projection only ever produces them at the top level
-   * (spec §12.9); walking the whole tree keeps a stray nested receive from
+   * (spec §transfer-projection); walking the whole tree keeps a stray nested receive from
    * going unmatched.
    *
    * The shape of the walk comes from {@link childExpressions}, which is
@@ -278,7 +278,7 @@ class CommConsistencyChecker {
   /**
    * The broadcasting endpoint keeps its own copy of the value instead of
    * receiving it, and projection emits that binding right after the broadcast
-   * (spec §11.3, §12.9).
+   * (spec §broadcast-communication, §transfer-projection).
    */
   private checkBroadcastSenderBinding(
     ctx: WalkContext,
@@ -450,7 +450,7 @@ class CommConsistencyChecker {
   }
 
   /**
-   * A tag names one transfer in one scope (spec §11.5), so each endpoint takes
+   * A tag names one transfer in one scope (spec §communication-tags), so each endpoint takes
    * part in it at most once. A second occurrence means projection duplicated a
    * communication, and set-based matching would happily pair the wrong ends.
    */

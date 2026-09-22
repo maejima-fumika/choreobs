@@ -5,7 +5,7 @@ import type { TypedProgram } from "../../src/ast/typed.js";
 
 /**
  * The transfer statement at top-level item `index`, with its assigned
- * communication tag. Tags are assigned after checking (spec §11.5), so these
+ * communication tag. Tags are assigned after checking (spec §communication-tags), so these
  * go through `tagSource` rather than `checkSource`.
  */
 function transferAt(typed: TypedProgram, index: number) {
@@ -18,7 +18,7 @@ function transferAt(typed: TypedProgram, index: number) {
 
 
 describe("ChoreoBS type checker", () => {
-  it("accepts direct communication (spec §15.1)", () => {
+  it("accepts direct communication (spec §example-direct-communication)", () => {
     const typed = tagSource(`
 let x: integer@alice = 1@alice;
 let y: integer@bob <- x;
@@ -29,7 +29,7 @@ let y: integer@bob <- x;
     assert.equal(recv.commTag, "top_0");
   });
 
-  describe("locations are never inferred from context (spec §8.1)", () => {
+  describe("locations are never inferred from context (spec §explicit-location-annotations)", () => {
     it("rejects an omitted parameter location in a local function", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: integer, b: integer@alice): integer@alice {
@@ -91,7 +91,7 @@ function f@alice(): integer@alice {
       );
     });
 
-    it("still infers a return type when the annotation is absent entirely (§7.14.4)", () => {
+    it("still infers a return type when the annotation is absent entirely (§function-return-type-inference)", () => {
       const { typed, errors } = checkSource(`
 function f@alice(a: integer@alice) {
   return a;
@@ -106,7 +106,7 @@ function f@alice(a: integer@alice) {
       }
     });
 
-    it("still infers void for a body with no returns (§7.14.4)", () => {
+    it("still infers void for a body with no returns (§function-return-type-inference)", () => {
       const { typed, errors } = checkSource(`
 function noop@alice() {
 }
@@ -121,7 +121,7 @@ function noop@alice() {
       }
     });
 
-    it("still fills array literal elements from the literal's own annotation (§5.16)", () => {
+    it("still fills array literal elements from the literal's own annotation (§array-literals)", () => {
       const { errors } = checkSource(`
 let xs: integer[]@alice = [1, 2, 3]@alice;
 `);
@@ -138,7 +138,7 @@ function f@alice(): void {
     });
   });
 
-  it("rejects assignment across locations (spec §16.7)", () => {
+  it("rejects assignment across locations (spec §invalid-assignment-across-locations)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
 let y: integer@bob = x;
@@ -147,7 +147,7 @@ let y: integer@bob = x;
     assert.ok(errors.some((e) => e.message.includes("use a transfer instead")));
   });
 
-  it("accepts a scalar local copy from @every (spec §7.8)", () => {
+  it("accepts a scalar local copy from @every (spec §transfer-typing)", () => {
     const typed = tagSource(`
 let x: integer@every = 1@every;
 let y: integer@alice <- x;
@@ -165,7 +165,7 @@ let b: boolean@bob <- true@every;
     assert.equal(errors.length, 0);
   });
 
-  it("accepts @every to @every transfer as a local copy (spec §7.8)", () => {
+  it("accepts @every to @every transfer as a local copy (spec §transfer-typing)", () => {
     const typed = tagSource(`
 let x: integer@every = 1@every;
 let y: integer@every <- x;
@@ -175,7 +175,7 @@ let y: integer@every <- x;
     assert.equal(recv.commTag, undefined);
   });
 
-  it("accepts a transfer whose source and destination share a location (spec §7.8)", () => {
+  it("accepts a transfer whose source and destination share a location (spec §transfer-typing)", () => {
     const typed = tagSource(`
 let x: integer@alice = 1@alice;
 let y: integer@alice <- x;
@@ -185,7 +185,7 @@ let y: integer@alice <- x;
     assert.equal(recv.commTag, undefined);
   });
 
-  it("rejects references to top-level let from local functions (spec §6.5)", () => {
+  it("rejects references to top-level let from local functions (spec §top-level-statements)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
 function f@alice(): integer@alice {
@@ -194,7 +194,7 @@ function f@alice(): integer@alice {
 `);
     assert.equal(typed, null);
     // `x` exists; it is the top-level scope that a function body cannot see
-    // (spec §6.6), and the diagnostic says so rather than calling it undefined.
+    // (spec §top-level-let), and the diagnostic says so rather than calling it undefined.
     assert.ok(
       errors.some((e) =>
         e.message.includes(
@@ -205,7 +205,7 @@ function f@alice(): integer@alice {
     );
   });
 
-  it("rejects cross-node local function calls (spec §16.12)", () => {
+  it("rejects cross-node local function calls (spec §calling-another-endpoints-local-function)", () => {
     const { typed, errors } = checkSource(`
 function f@bob(): integer@bob { return 1@bob; }
 function g@alice(): integer@alice { return f(); }
@@ -214,7 +214,7 @@ function g@alice(): integer@alice { return f(); }
     assert.ok(errors.some((e) => e.message.includes("cannot call")));
   });
 
-  it("rejects choreography function calls from local context (spec §16.13)", () => {
+  it("rejects choreography function calls from local context (spec §calling-choreography-from-local)", () => {
     const { typed, errors } = checkSource(`
 function h(): void { return; }
 function g@alice(): void { h(); return; }
@@ -228,7 +228,7 @@ function g@alice(): void { h(); return; }
     );
   });
 
-  it("rejects choreography recursion (spec §16.14)", () => {
+  it("rejects choreography recursion (spec §recursive-choreography-function)", () => {
     const { typed, errors } = checkSource(`
 function loop(): void {
   loop();
@@ -239,7 +239,7 @@ function loop(): void {
     assert.ok(errors.some((e) => e.message.includes("recursive")));
   });
 
-  it("accepts a transfer inside a local function as a local copy (spec §10.1)", () => {
+  it("accepts a transfer inside a local function as a local copy (spec §function-kinds)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(): integer@alice {
   let x: integer@alice = 1@alice;
@@ -268,8 +268,8 @@ function f@alice(): void {
     );
   });
 
-  it("rejects a transfer to another endpoint inside a local function (spec §8.2)", () => {
-    // The source is at alice, so §16.27 does not catch this. Without the
+  it("rejects a transfer to another endpoint inside a local function (spec §local-function-strict-location-rule)", () => {
+    // The source is at alice, so §invalid-value-used-inside-local-function does not catch this. Without the
     // destination rule the checker accepted a send out of a body only alice
     // runs, and only the post-EPP consistency check noticed.
     const { typed, errors } = checkSource(`
@@ -288,7 +288,7 @@ function f@alice(): integer@alice {
     );
   });
 
-  it("rejects a transfer to another endpoint in a local function with an inferred return type (spec §8.2)", () => {
+  it("rejects a transfer to another endpoint in a local function with an inferred return type (spec §local-function-strict-location-rule)", () => {
     const { typed, errors } = checkSource(`
 function f@alice() {
   let x: integer@alice = 1@alice;
@@ -305,7 +305,7 @@ function f@alice() {
     );
   });
 
-  it("rejects a function named after a runtime support function (spec §6.2, §13.3)", () => {
+  it("rejects a function named after a runtime support function (spec §function-names, §codegen-function-names)", () => {
     const { typed, errors } = checkSource(`
 function sendInteger@alice(): void {
   return;
@@ -318,7 +318,7 @@ function sendInteger@alice(): void {
     );
   });
 
-  it("rejects a variable named after a runtime support function (spec §6.2, §13.3)", () => {
+  it("rejects a variable named after a runtime support function (spec §function-names, §codegen-function-names)", () => {
     const { typed, errors } = checkSource(`
 let cloneFloatArray: integer@alice = 1@alice;
 `);
@@ -329,7 +329,7 @@ let cloneFloatArray: integer@alice = 1@alice;
     );
   });
 
-  it("rejects a parameter named after a runtime support function (spec §6.2, §13.3)", () => {
+  it("rejects a parameter named after a runtime support function (spec §function-names, §codegen-function-names)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(broadcastNull: integer@alice): void {
   return;
@@ -342,7 +342,7 @@ function f@alice(broadcastNull: integer@alice): void {
     );
   });
 
-  it("rejects a function named after an EPP call sentinel (spec §6.2, §13.3)", () => {
+  it("rejects a function named after an EPP call sentinel (spec §function-names, §codegen-function-names)", () => {
     const { typed, errors } = checkSource(`
 function __array@alice(): void {
   return;
@@ -355,9 +355,9 @@ function __array@alice(): void {
     );
   });
 
-  describe("one value name space (spec §6.1, §16.48)", () => {
+  describe("one value name space (spec §namespaces, §err-name-already-held)", () => {
     // Endpoints, functions and variables share it, because generated
-    // BlueScript keeps the source name (spec §13.3) and has only one.
+    // BlueScript keeps the source name (spec §codegen-function-names) and has only one.
     const rejects = (source: string, needle: string) => {
       const { typed, errors } = checkSource(source);
       assert.equal(typed, null, "expected the program to be rejected");
@@ -377,7 +377,7 @@ let g: integer@alice = 5@alice;`,
       });
 
       it("rejects a variable of that name declared before the function", () => {
-        // Functions are hoisted (spec §6.3), so declaration order is not a
+        // Functions are hoisted (spec §function-declaration-hoisting), so declaration order is not a
         // way around the rule.
         rejects(
           `let g: integer@alice = 5@alice;
@@ -425,7 +425,7 @@ let y: integer@bob <- x;`,
       });
 
       it("rejects it even at a different endpoint from the function", () => {
-        // The rule is program-wide, not per output file (spec §6.1).
+        // The rule is program-wide, not per output file (spec §namespaces).
         rejects(
           `function g@alice(): integer@alice { return 1@alice; }
 function h@bob(g: integer@bob): integer@bob { return g; }`,
@@ -443,7 +443,7 @@ function h@bob(g: integer@bob): integer@bob { return g; }`,
       });
 
       it("rejects a function of that name", () => {
-        // spec §6.1 used to give exactly this as an allowed example.
+        // spec §namespaces used to give exactly this as an allowed example.
         rejects(
           `function alice@alice(): void { return; }`,
           "'alice' is an endpoint name and cannot be used as a function name",
@@ -459,7 +459,7 @@ function h@bob(g: integer@bob): integer@bob { return g; }`,
 
       it("reserves an endpoint the source never mentions", () => {
         // `bob` is declared in choreobs.json but unused here; the name is
-        // taken all the same (spec §2.2, §6.1).
+        // taken all the same (spec §choreobs-json, §namespaces).
         rejects(
           `let bob: integer@alice = 1@alice;`,
           "'bob' is an endpoint name and cannot be used as a variable name",
@@ -477,7 +477,7 @@ function h@bob(g: integer@bob): integer@bob { return g; }`,
       });
     });
 
-    describe("a use says what the name actually is (spec §6.1)", () => {
+    describe("a use says what the name actually is (spec §namespaces)", () => {
       // One name is held by at most one thing, so a use that does not fit the
       // position can name what it found instead of only what it did not.
       it("reports a function name used as a value", () => {
@@ -526,7 +526,7 @@ let y: integer@alice = v();`,
       });
     });
 
-    describe("variables still shadow each other (spec §6.4)", () => {
+    describe("variables still shadow each other (spec §variable-scope)", () => {
       it("allows an inner block to shadow an outer variable", () => {
         const { typed, errors } = checkSource(`
 let c: boolean@every = true@every;
@@ -560,7 +560,7 @@ let aliceCount: integer@alice = 1@alice;
     });
   });
 
-  describe("`length` and `push` are ordinary names (spec §6.2)", () => {
+  describe("`length` and `push` are ordinary names (spec §function-names)", () => {
     // They mean an array operation only after a `.`, so nothing is reserved.
     it("allows them as variable names", () => {
       const { typed, errors } = checkSource(`
@@ -601,7 +601,7 @@ let n: integer@alice = length(xs);
     });
   });
 
-  it("rejects an explicit non-void return type without a return on all paths (spec §16.41)", () => {
+  it("rejects an explicit non-void return type without a return on all paths (spec §missing-return-in-a-non-void-function)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(c: boolean@alice): integer@alice {
   if (c) {
@@ -616,7 +616,7 @@ function f@alice(c: boolean@alice): integer@alice {
     );
   });
 
-  it("accepts an explicit non-void return type when both branches return (spec §7.13)", () => {
+  it("accepts an explicit non-void return type when both branches return (spec §return-typing)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(c: boolean@alice): integer@alice {
   if (c) {
@@ -630,7 +630,7 @@ function f@alice(c: boolean@alice): integer@alice {
     assert.ok(typed);
   });
 
-  it("does not require coverage for an explicit void return type (spec §7.13)", () => {
+  it("does not require coverage for an explicit void return type (spec §return-typing)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(c: boolean@alice): void {
   if (c) {
@@ -642,7 +642,7 @@ function f@alice(c: boolean@alice): void {
     assert.ok(typed);
   });
 
-  it("rejects `!` on an array operand (spec §7.11, §16.42)", () => {
+  it("rejects `!` on an array operand (spec §operators, §invalid-unary-operand)", () => {
     const { typed, errors } = checkSource(`
 let xs: boolean[]@alice = [true, false]@alice;
 let b = !xs;
@@ -654,7 +654,7 @@ let b = !xs;
     );
   });
 
-  it("rejects unary `-` on an array operand (spec §7.11, §16.42)", () => {
+  it("rejects unary `-` on an array operand (spec §operators, §invalid-unary-operand)", () => {
     const { typed, errors } = checkSource(`
 let xs: integer[]@alice = [1, 2]@alice;
 let n = -xs;
@@ -666,7 +666,7 @@ let n = -xs;
     );
   });
 
-  it("types unary operators at the operand location (spec §7.11)", () => {
+  it("types unary operators at the operand location (spec §operators)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
 let y: integer@alice = -x;
@@ -676,7 +676,7 @@ let c: boolean@alice = !(x < 10@alice);
     assert.ok(typed);
   });
 
-  it("rejects a non-numeric comparison (spec §7.11, §16.43)", () => {
+  it("rejects a non-numeric comparison (spec §operators, §invalid-comparison-or-equality-operands)", () => {
     const { typed, errors } = checkSource(`
 let b: boolean@alice = "a"@alice < "b"@alice;
 `);
@@ -687,7 +687,7 @@ let b: boolean@alice = "a"@alice < "b"@alice;
     );
   });
 
-  it("rejects equality between integer and float (spec §7.11, §16.43)", () => {
+  it("rejects equality between integer and float (spec §operators, §invalid-comparison-or-equality-operands)", () => {
     const { typed, errors } = checkSource(`
 let b: boolean@alice = 1@alice === 1.0@alice;
 `);
@@ -698,10 +698,10 @@ let b: boolean@alice = 1@alice === 1.0@alice;
     );
   });
 
-  it("rejects equality between void computations (spec §7.11, §16.43)", () => {
+  it("rejects equality between void computations (spec §operators, §invalid-comparison-or-equality-operands)", () => {
     // Two voids have the same base type, so the same-base-type rule lets them
     // through: without a rule of its own this emitted BlueScript comparing two
-    // statements. Both kinds of void computation are covered (spec §7.2).
+    // statements. Both kinds of void computation are covered (spec §located-types).
     for (const source of [
       `function g@alice(): void { return; }\nlet b: boolean@alice = g() === g();`,
       `let xs: integer[]@alice = [1]@alice;\nlet b: boolean@alice = xs.push(1@alice) !== xs.push(2@alice);`,
@@ -715,7 +715,7 @@ let b: boolean@alice = 1@alice === 1.0@alice;
     }
   });
 
-  it("rejects `return` at top level (spec §5.12, §6.5)", () => {
+  it("rejects `return` at top level (spec §return-statement, §top-level-statements)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
 return x;
@@ -727,7 +727,7 @@ return x;
     );
   });
 
-  describe("`.push` is a void expression (spec §5.14, §7.11.1)", () => {
+  describe("`.push` is a void expression (spec §expressions, §array-typing)", () => {
     const XS = "let xs: integer[]@alice = []@alice;\n";
 
     it("accepts it as an expression statement", () => {
@@ -743,7 +743,7 @@ return x;
     });
 
     // Producing no value, it is rejected in every value position by the
-    // ordinary `void` rules (spec §7.2, §16.40) — the same ones that reject a
+    // ordinary `void` rules (spec §located-types, §invalid-use-of-void) — the same ones that reject a
     // call to a `void` function. This used to be a parse error.
     it("rejects it as an inferred let initializer", () => {
       const { errors } = checkSource(`${XS}let n = xs.push(1@alice);`);
@@ -794,10 +794,10 @@ return x;
     });
   });
 
-  describe("a void computation may not stand where a value is required (spec §7.2)", () => {
+  describe("a void computation may not stand where a value is required (spec §located-types)", () => {
     const VOID_FN = "function f@alice(): void { return; }";
 
-    it("rejects an inferred let bound to a void call (spec §16.40)", () => {
+    it("rejects an inferred let bound to a void call (spec §invalid-use-of-void)", () => {
       // The annotated form goes through resolveType, which already rejected
       // `void`. The inferred form took the initializer's type verbatim and
       // declared a variable of a type that holds no value.
@@ -844,7 +844,7 @@ f();
     });
   });
 
-  describe("`.length` typing (spec §7.11.1)", () => {
+  describe("`.length` typing (spec §array-typing)", () => {
     it("types `xs.length` as integer at the array's location", () => {
       const { typed, errors } = checkSource(`
 let xs: integer[]@alice = [1, 2]@alice;
@@ -868,7 +868,7 @@ let n: integer@alice = s.length;
       );
     });
 
-    it("accepts `xs.length;` as an expression statement (spec §9.9)", () => {
+    it("accepts `xs.length;` as an expression statement (spec §expression-statements)", () => {
       // An effect-free expression statement is pointless but legal, exactly as
       // `xs[0@alice];` and `1@alice;` are. `.length` used to be singled out —
       // a leftover from when it was written `length(xs)`.
@@ -881,7 +881,7 @@ xs.length;
     });
   });
 
-  it("accepts a relational comparison between integer and float (spec §7.11)", () => {
+  it("accepts a relational comparison between integer and float (spec §operators)", () => {
     const { typed, errors } = checkSource(`
 let b: boolean@alice = 1@alice < 1.5@alice;
 `);
@@ -889,7 +889,7 @@ let b: boolean@alice = 1@alice < 1.5@alice;
     assert.ok(typed);
   });
 
-  it("accepts a transfer widening integer to float (spec §7.8)", () => {
+  it("accepts a transfer widening integer to float (spec §transfer-typing)", () => {
     const { errors } = checkSource(`
 let y: integer@alice = 1@alice;
 let x: float@bob <- y;
@@ -897,7 +897,7 @@ let x: float@bob <- y;
     assert.equal(errors.length, 0, JSON.stringify(errors));
   });
 
-  it("rejects a transfer narrowing float to integer (spec §16.8)", () => {
+  it("rejects a transfer narrowing float to integer (spec §invalid-transfer-base-type)", () => {
     const { typed, errors } = checkSource(`
 let y: float@alice = 1.5@alice;
 let x: integer@bob <- y;
@@ -909,7 +909,7 @@ let x: integer@bob <- y;
     );
   });
 
-  it("rejects a transfer between unrelated base types (spec §16.8)", () => {
+  it("rejects a transfer between unrelated base types (spec §invalid-transfer-base-type)", () => {
     const { typed, errors } = checkSource(`
 let y: float@alice = 1.5@alice;
 let x: string@bob <- y;
@@ -956,7 +956,7 @@ let b: string@alice = 1@alice;
     });
   });
 
-  describe("let location inference (spec §7.14.1)", () => {
+  describe("let location inference (spec §let-type-inference)", () => {
     it("takes the location from the initializer", () => {
       const { typed, errors } = checkSource(`let a: integer = 3@bob;`);
       assert.equal(errors.length, 0, JSON.stringify(errors));
@@ -990,7 +990,7 @@ let b: string@alice = 1@alice;
       );
     });
 
-    it("infers in a for-loop initializer too (spec §7.14.2)", () => {
+    it("infers in a for-loop initializer too (spec §for-initializer-let-type-inference)", () => {
       const { errors } = checkSource(`
 for (let i: integer = 0@every; i < 3@every; i = i + 1@every) {
 }
@@ -998,7 +998,7 @@ for (let i: integer = 0@every; i < 3@every; i = i + 1@every) {
       assert.equal(errors.length, 0, JSON.stringify(errors));
     });
 
-    it("does not infer the destination of a transfer let (spec §7.14.3)", () => {
+    it("does not infer the destination of a transfer let (spec §transfer-let-does-not-infer-destination-type)", () => {
       // Inferring from the source would make destination == source, turning
       // every transfer into a no-op local copy.
       const { typed, errors } = checkSource(`
@@ -1043,7 +1043,7 @@ let b: float[] = a;
     });
   });
 
-  describe("void has no location (spec §7.3)", () => {
+  describe("void has no location (spec §void)", () => {
     it("rejects a location written on void", () => {
       const { typed, errors } = checkSource(`
 function g(): void@alice {
@@ -1086,8 +1086,8 @@ function g(): void@alice {
     });
   });
 
-  describe("function kinds (spec §10.1)", () => {
-    it("rejects @every on a function declaration (spec §16.39)", () => {
+  describe("function kinds (spec §function-kinds)", () => {
+    it("rejects @every on a function declaration (spec §every-on-a-function-declaration)", () => {
       const { typed, errors } = checkSource(`
 function f@every(): void {
   return;
@@ -1102,7 +1102,7 @@ function f@every(): void {
       );
     });
 
-    it("rejects direct recursion in a choreography function (spec §10.4)", () => {
+    it("rejects direct recursion in a choreography function (spec §recursion)", () => {
       const { typed, errors } = checkSource(`
 function f(): void {
   f();
@@ -1118,7 +1118,7 @@ function f(): void {
       );
     });
 
-    it("rejects mutual recursion between choreography functions (spec §10.4)", () => {
+    it("rejects mutual recursion between choreography functions (spec §recursion)", () => {
       // Only direct self-recursion used to be caught; `f -> g -> f` slipped through.
       const { typed, errors } = checkSource(`
 function f(): void {
@@ -1151,13 +1151,13 @@ function fact@alice(n: integer@alice): integer@alice {
     });
   });
 
-  it("rejects unknown endpoint (spec §16.1)", () => {
+  it("rejects unknown endpoint (spec §unknown-endpoint)", () => {
     const { typed, errors } = checkSource(`let x: integer@carol = 1@carol;`);
     assert.equal(typed, null);
     assert.ok(errors.some((e) => e.message.includes("carol")));
   });
 
-  it("infers a top-level let location from its initializer (spec §7.14.1)", () => {
+  it("infers a top-level let location from its initializer (spec §let-type-inference)", () => {
     const { typed, errors } = checkSource(`let x: integer = 1@alice;`);
     assert.equal(errors.length, 0, JSON.stringify(errors));
     const item = typed?.items[0];
@@ -1166,7 +1166,7 @@ function fact@alice(n: integer@alice): integer@alice {
     }
   });
 
-  it("rejects location omission where there is nothing to infer from (spec §16.3)", () => {
+  it("rejects location omission where there is nothing to infer from (spec §location-annotation-omission)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(a: integer): integer@alice {
   return a;
@@ -1181,7 +1181,7 @@ function f@alice(a: integer): integer@alice {
     );
   });
 
-  it("rejects boolean@alice condition in @every context (spec §16.9)", () => {
+  it("rejects boolean@alice condition in @every context (spec §invalid-if-condition)", () => {
     const { typed, errors } = checkSource(`
 function f(c: boolean@alice): void {
   if (c) { return; }
@@ -1191,7 +1191,7 @@ function f(c: boolean@alice): void {
     assert.ok(errors.some((e) => e.message.includes("boolean@every")));
   });
 
-  it("allows the same let name in separate if branches (spec §6.4)", () => {
+  it("allows the same let name in separate if branches (spec §variable-scope)", () => {
     const { typed, errors } = checkSource(`
 let ok: boolean@every = true@every;
 if (ok) {
@@ -1204,7 +1204,7 @@ if (ok) {
     assert.ok(typed);
   });
 
-  it("rejects indirect recursive local functions with omitted return types (spec §7.14.8)", () => {
+  it("rejects indirect recursive local functions with omitted return types (spec §inference-and-recursion)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(n: integer@alice) {
   return g(n);
@@ -1295,7 +1295,7 @@ function f@bob() {
       );
     });
 
-    it("rejects binary operands at different individual locations (spec §8.2, §16.27)", () => {
+    it("rejects binary operands at different individual locations (spec §local-function-strict-location-rule, §invalid-value-used-inside-local-function)", () => {
       const { typed, errors } = checkSource(`
 function f@alice(): integer@alice {
   return 1@bob + 2@alice;
@@ -1364,7 +1364,7 @@ function f@bob() {
     });
   });
 
-  it("uses inferred return type at call sites (spec §7.14.4)", () => {
+  it("uses inferred return type at call sites (spec §function-return-type-inference)", () => {
     const { typed, errors } = checkSource(`
 function add@alice(a: integer@alice, b: integer@alice) {
   return a + b;
@@ -1387,7 +1387,7 @@ function caller@alice(): integer@alice {
   });
 
   describe("call argument location matching", () => {
-    it("rejects passing integer@every to integer@alice parameter (spec §16.28)", () => {
+    it("rejects passing integer@every to integer@alice parameter (spec §invalid-function-argument-location)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: integer@alice) {
   return a;
@@ -1403,7 +1403,7 @@ add(10@every);
       );
     });
 
-    it("rejects integer@every argument to float@alice parameter (spec §16.28)", () => {
+    it("rejects integer@every argument to float@alice parameter (spec §invalid-function-argument-location)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: float@alice) {
   return a;
@@ -1444,7 +1444,7 @@ function f@alice(x: integer@every) {
       );
     });
 
-    it("rejects integer@every argument from inside a local function (spec §8.2, §16.27)", () => {
+    it("rejects integer@every argument from inside a local function (spec §local-function-strict-location-rule, §invalid-value-used-inside-local-function)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: integer@alice) {
   return a;
@@ -1462,7 +1462,7 @@ function g@alice(): integer@alice {
     });
   });
 
-  describe("local control-flow conditions (spec §7.9, §7.10)", () => {
+  describe("local control-flow conditions (spec §if-condition-typing, §while-and-for-condition-typing)", () => {
     it("rejects while with boolean@every in local function", () => {
       const { typed, errors } = checkSource(`
 function f@alice(): void {
@@ -1516,14 +1516,14 @@ function f@alice(): void {
     });
   });
 
-  it("allows explicit float let from integer initializer (spec §7.5, §7.14.1)", () => {
+  it("allows explicit float let from integer initializer (spec §subtyping, §let-type-inference)", () => {
     const { errors } = checkSource(`
 let x: float@alice = 1@alice;
 `);
     assert.equal(errors.length, 0);
   });
 
-  describe("return typing (spec §7.13)", () => {
+  describe("return typing (spec §return-typing)", () => {
     it("allows integer return for float return type via subtyping", () => {
       const { errors } = checkSource(`
 function f@alice(): float@alice {
@@ -1548,7 +1548,7 @@ function f@alice(): integer@bob {
     });
   });
 
-  describe("@every and individual locations are independent (spec §7.6)", () => {
+  describe("@every and individual locations are independent (spec §location-matching-and-residency)", () => {
     it("rejects assigning an @every value to an individual-location variable", () => {
       const { typed, errors } = checkSource(`
 let c: boolean@every = true@every;

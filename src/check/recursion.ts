@@ -1,5 +1,5 @@
 /**
- * Call-graph helpers for recursive function detection (spec §7.14.8).
+ * Call-graph helpers for recursive function detection (spec §inference-and-recursion).
  */
 
 /** Tarjan's algorithm — returns strongly connected components. */
