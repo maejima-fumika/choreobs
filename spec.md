@@ -1639,7 +1639,7 @@ The termination conditions of `while` and `for` follow the same rule as `if`.
 ### 7.11 Operators <a id="operators"></a>
 
 Every operator requires its operands to be scalars: no operator is defined over
-array types (spec [§7.11.1](#array-typing)). Sections 7.11 and 7.11.1 together cover all of them.
+array types (spec [§7.11.1](#array-typing)). [§7.11](#operators) and [§7.11.1](#array-typing) together cover all of them.
 
 #### Arithmetic Operators <a id="arithmetic-operators"></a>
 

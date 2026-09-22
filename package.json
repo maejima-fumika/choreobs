@@ -10,6 +10,8 @@
     "test": "node --import tsx --test $(find test -name '*.test.ts' | sort)",
     "compile": "tsx src/cli/main.ts compile",
     "spec:sections": "tsx scripts/spec/sections.ts",
+    "spec:check": "tsx scripts/spec/check.ts",
+    "spec:fmt": "tsx scripts/spec/fmt.ts && npm run spec:sections",
     "fuzz": "tsx scripts/fuzz/run.ts",
     "fuzz:violate": "tsx scripts/fuzz/violate.ts"
   },
