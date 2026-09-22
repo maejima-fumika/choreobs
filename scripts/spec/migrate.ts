@@ -361,9 +361,18 @@ function stepMessages(doc: SpecDocument): void {
       }
 
       edits.push({ start: lit.getStart(sf), end: lit.end, text: raw.replace(CITATION, "") });
-      const arg = `[${slugs.map((s) => `"${s}"`).join(", ")}]`;
+
+      // A call already broken across lines gets the citation on a line of its
+      // own, at the indentation its other arguments use.
       const last = call.arguments![call.arguments!.length - 1]!;
-      edits.push({ start: last.end, end: last.end, text: `, ${arg}` });
+      const arg = `[${slugs.map((s) => `"${s}"`).join(", ")}]`;
+      const lastLine = sf.getLineAndCharacterOfPosition(last.getStart(sf));
+      const call0 = sf.getLineAndCharacterOfPosition(call.getStart(sf));
+      const oneLine = lastLine.line === call0.line;
+      const width = lastLine.character + (last.end - last.getStart(sf)) + arg.length + 3;
+      const indent = " ".repeat(oneLine ? call0.character + 2 : lastLine.character);
+      const separator = oneLine && width <= 100 ? ", " : `,\n${indent}`;
+      edits.push({ start: last.end, end: last.end, text: `${separator}${arg}` });
     }
 
     if (edits.length > 0) {

@@ -1,4 +1,5 @@
 import type { Span } from "../ast/span.js";
+import { specRef } from "../spec/ref.js";
 import type {
   ProjectedProgram,
   ProjectedFunction,
@@ -138,7 +139,7 @@ export function simplifyExpression(expr: ProjectedExpression): ProjectedExpressi
     // which an `absent` is not, so reaching here would silently keep a
     // `nothing(...)` alive that should have folded away.
     throw new Error(
-      "internal error: absent must be finalized before cleanup (spec §13.7)",
+      `internal error: absent must be finalized before cleanup ${specRef("absent-finalization")}`,
     );
   }
   if (expr.kind === "NothingExpression") {

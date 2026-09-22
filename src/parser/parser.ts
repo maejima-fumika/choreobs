@@ -57,6 +57,7 @@ import {
   tokenize,
   type Token,
 } from "../lexer/index.js";
+import type { SpecRefs } from "../spec/ref.js";
 import { parseError, type ParseError } from "./errors.js";
 import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-utils.js";
 
@@ -80,6 +81,7 @@ export function parse(source: string): ParseResult {
   const lexicalAsParse: ParseError[] = lexed.errors.map((e) => ({
     message: e.message,
     span: { start: e.span.start.offset, end: e.span.end.offset },
+    spec: e.spec,
   }));
   // The lexer substitutes a placeholder token when it recovers, so a token
   // stream that failed to lex cannot be parsed meaningfully. Report the
@@ -213,7 +215,8 @@ class Parser {
       this.consume(TokenKind.RBracket, "expected ']' after '[' in array type");
       isArray = true;
       if (this.match(TokenKind.LBracket)) {
-        throw this.fail("nested array types are not supported (spec §5.2, §16.30)");
+        throw this.fail("nested array types are not supported",
+                ["types", "nested-array"]);
       }
     }
     let location: LocationAnnotation | undefined;
@@ -320,7 +323,8 @@ class Parser {
 
     if (this.match(TokenKind.Transfer)) {
       throw this.fail(
-        "type annotation required for transfer let (spec §5.6, §7.14.3)",
+        "type annotation required for transfer let",
+        ["let-statement", "transfer-let-does-not-infer-destination-type"],
       );
     }
 
@@ -372,12 +376,14 @@ class Parser {
       }
 
       throw this.fail(
-        "expected '=' or '<-' after type in let statement; uninitialized let is not allowed (spec §5.6)",
+        "expected '=' or '<-' after type in let statement; uninitialized let is not allowed",
+        ["let-statement"],
       );
     }
 
     throw this.fail(
-      "expected ':', '=', or '<-' after variable name in let; uninitialized let is not allowed (spec §5.6)",
+      "expected ':', '=', or '<-' after variable name in let; uninitialized let is not allowed",
+      ["let-statement"],
     );
   }
 
@@ -717,12 +723,14 @@ class Parser {
       member.lexeme !== PUSH_METHOD
     ) {
       throw this.fail(
-        `unknown array operation '.${member.lexeme}': v0 supports '.length' and '.push' (spec §5.14, §7.11.1)`,
+        `unknown array operation '.${member.lexeme}': v0 supports '.length' and '.push'`,
+        ["expressions", "array-typing"],
       );
     }
     if (target.kind !== "IdentifierExpression") {
       throw this.fail(
-        `the receiver of '.${member.lexeme}' must be a variable (spec §5.14)`,
+        `the receiver of '.${member.lexeme}' must be a variable`,
+        ["expressions"],
       );
     }
     this.advance();
@@ -1024,9 +1032,9 @@ class Parser {
     throw this.fail(message);
   }
 
-  private fail(message: string): Error {
+  private fail(message: string, spec: SpecRefs = []): Error {
     const token = this.current();
-    this.errors.push(parseError(message, spanOf(token)));
+    this.errors.push(parseError(message, spanOf(token), spec));
     return new Error(message);
   }
 }

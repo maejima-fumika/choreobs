@@ -1,5 +1,6 @@
 import type { Span } from "../ast/span.js";
 import type { ProjectedProgram } from "../ir/projected.js";
+import type { SpecCited } from "../spec/ref.js";
 import type { CommConsistencyError, CommConsistencyResult } from "./consistency.js";
 import { checkCommunicationConsistency } from "./consistency.js";
 import {
@@ -19,7 +20,7 @@ export function verifyCommunicationConsistency(
   return checkEmittedCommunicationConsistency(emitted);
 }
 
-export interface CommConsistencyDiagnostic {
+export interface CommConsistencyDiagnostic extends SpecCited {
   readonly message: string;
   readonly span?: Span;
 }
@@ -30,5 +31,6 @@ export function commConsistencyDiagnostics(
   return errors.map((e) => ({
     message: `communication consistency: ${e.message}`,
     span: e.span,
+    spec: e.spec,
   }));
 }

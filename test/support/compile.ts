@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import type { SpecId } from "../../src/spec/ref.js";
+import { assertCites, describeDiags } from "./spec.js";
 import {
   compileSource,
   type CompileResult,
@@ -26,7 +28,7 @@ export function expectSuccess(result: CompileResult): void {
   assert.equal(
     result.success,
     true,
-    `expected success, errors: ${JSON.stringify(result.errors)}`,
+    `expected success, errors: ${describeDiags(result.errors)}`,
   );
 }
 
@@ -34,6 +36,12 @@ export function expectFailure(result: CompileResult): void {
   assert.equal(result.success, false);
   assert.ok(result.errors.length > 0);
   assert.equal(result.outputs.length, 0);
+}
+
+/** Rejected, and rejected for the rule named. */
+export function expectSpecFailure(result: CompileResult, id: SpecId): void {
+  expectFailure(result);
+  assertCites(result.errors, id);
 }
 
 /**

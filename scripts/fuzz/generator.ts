@@ -4,7 +4,13 @@
  * The generator is written to only ever emit programs the specification says
  * are well typed, so that a type error from the compiler is itself a finding:
  * either the generator misreads a rule, or the checker does.
+ *
+ * The one thing it imports is the spec registry. That is the specification,
+ * not the compiler, so naming a section here still says nothing about how the
+ * compiler is implemented — and a section that spec.md does not have stops
+ * compiling.
  */
+import { specRef, type SpecId } from "../../src/spec/ref.js";
 
 export type Base = "integer" | "float" | "boolean" | "string";
 
@@ -138,7 +144,7 @@ export function assertUsableEndpoints(endpoints: readonly string[]): void {
       fail(
         `endpoint '${name}' collides with the names the generator mints; ` +
           `pick one that is not <v|t|i|p|bad|f><digits> or ` +
-          `${GENERATED_LITERAL_NAMES.join("/")} (spec §6.1)`,
+          `${GENERATED_LITERAL_NAMES.join("/")} ${specRef("namespaces")}`,
       );
     }
   }
@@ -1206,75 +1212,80 @@ class Generator {
 
 export interface ViolationInfo {
   readonly id: string;
-  readonly spec: string;
-  /** The rejection must mention one of these. */
+  /** The rule the injected program breaks. Checked against spec.md by the compiler. */
+  readonly spec: SpecId;
+  /**
+   * Prose the rejection must mention, for violations whose diagnostic does not
+   * cite `spec` yet, or where one section covers several of them. Empty means
+   * the citation is the whole test.
+   */
   readonly expect: readonly string[];
 }
 
 export const VIOLATIONS: readonly ViolationInfo[] = [
-  { id: "binaryMixedLocation", spec: "§7.11", expect: ["same location"] },
-  { id: "binaryEveryWithIndividual", spec: "§7.11", expect: ["same location"] },
-  { id: "assignAcrossLocations", spec: "§16.7", expect: ["transfer instead"] },
-  { id: "transferBaseMismatch", spec: "§16.8", expect: ["transfer type mismatch"] },
-  { id: "transferArrayElementMismatch", spec: "§16.8", expect: ["transfer type mismatch"] },
-  { id: "ifConditionWrongLocation", spec: "§16.9", expect: ["condition", "not usable in local function"] },
-  { id: "whileConditionWrongLocation", spec: "§16.10", expect: ["condition", "not usable in local function"] },
-  { id: "forConditionWrongLocation", spec: "§16.11", expect: ["condition", "not usable in local function"] },
-  { id: "everyValueInLocalFunction", spec: "§16.27", expect: ["local function", "every"] },
-  { id: "otherLocationInLocalFunction", spec: "§16.27", expect: ["local function", "location"] },
-  { id: "arrayInvariance", spec: "§16.33", expect: ["cannot assign integer[]", "invarian"] },
-  { id: "everyArrayToIndividual", spec: "§16.34", expect: ["use a transfer instead", "cannot assign"] },
-  { id: "arrayEquality", spec: "§16.36", expect: ["array", "equal"] },
-  { id: "arrayIndexWrongLocation", spec: "§16.37", expect: ["index"] },
-  { id: "pushWrongElementType", spec: "§16.38", expect: ["cannot assign float", "push", "element"] },
-  { id: "voidVariable", spec: "§16.40", expect: ["void"] },
-  { id: "reservedRuntimeName", spec: "§6.2", expect: ["reserved runtime name"] },
-  { id: "unaryArrayOperand", spec: "§16.42", expect: ["§16.42"] },
+  { id: "binaryMixedLocation", spec: "operators", expect: ["same location"] },
+  { id: "binaryEveryWithIndividual", spec: "operators", expect: ["same location"] },
+  { id: "assignAcrossLocations", spec: "invalid-assignment-across-locations", expect: ["transfer instead"] },
+  { id: "transferBaseMismatch", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
+  { id: "transferArrayElementMismatch", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
+  { id: "ifConditionWrongLocation", spec: "invalid-if-condition", expect: ["condition", "not usable in local function"] },
+  { id: "whileConditionWrongLocation", spec: "invalid-while-condition", expect: ["condition", "not usable in local function"] },
+  { id: "forConditionWrongLocation", spec: "invalid-for-condition", expect: ["condition", "not usable in local function"] },
+  { id: "everyValueInLocalFunction", spec: "invalid-value-used-inside-local-function", expect: ["local function", "every"] },
+  { id: "otherLocationInLocalFunction", spec: "invalid-value-used-inside-local-function", expect: ["local function", "location"] },
+  { id: "arrayInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]", "invarian"] },
+  { id: "everyArrayToIndividual", spec: "err-every-array-assignment", expect: ["use a transfer instead", "cannot assign"] },
+  { id: "arrayEquality", spec: "invalid-array-equality", expect: ["array", "equal"] },
+  { id: "arrayIndexWrongLocation", spec: "invalid-array-index-location", expect: ["index"] },
+  { id: "pushWrongElementType", spec: "invalid-push-element-type", expect: ["cannot assign float", "push", "element"] },
+  { id: "voidVariable", spec: "invalid-use-of-void", expect: ["void"] },
+  { id: "reservedRuntimeName", spec: "function-names", expect: ["reserved runtime name"] },
+  { id: "unaryArrayOperand", spec: "invalid-unary-operand", expect: [] },
   {
     id: "voidEquality",
-    spec: "§16.43",
+    spec: "invalid-comparison-or-equality-operands",
     expect: ["requires operands that produce a value"],
   },
   {
     id: "pushAsExpression",
-    spec: "§16.40",
+    spec: "invalid-use-of-void",
     expect: ["cannot assign void", "produces no value"],
   },
-  { id: "reservedCompilerPrefix", spec: "§6.2", expect: ["reserved runtime name"] },
-  { id: "voidValue", spec: "§16.40", expect: ["produces no value"] },
-  { id: "arrayLiteralWithLocatedElements", spec: "§16.31", expect: ["location annotation required"] },
-  { id: "transferDestinationInLocalFunction", spec: "§8.2", expect: ["variable type must be located at"] },
-  { id: "missingReturnValue", spec: "§16.41", expect: ["§16.41"] },
-  { id: "unknownEndpoint", spec: "§16.1", expect: ["nosuchendpoint"] },
-  { id: "unsupportedEquality", spec: "§16.17", expect: ["'=='"] },
-  { id: "duplicateInScope", spec: "§6.4", expect: ["already", "duplicate", "redeclar"] },
+  { id: "reservedCompilerPrefix", spec: "function-names", expect: ["reserved runtime name"] },
+  { id: "voidValue", spec: "invalid-use-of-void", expect: ["produces no value"] },
+  { id: "arrayLiteralWithLocatedElements", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
+  { id: "transferDestinationInLocalFunction", spec: "local-function-strict-location-rule", expect: ["variable type must be located at"] },
+  { id: "missingReturnValue", spec: "missing-return-in-a-non-void-function", expect: [] },
+  { id: "unknownEndpoint", spec: "unknown-endpoint", expect: ["nosuchendpoint"] },
+  { id: "unsupportedEquality", spec: "unsupported-equality-operators", expect: ["'=='"] },
+  { id: "duplicateInScope", spec: "variable-scope", expect: ["already", "duplicate", "redeclar"] },
   {
     id: "endpointNameAsVariable",
-    spec: "§16.48",
+    spec: "err-name-already-held",
     expect: ["is an endpoint name and cannot be used as a"],
   },
   {
     id: "functionNameAsVariable",
-    spec: "§16.48",
+    spec: "err-name-already-held",
     expect: ["is a function name and cannot be used as a"],
   },
-  { id: "arrayLiteralWithoutLocation", spec: "§16.31", expect: ["location"] },
-  { id: "nestedArray", spec: "§16.30", expect: ["nested", "array"] },
-  { id: "typeMismatch", spec: "§16.6", expect: ["cannot assign boolean"] },
-  { id: "uninitializedLet", spec: "§16.5", expect: ["=", "<-"] },
-  { id: "literalWithoutLocation", spec: "§16.3", expect: ["location"] },
-  { id: "emptyArrayWithoutType", spec: "§16.32", expect: ["element type", "empty"] },
-  { id: "stringArray", spec: "§16.29", expect: ["array element type"] },
-  { id: "breakStatement", spec: "§16.16", expect: ["break"] },
-  { id: "transferLetWithoutAnnotation", spec: "§16.18", expect: ["type annotation required for transfer let"] },
+  { id: "arrayLiteralWithoutLocation", spec: "array-literal-without-required-location", expect: ["location"] },
+  { id: "nestedArray", spec: "nested-array", expect: ["nested", "array"] },
+  { id: "typeMismatch", spec: "type-mismatch", expect: ["cannot assign boolean"] },
+  { id: "uninitializedLet", spec: "uninitialized-let", expect: ["=", "<-"] },
+  { id: "literalWithoutLocation", spec: "location-annotation-omission", expect: ["location"] },
+  { id: "emptyArrayWithoutType", spec: "cannot-infer-empty-array-element-type", expect: ["element type", "empty"] },
+  { id: "stringArray", spec: "unsupported-array-element-type", expect: ["array element type"] },
+  { id: "breakStatement", spec: "err-break-and-continue", expect: ["break"] },
+  { id: "transferLetWithoutAnnotation", spec: "transfer-let-without-type-annotation", expect: ["type annotation required for transfer let"] },
   // Call sites: argument checking and the two call-legality rules.
-  { id: "argumentLocationMismatch", spec: "§16.28", expect: ["argument", "not usable in local function"] },
-  { id: "everyArrayArgumentToIndividual", spec: "§16.35", expect: ["argument", "every", "cannot"] },
-  { id: "crossEndpointLocalCall", spec: "§16.12", expect: ["cannot call"] },
-  { id: "choreographyCallFromLocal", spec: "§16.13", expect: ["cannot call choreography function"] },
+  { id: "argumentLocationMismatch", spec: "invalid-function-argument-location", expect: ["argument", "not usable in local function"] },
+  { id: "everyArrayArgumentToIndividual", spec: "err-every-array-argument", expect: ["argument", "every", "cannot"] },
+  { id: "crossEndpointLocalCall", spec: "calling-another-endpoints-local-function", expect: ["cannot call"] },
+  { id: "choreographyCallFromLocal", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
   {
     id: "shortCircuitChoreographyCall",
-    spec: "§16.46",
+    spec: "choreography-call-in-a-short-circuit-operand",
     expect: ["must not contain a call to choreography function"],
   },
 ];

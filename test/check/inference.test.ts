@@ -207,7 +207,7 @@ return 1@alice;
       ]);
       assert.equal(r.ok, false);
       if (!r.ok) {
-        assert.ok(r.message.includes("§7.14.5"));
+        assert.deepEqual(r.spec, ["mixing-return-and-return-expr"]);
       }
     });
 
@@ -222,7 +222,7 @@ if (true@alice) {
       ]);
       assert.equal(r.ok, false);
       if (!r.ok) {
-        assert.ok(r.message.includes("§7.14.6"));
+        assert.deepEqual(r.spec, ["return-coverage-for-non-void-functions"]);
       }
     });
   });

@@ -1,7 +1,7 @@
 # ChoreoBS examples
 
 Each directory is a self-contained ChoreoBS project: an `index.cbs` and the
-`choreobs.json` that declares its endpoints (spec §2.1).
+`choreobs.json` that declares its endpoints (spec §input-files).
 
 Compile one with:
 

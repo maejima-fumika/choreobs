@@ -1,4 +1,5 @@
 import { positionAt, type Position, type SourceSpan } from "./position.js";
+import type { SpecRefs } from "../spec/ref.js";
 import { lexicalError, type LexicalError } from "./errors.js";
 import {
   TokenKind,
@@ -169,9 +170,10 @@ class Lexer {
           this.pos -= 1;
           this.column -= 1;
           this.error(
-            "unsupported operator '!='; use '!==' (spec §4.6)",
+            "unsupported operator '!='; use '!=='",
             start,
             this.currentPosition(),
+            ["operators-and-punctuation"],
           );
           this.pushPunctuation(TokenKind.Bang, "!", start);
           return;
@@ -187,9 +189,10 @@ class Lexer {
           this.pos -= 1;
           this.column -= 1;
           this.error(
-            "unsupported operator '=='; use '===' (spec §4.6)",
+            "unsupported operator '=='; use '==='",
             start,
             this.currentPosition(),
+            ["operators-and-punctuation"],
           );
           this.pushPunctuation(TokenKind.Assign, "=", start);
           return;
@@ -414,8 +417,8 @@ class Lexer {
     return { start, end };
   }
 
-  private error(message: string, start: Position, end: Position): void {
-    this.errors.push(lexicalError(message, this.spanFrom(start, end)));
+  private error(message: string, start: Position, end: Position, spec: SpecRefs = []): void {
+    this.errors.push(lexicalError(message, this.spanFrom(start, end), spec));
   }
 
   private currentPosition(): Position {

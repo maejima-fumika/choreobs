@@ -1,5 +1,11 @@
 import { isIdentifierName } from "../lexer/index.js";
 import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
+import type { SpecCited } from "../spec/ref.js";
+
+/** Why an endpoint set is rejected, and the rules it breaks. */
+export interface EndpointsProblem extends SpecCited {
+  readonly message: string;
+}
 
 /**
  * Validation of the endpoint set itself (spec §choreobs-json).
@@ -11,13 +17,18 @@ import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
  *
  * Returns the reason a set is rejected, or `undefined` when it is well formed,
  * so that each caller can frame it: {@link loadConfig} prefixes the config
- * path, the driver reports it as a spanless diagnostic.
+ * path, the driver reports it as a spanless diagnostic. The citation rides
+ * alongside the message rather than inside it, so neither framing can flatten
+ * it away.
  */
 export function validateEndpoints(
   endpoints: readonly string[],
-): string | undefined {
+): EndpointsProblem | undefined {
   if (endpoints.includes("every")) {
-    return "'every' must not appear in endpoints (spec §2.2)";
+    return {
+      message: "'every' must not appear in endpoints",
+      spec: ["choreobs-json"],
+    };
   }
   // An endpoint name is written after `@` in the source (spec §types) and is
   // pasted into the output file name (spec §output-files). A name that is not an
@@ -25,14 +36,20 @@ export function validateEndpoints(
   // names a file — `../x` would put that file outside the output directory.
   for (const name of endpoints) {
     if (!isIdentifierName(name)) {
-      return `endpoint ${JSON.stringify(name)} is not a valid identifier (spec §2.2, §4.3, §16.47)`;
+      return {
+        message: `endpoint ${JSON.stringify(name)} is not a valid identifier`,
+        spec: ["choreobs-json", "identifiers", "invalid-endpoint-name"],
+      };
     }
     // The `__` prefix belongs to the compiler (spec §identifiers, §function-names), and a
     // location is written as an identifier like any other name. Reserving it
     // here keeps endpoints consistent with variables, parameters and
     // functions, which the checker already rejects.
     if (name.startsWith(COMPILER_NAME_PREFIX)) {
-      return `endpoint '${name}' must not begin with '${COMPILER_NAME_PREFIX}', which is reserved for the compiler (spec §2.2, §6.2, §16.47)`;
+      return {
+        message: `endpoint '${name}' must not begin with '${COMPILER_NAME_PREFIX}', which is reserved for the compiler`,
+        spec: ["choreobs-json", "function-names", "invalid-endpoint-name"],
+      };
     }
   }
   // A repeated endpoint would give two output files the same name and make one
@@ -40,7 +57,10 @@ export function validateEndpoints(
   const seen = new Set<string>();
   for (const name of endpoints) {
     if (seen.has(name)) {
-      return `duplicate endpoint '${name}' in endpoints (spec §2.2)`;
+      return {
+        message: `duplicate endpoint '${name}' in endpoints`,
+        spec: ["choreobs-json"],
+      };
     }
     seen.add(name);
   }

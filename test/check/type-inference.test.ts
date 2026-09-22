@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import { parse } from "../../src/parser/index.js";
 import { typeCheck } from "../../src/check/index.js";
 import { checkSource } from "../support/pipeline.js";
+import { assertCites, describeDiags } from "../support/spec.js";
+import type { SpecId } from "../../src/spec/ref.js";
 
 
 function expectTypeCheckSuccess(source: string) {
@@ -22,8 +24,15 @@ function expectTypeCheckFailure(
     typeof messageIncludes === "string" ? [messageIncludes] : messageIncludes;
   assert.ok(
     needles.some((needle) => errors.some((e) => e.message.includes(needle))),
-    `expected error containing one of ${JSON.stringify(needles)}: ${JSON.stringify(errors)}`,
+    `expected error containing one of ${JSON.stringify(needles)}: ${describeDiags(errors)}`,
   );
+}
+
+/** Rejected, and rejected for the rule named rather than for its wording. */
+function expectSpecFailure(source: string, id: SpecId) {
+  const { typed, errors } = checkSource(source);
+  assert.equal(typed, null);
+  assertCites(errors, id);
 }
 
 function functionDecl(typed: NonNullable<ReturnType<typeof typeCheck>["typed"]>, index: number) {
@@ -346,7 +355,7 @@ function add@alice(a, b) {
     });
 
     it("rejects mixed bare and value returns (§mixing-return-and-return-expr)", () => {
-      expectTypeCheckFailure(
+      expectSpecFailure(
         `
 function bad@alice(c: boolean@alice) {
   if (c) {
@@ -355,12 +364,12 @@ function bad@alice(c: boolean@alice) {
   return;
 }
 `,
-        "§7.14.5",
+        "mixing-return-and-return-expr",
       );
     });
 
     it("rejects inferred non-void function without return coverage (§return-coverage-for-non-void-functions)", () => {
-      expectTypeCheckFailure(
+      expectSpecFailure(
         `
 function bad@alice(c: boolean@alice) {
   if (c) {
@@ -368,7 +377,7 @@ function bad@alice(c: boolean@alice) {
   }
 }
 `,
-        "§7.14.6",
+        "return-coverage-for-non-void-functions",
       );
     });
 

@@ -1,4 +1,5 @@
 import type { Span } from "../ast/span.js";
+import { specRef } from "../spec/ref.js";
 import type { Location } from "../ast/location.js";
 import type { CommTag, LocatedType, TransferMode } from "../ast/typed.js";
 import type { FunctionDeclaration } from "../ast/declarations.js";
@@ -784,7 +785,7 @@ class Projector {
           return "boolean[]";
         default:
           throw new Error(
-            `internal error: '${type.base}[]' is not a supported array type (spec §7.1.1)`,
+            `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
           );
       }
     }
@@ -957,7 +958,7 @@ class Projector {
         return base;
       case "void":
         throw new Error(
-          "internal error: `void` has no value to transfer (spec §7.3, §16.40)",
+          `internal error: \`void\` has no value to transfer ${specRef("void", "invalid-use-of-void")}`,
         );
       default: {
         const unexpected: never = base;
@@ -979,7 +980,7 @@ class Projector {
           return "booleanArray";
         default:
           throw new Error(
-            `internal error: '${type.base}[]' is not a supported array type (spec §7.1.1)`,
+            `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
           );
       }
     }

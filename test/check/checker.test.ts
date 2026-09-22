@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { checkSource, tagSource } from "../support/pipeline.js";
+import { assertCites } from "../support/spec.js";
 import type { TypedProgram } from "../../src/ast/typed.js";
 
 /**
@@ -610,10 +611,7 @@ function f@alice(c: boolean@alice): integer@alice {
 }
 `);
     assert.equal(typed, null);
-    assert.ok(
-      errors.some((e) => e.message.includes("§16.41")),
-      JSON.stringify(errors),
-    );
+    assertCites(errors, "missing-return-in-a-non-void-function");
   });
 
   it("accepts an explicit non-void return type when both branches return (spec §return-typing)", () => {
@@ -648,10 +646,7 @@ let xs: boolean[]@alice = [true, false]@alice;
 let b = !xs;
 `);
     assert.equal(typed, null);
-    assert.ok(
-      errors.some((e) => e.message.includes("§16.42")),
-      JSON.stringify(errors),
-    );
+    assertCites(errors, "invalid-unary-operand");
   });
 
   it("rejects unary `-` on an array operand (spec §operators, §invalid-unary-operand)", () => {
@@ -660,10 +655,7 @@ let xs: integer[]@alice = [1, 2]@alice;
 let n = -xs;
 `);
     assert.equal(typed, null);
-    assert.ok(
-      errors.some((e) => e.message.includes("§16.42")),
-      JSON.stringify(errors),
-    );
+    assertCites(errors, "invalid-unary-operand");
   });
 
   it("types unary operators at the operand location (spec §operators)", () => {

@@ -1,4 +1,5 @@
 import type { Span } from "../ast/span.js";
+import type { SpecRefs } from "../spec/ref.js";
 import type { Location } from "../ast/location.js";
 import type { TypeAnnotation } from "../ast/syntax-types.js";
 import type { LocatedLiteral, RawLiteral } from "../ast/literals.js";
@@ -25,8 +26,9 @@ export function resolveTypeAnnotation(
   if (ann.base === "void") {
     if (ann.location !== undefined) {
       throw new TypeResolveError(
-        "`void` has no location (spec §7.3, §16.40)",
+        "`void` has no location",
         ann.span,
+        ["void", "invalid-use-of-void"],
       );
     }
     return locatedType("void", inferred ?? { kind: "every" });
@@ -34,8 +36,9 @@ export function resolveTypeAnnotation(
   const location = ann.location?.location ?? inferred;
   if (location === undefined) {
     throw new TypeResolveError(
-      "location annotation required on type (spec §8.1, §16.3)",
+      "location annotation required on type",
       ann.span,
+      ["explicit-location-annotations", "location-annotation-omission"],
     );
   }
   return locatedType(ann.base, location);
@@ -46,8 +49,9 @@ export function resolveLiteralType(lit: LocatedLiteral): LocatedType {
   const base = rawLiteralBaseType(lit.literal);
   if (lit.location === undefined) {
     throw new TypeResolveError(
-      "location annotation required on literal (spec §8.1, §16.3)",
+      "location annotation required on literal",
       lit.span,
+      ["explicit-location-annotations", "location-annotation-omission"],
     );
   }
   return locatedType(base, lit.location.location);
@@ -60,8 +64,9 @@ export function validateArrayTypeAnnotation(ann: TypeAnnotation): void {
   }
   if (ann.base !== "integer" && ann.base !== "float" && ann.base !== "boolean") {
     throw new TypeResolveError(
-      `unsupported array element type '${ann.base}' (spec §16.29)`,
+      `unsupported array element type '${ann.base}'`,
       ann.span,
+      ["unsupported-array-element-type"],
     );
   }
 }
@@ -85,6 +90,7 @@ export class TypeResolveError extends Error {
   constructor(
     message: string,
     readonly span: Span,
+    readonly spec: SpecRefs = [],
   ) {
     super(message);
     this.name = "TypeResolveError";

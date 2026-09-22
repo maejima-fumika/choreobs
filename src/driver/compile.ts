@@ -10,20 +10,30 @@ import {
   assignCommTags,
   commConsistencyDiagnostics,
   verifyCommunicationConsistency,
+  type CommConsistencyDiagnostic,
 } from "../comm/index.js";
+import type { SpecCited } from "../spec/ref.js";
 import {
   loadConfig,
   defaultConfigPath,
   validateEndpoints,
+  ConfigError,
 } from "../config/index.js";
 import type { ChoreoBSConfig } from "../config/types.js";
 import type { LexicalError } from "../lexer/index.js";
+
+/** A failure the driver reports itself: an unreadable or invalid config. */
+export interface DriverDiagnostic extends SpecCited {
+  readonly message: string;
+  readonly span?: { start: number; end: number };
+}
 
 export type CompileDiagnostic =
   | LexicalError
   | ParseError
   | TypeCheckError
-  | { readonly message: string; readonly span?: { start: number; end: number } };
+  | CommConsistencyDiagnostic
+  | DriverDiagnostic;
 
 export interface CompileOutput {
   readonly endpoint: string;
@@ -51,8 +61,11 @@ export function compileFile(
   try {
     config = loadConfig(configPath);
   } catch (e) {
+    // This also catches a missing file and a malformed JSON document, neither
+    // of which breaks a spec rule.
     const message = e instanceof Error ? e.message : String(e);
-    return { success: false, outputs: [], errors: [{ message }] };
+    const spec = e instanceof ConfigError ? e.spec : [];
+    return { success: false, outputs: [], errors: [{ message, spec }] };
   }
   return compileSource(source, cbsPath, config);
 }
@@ -68,7 +81,11 @@ export function compileSource(
   // set is validated here so that no caller can slip past it (spec §choreobs-json).
   const invalidConfig = validateEndpoints(config.endpoints);
   if (invalidConfig !== undefined) {
-    return { success: false, outputs: [], errors: [{ message: invalidConfig }] };
+    return {
+      success: false,
+      outputs: [],
+      errors: [{ message: invalidConfig.message, spec: invalidConfig.spec }],
+    };
   }
 
   const parsed = parse(source);

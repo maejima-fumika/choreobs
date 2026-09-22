@@ -17,6 +17,8 @@ import {
   VIOLATIONS,
   type ViolationInfo,
 } from "./generator.js";
+import { rejectedFor } from "./match.js";
+import { specNumber } from "../../src/spec/ref.js";
 
 interface Tally {
   caught: number;
@@ -108,12 +110,11 @@ function run(): void {
       continue;
     }
 
-    const messages = result.errors.map((e) => e.message);
-    if (messages.some((m) => violation.expect.some((want) => m.includes(want)))) {
+    if (rejectedFor(violation, result.errors)) {
       tally.caught += 1;
     } else {
       tally.wrongReason += 1;
-      const first = messages[0] ?? "(no message)";
+      const first = result.errors[0]?.message ?? "(no message)";
       tally.otherMessages.set(first, (tally.otherMessages.get(first) ?? 0) + 1);
     }
   }
@@ -127,7 +128,7 @@ function run(): void {
     const t = tallies.get(v.id)!;
     const flag = t.missed > 0 ? "  <== SOUNDNESS HOLE" : "";
     console.log(
-      `${v.id.padEnd(width)}  ${v.spec.padEnd(7)} ${String(t.caught).padStart(6)} ${String(t.wrongReason).padStart(6)} ${String(t.missed).padStart(7)} ${String(t.notInjected).padStart(5)}  ${t.contexts.size}${flag}`,
+      `${v.id.padEnd(width)}  ${specNumber(v.spec).padEnd(7)} ${String(t.caught).padStart(6)} ${String(t.wrongReason).padStart(6)} ${String(t.missed).padStart(7)} ${String(t.notInjected).padStart(5)}  ${t.contexts.size}${flag}`,
     );
   }
 
@@ -158,7 +159,7 @@ function run(): void {
     for (const v of holes) {
       const t = tallies.get(v.id)!;
       console.log(
-        `  ${v.id} (${v.spec}): ${t.missed} accepted, first seed ${t.missedSeed}`,
+        `  ${v.id} (${specNumber(v.spec)}): ${t.missed} accepted, first seed ${t.missedSeed}`,
       );
     }
   } else {

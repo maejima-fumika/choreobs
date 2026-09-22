@@ -91,15 +91,15 @@ A violation caught at top level but missed inside a loop body is exactly the
 failure this is built to find. Some violations are only meaningful in some
 contexts — an `@every` value is a violation only inside a local function — and
 the generator shapes the program accordingly (forcing a local function to exist,
-or two local functions at different endpoints for §16.12).
+or two local functions at different endpoints for §calling-another-endpoints-local-function).
 
 ### Still not covered
 
 Violations of rules about whole declarations rather than statements: function
-overloading (§16.15), local function parameter and return locations (§16.25,
-§16.26), `@every` on a function declaration (§16.39), and the recursion rules
-(§10.4, §7.14.8). Those are covered by hand-written tests instead.
+overloading (§function-overloading), local function parameter and return locations (§invalid-local-function-parameter-location,
+§invalid-local-function-return-location), `@every` on a function declaration (§every-on-a-function-declaration), and the recursion rules
+(§recursion, §inference-and-recursion). Those are covered by hand-written tests instead.
 
-`missingReturnValue` (§16.41) is the one declaration-shaped violation the
+`missingReturnValue` (§missing-return-in-a-non-void-function) is the one declaration-shaped violation the
 generator does inject: it suppresses the trailing `return` of a function whose
 return type is written, which needs no extra program structure.

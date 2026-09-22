@@ -3,8 +3,11 @@ import { describe, it } from "node:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, defaultConfigPath } from "../../src/config/index.js";
+import { loadConfig, defaultConfigPath, ConfigError } from "../../src/config/index.js";
 import { validateEndpoints } from "../../src/config/validate.js";
+
+/** The three rules an endpoint name that is not an identifier breaks. */
+const IDENTIFIER_RULES = ["choreobs-json", "identifiers", "invalid-endpoint-name"] as const;
 
 /** Writes `contents` as choreobs.json in a fresh temp dir and loads it. */
 function withConfig<T>(contents: string, run: (path: string) => T): T {
@@ -18,7 +21,7 @@ function withConfig<T>(contents: string, run: (path: string) => T): T {
   }
 }
 
-describe("config — validateEndpoints (spec §2.2)", () => {
+describe("config — validateEndpoints (spec §choreobs-json)", () => {
   it("accepts a well-formed set", () => {
     assert.equal(validateEndpoints(["alice", "bob"]), undefined);
   });
@@ -28,27 +31,27 @@ describe("config — validateEndpoints (spec §2.2)", () => {
   });
 
   it("rejects 'every' as an endpoint name", () => {
-    assert.equal(
+    assert.deepEqual(
       validateEndpoints(["alice", "every"]),
-      "'every' must not appear in endpoints (spec §2.2)",
+      { message: "'every' must not appear in endpoints", spec: ["choreobs-json"] },
     );
   });
 
   it("rejects a duplicate, naming the repeated endpoint", () => {
-    assert.equal(
+    assert.deepEqual(
       validateEndpoints(["alice", "bob", "alice"]),
-      "duplicate endpoint 'alice' in endpoints (spec §2.2)",
+      { message: "duplicate endpoint 'alice' in endpoints", spec: ["choreobs-json"] },
     );
   });
 
   it("reports the first duplicate when several repeat", () => {
-    assert.equal(
+    assert.deepEqual(
       validateEndpoints(["a", "b", "b", "a"]),
-      "duplicate endpoint 'b' in endpoints (spec §2.2)",
+      { message: "duplicate endpoint 'b' in endpoints", spec: ["choreobs-json"] },
     );
   });
 
-  it("accepts every shape an identifier may take (spec §4.3)", () => {
+  it("accepts every shape an identifier may take (spec §identifiers)", () => {
     for (const name of ["a", "_ok", "w1", "A_b9", "top"]) {
       assert.equal(validateEndpoints([name]), undefined, name);
     }
@@ -57,33 +60,36 @@ describe("config — validateEndpoints (spec §2.2)", () => {
   it("accepts a name that is reserved only as a runtime identifier", () => {
     // An endpoint name reaches the output as a string literal and a file name,
     // never as a BlueScript identifier, so it cannot capture a runtime helper
-    // the way a variable of that name would (spec §6.2).
+    // the way a variable of that name would (spec §function-names).
     assert.equal(validateEndpoints(["nothing", "sendInteger"]), undefined);
   });
 
-  it("rejects a name that is not an identifier (spec §4.3)", () => {
+  it("rejects a name that is not an identifier (spec §identifiers)", () => {
     for (const name of ["", "bo b", "1abc", "b\"x", "al\nice", "α", "a-b"]) {
-      assert.equal(
+      assert.deepEqual(
         validateEndpoints(["alice", name]),
-        `endpoint ${JSON.stringify(name)} is not a valid identifier (spec §2.2, §4.3, §16.47)`,
+        { message: `endpoint ${JSON.stringify(name)} is not a valid identifier`, spec: IDENTIFIER_RULES },
         name,
       );
     }
   });
 
   it("rejects a name that would escape the output directory", () => {
-    // `index_<endpoint>.bs` is joined onto the source directory (spec §2.3).
-    assert.equal(
+    // `index_<endpoint>.bs` is joined onto the source directory (spec §output-files).
+    assert.deepEqual(
       validateEndpoints(["alice", "../pwned"]),
-      'endpoint "../pwned" is not a valid identifier (spec §2.2, §4.3, §16.47)',
+      { message: 'endpoint "../pwned" is not a valid identifier', spec: IDENTIFIER_RULES },
     );
   });
 
-  it("rejects the compiler's '__' prefix (spec §4.3, §6.2)", () => {
+  it("rejects the compiler's '__' prefix (spec §identifiers, §function-names)", () => {
     for (const name of ["__", "__evil", "__transfer_0"]) {
-      assert.equal(
+      assert.deepEqual(
         validateEndpoints(["alice", name]),
-        `endpoint '${name}' must not begin with '__', which is reserved for the compiler (spec §2.2, §6.2, §16.47)`,
+        {
+          message: `endpoint '${name}' must not begin with '__', which is reserved for the compiler`,
+          spec: ["choreobs-json", "function-names", "invalid-endpoint-name"],
+        },
         name,
       );
     }
@@ -93,11 +99,11 @@ describe("config — validateEndpoints (spec §2.2)", () => {
     assert.equal(validateEndpoints(["_alice", "_"]), undefined);
   });
 
-  it("rejects a reserved word as an endpoint name (spec §4.4)", () => {
+  it("rejects a reserved word as an endpoint name (spec §keywords)", () => {
     for (const name of ["while", "class", "integer", "function", "null"]) {
-      assert.equal(
+      assert.deepEqual(
         validateEndpoints(["alice", name]),
-        `endpoint ${JSON.stringify(name)} is not a valid identifier (spec §2.2, §4.3, §16.47)`,
+        { message: `endpoint ${JSON.stringify(name)} is not a valid identifier`, spec: IDENTIFIER_RULES },
         name,
       );
     }
@@ -105,17 +111,17 @@ describe("config — validateEndpoints (spec §2.2)", () => {
 
   it("checks 'every' before shape, for the more specific message", () => {
     // `every` is a reserved word too, so the generic shape check would also
-    // catch it — with a message that does not say why (spec §2.2).
-    assert.equal(
+    // catch it — with a message that does not say why (spec §choreobs-json).
+    assert.deepEqual(
       validateEndpoints(["every"]),
-      "'every' must not appear in endpoints (spec §2.2)",
+      { message: "'every' must not appear in endpoints", spec: ["choreobs-json"] },
     );
   });
 
   it("checks 'every' before duplicates", () => {
-    assert.equal(
+    assert.deepEqual(
       validateEndpoints(["alice", "alice", "every"]),
-      "'every' must not appear in endpoints (spec §2.2)",
+      { message: "'every' must not appear in endpoints", spec: ["choreobs-json"] },
     );
   });
 });
@@ -134,10 +140,9 @@ describe("config — loadConfig", () => {
       assert.throws(
         () => loadConfig(path),
         (e: Error) => {
-          assert.equal(
-            e.message,
-            `${path}: duplicate endpoint 'alice' in endpoints (spec §2.2)`,
-          );
+          assert.ok(e instanceof ConfigError);
+          assert.equal(e.message, `${path}: duplicate endpoint 'alice' in endpoints`);
+          assert.deepEqual(e.spec, ["choreobs-json"]);
           return true;
         },
       );
@@ -149,10 +154,9 @@ describe("config — loadConfig", () => {
       assert.throws(
         () => loadConfig(path),
         (e: Error) => {
-          assert.equal(
-            e.message,
-            `${path}: 'every' must not appear in endpoints (spec §2.2)`,
-          );
+          assert.ok(e instanceof ConfigError);
+          assert.equal(e.message, `${path}: 'every' must not appear in endpoints`);
+          assert.deepEqual(e.spec, ["choreobs-json"]);
           return true;
         },
       );

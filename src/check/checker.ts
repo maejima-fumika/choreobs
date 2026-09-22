@@ -85,6 +85,7 @@ import {
   resolveTypeAnnotation,
   validateArrayTypeAnnotation,
 } from "./resolve.js";
+import type { SpecRefs } from "../spec/ref.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
 import { assertNever } from "../util/exhaustive.js";
 import { childExpressions } from "../ast/traverse.js";
@@ -208,16 +209,18 @@ class TypeChecker {
       const existing = this.functions.get(item.name);
       if (existing !== undefined) {
         this.error(
-          `duplicate function '${item.name}' (spec §6.2)`,
+          `duplicate function '${item.name}'`,
           item.span,
+          ["function-names"],
         );
       }
       this.functions.set(item.name, item);
       if (item.at !== undefined) {
         if (item.at.kind === "every") {
           this.error(
-            `function '${item.name}': 'every' is not a function location. A declared location makes a function local and must be individual (spec §10.1, §16.39).`,
+            `function '${item.name}': 'every' is not a function location. A declared location makes a function local and must be individual.`,
             item.span,
+            ["function-kinds", "every-on-a-function-declaration"],
           );
         }
         this.validateLocation(item.at, item.span);
@@ -250,14 +253,16 @@ class TypeChecker {
         }
         if (decl.at === undefined) {
           this.error(
-            `choreography function '${name}' cannot be recursive (spec §10.4)`,
+            `choreography function '${name}' cannot be recursive`,
             decl.span,
+            ["recursion"],
           );
         }
         if (decl.returnType === undefined) {
           this.error(
-            `function '${name}' with omitted return type cannot be recursive (spec §7.14.8)`,
+            `function '${name}' with omitted return type cannot be recursive`,
             decl.span,
+            ["inference-and-recursion"],
           );
         }
       }
@@ -300,8 +305,9 @@ class TypeChecker {
     }
     for (const decl of pending) {
       this.error(
-        `cannot infer return type for '${decl.name}': depends on other functions with omitted return types that are not yet resolved (spec §7.14.4)`,
+        `cannot infer return type for '${decl.name}': depends on other functions with omitted return types that are not yet resolved`,
         decl.span,
+        ["function-return-type-inference"],
       );
     }
   }
@@ -349,7 +355,7 @@ class TypeChecker {
       candidates,
     );
     if (!inferred.ok) {
-      this.error(inferred.message, decl.span);
+      this.error(inferred.message, decl.span, inferred.spec);
     }
     this.validateLocalFunctionLocatedType(
       decl,
@@ -552,8 +558,9 @@ class TypeChecker {
     }
     if (!checkReturnCoverage(decl.body)) {
       this.error(
-        `function '${decl.name}' must return a value on all paths for return type ${formatLocatedType(returnType)} (spec §7.13, §16.41)`,
+        `function '${decl.name}' must return a value on all paths for return type ${formatLocatedType(returnType)}`,
         decl.span,
+        ["return-typing", "missing-return-in-a-non-void-function"],
       );
     }
   }
@@ -609,7 +616,8 @@ class TypeChecker {
       stmt.initializer.kind === "ArrayLiteralExpression" &&
       stmt.initializer.elements.length === 0
     ) {
-      this.error("cannot infer empty array element type (spec §16.32)", stmt.span);
+      this.error("cannot infer empty array element type", stmt.span,
+        ["cannot-infer-empty-array-element-type"]);
     }
     const choreoType =
       stmt.type !== undefined
@@ -640,8 +648,9 @@ class TypeChecker {
   private requireValueExpression(expr: TypedExpression, span: Span): void {
     if (expr.choreoType.base === "void" && expr.choreoType.isArray !== true) {
       this.error(
-        "expression produces no value: `void` may only be used as a function return type (spec §7.2, §7.3, §16.40)",
+        "expression produces no value: `void` may only be used as a function return type",
         span,
+        ["located-types", "void", "invalid-use-of-void"],
       );
     }
   }
@@ -747,7 +756,8 @@ class TypeChecker {
     const elementType = locatedType(arrayType.base, arrayType.location);
     this.validateAssignmentLike(elementType, value.choreoType, span);
     if (!locationsEqual(index.choreoType.location, arrayType.location)) {
-      this.error("array index must be at the same location as the array (spec §16.37)", span);
+      this.error("array index must be at the same location as the array", span,
+        ["invalid-array-index-location"]);
     }
     return { target, arrayType, index, elementType };
   }
@@ -826,7 +836,8 @@ class TypeChecker {
       init.initializer.kind === "ArrayLiteralExpression" &&
       init.initializer.elements.length === 0
     ) {
-      this.error("cannot infer empty array element type (spec §16.32)", init.span);
+      this.error("cannot infer empty array element type", init.span,
+        ["cannot-infer-empty-array-element-type"]);
     }
     const choreoType =
       init.type !== undefined
@@ -914,8 +925,9 @@ class TypeChecker {
     }
     if (returnType.base === "void") {
       this.error(
-        "return with value not allowed for void return type (spec §7.13)",
+        "return with value not allowed for void return type",
         stmt.span,
+        ["return-typing"],
       );
     }
     const value = this.typeReturnValueExpression(
@@ -947,8 +959,9 @@ class TypeChecker {
     if (ctx.kind === "choreography") {
       if (typed.choreoType.location.kind !== "every") {
         this.error(
-          "condition must be boolean@every in a choreography context (spec §7.9)",
+          "condition must be boolean@every in a choreography context",
           expr.span,
+          ["if-condition-typing"],
         );
       }
     } else if (!locationsEqual(typed.choreoType.location, contextAsLocation(ctx))) {
@@ -957,8 +970,9 @@ class TypeChecker {
           ? "every"
           : typed.choreoType.location.name;
       this.error(
-        `condition must be boolean@${ctx.endpoint} in local function, got boolean@${loc} (spec §7.9, §7.10)`,
+        `condition must be boolean@${ctx.endpoint} in local function, got boolean@${loc}`,
         expr.span,
+        ["if-condition-typing", "while-and-for-condition-typing"],
       );
     }
     return typed;
@@ -1031,8 +1045,9 @@ class TypeChecker {
       if (callee !== undefined) {
         this.error(
           `operand of '${expr.operator}' must not contain a call to choreography function ` +
-            `'${callee}' (spec §7.11, §16.46)`,
+            `'${callee}'`,
           expr.span,
+          ["operators", "choreography-call-in-a-short-circuit-operand"],
         );
       }
     }
@@ -1089,7 +1104,8 @@ class TypeChecker {
     }
     if ((eq as readonly string[]).includes(operator)) {
       if (left.isArray || right.isArray) {
-        this.error("array equality is not supported (spec §16.36)", span);
+        this.error("array equality is not supported", span,
+          ["invalid-array-equality"]);
       }
       // `void === void` passes the same-base-type test below, so it needs its
       // own rejection: a void computation produces nothing to compare, and
@@ -1097,8 +1113,9 @@ class TypeChecker {
       // (spec §located-types, §invalid-comparison-or-equality-operands).
       if (left.base === "void" || right.base === "void") {
         this.error(
-          `operator '${operator}' requires operands that produce a value; \`void\` does not (spec §7.2, §16.43)`,
+          `operator '${operator}' requires operands that produce a value; \`void\` does not`,
           span,
+          ["located-types", "invalid-comparison-or-equality-operands"],
         );
       }
       if (left.base !== right.base) {
@@ -1129,8 +1146,9 @@ class TypeChecker {
     if (expr.operator === "!") {
       if (operand.choreoType.isArray === true || operand.choreoType.base !== "boolean") {
         this.error(
-          `operator '!' requires a boolean operand, got ${formatLocatedType(operand.choreoType)} (spec §7.11, §16.42)`,
+          `operator '!' requires a boolean operand, got ${formatLocatedType(operand.choreoType)}`,
           expr.span,
+          ["operators", "invalid-unary-operand"],
         );
       }
       this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
@@ -1142,8 +1160,9 @@ class TypeChecker {
     }
     if (operand.choreoType.isArray === true || !this.isNumeric(operand.choreoType)) {
       this.error(
-        `unary '-' requires a numeric operand, got ${formatLocatedType(operand.choreoType)} (spec §7.11, §16.42)`,
+        `unary '-' requires a numeric operand, got ${formatLocatedType(operand.choreoType)}`,
         expr.span,
+        ["operators", "invalid-unary-operand"],
       );
     }
     this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
@@ -1166,8 +1185,9 @@ class TypeChecker {
     let location = expr.location?.location;
     if (location === undefined) {
       this.error(
-        "array literal location annotation required (spec §5.16, §16.31)",
+        "array literal location annotation required",
         expr.span,
+        ["array-literals", "array-literal-without-required-location"],
       );
     }
     const elements = expr.elements.map((element) =>
@@ -1244,12 +1264,13 @@ class TypeChecker {
     const holder = this.nameHolder(name);
     if (holder !== undefined) {
       this.error(
-        `'${name}' is ${describeHolder(holder)}, not a function (spec §6.1)`,
+        `'${name}' is ${describeHolder(holder)}, not a function`,
         span,
+        ["namespaces"],
       );
     }
     if (this.findVariable(name) !== undefined) {
-      this.error(`'${name}' is a variable, not a function (spec §6.1)`, span);
+      this.error(`'${name}' is a variable, not a function`, span, ["namespaces"]);
     }
     this.error(`undefined function '${name}'`, span);
   }
@@ -1345,8 +1366,9 @@ class TypeChecker {
     if (target.choreoType.isArray !== true) {
       this.error(
         `'${member}' requires an array, got ${formatLocatedType(target.choreoType)}. ` +
-          `The array operations are not defined on scalars, including strings (spec §7.11.1)`,
+          `The array operations are not defined on scalars, including strings`,
         span,
+        ["array-typing"],
       );
     }
   }
@@ -1364,7 +1386,8 @@ class TypeChecker {
       this.error("array index must have type integer", expr.index.span);
     }
     if (!locationsEqual(index.choreoType.location, target.choreoType.location)) {
-      this.error("array index must be at the same location as the array (spec §16.37)", expr.span);
+      this.error("array index must be at the same location as the array", expr.span,
+        ["invalid-array-index-location"]);
     }
     return {
       expr,
@@ -1398,15 +1421,17 @@ class TypeChecker {
     // A local function may only call a local function at the same endpoint.
     if (decl.at === undefined) {
       this.error(
-        `cannot call choreography function '${decl.name}' from local context (spec §7.12, §10.3)`,
+        `cannot call choreography function '${decl.name}' from local context`,
         span,
+        ["function-call-typing", "calling-functions-from-a-local-context"],
       );
     }
     if (decl.at.kind !== "individual" || decl.at.name !== ctx.endpoint) {
       const at = decl.at.kind === "every" ? "every" : decl.at.name;
       this.error(
-        `cannot call function '${decl.name}' at '${at}' from '${ctx.endpoint}' (spec §7.12, §10.3)`,
+        `cannot call function '${decl.name}' at '${at}' from '${ctx.endpoint}'`,
         span,
+        ["function-call-typing", "calling-functions-from-a-local-context"],
       );
     }
   }
@@ -1430,8 +1455,9 @@ class TypeChecker {
     }
     if (!locationsEqual(arg.location, param.location)) {
       this.error(
-        `argument ${formatLocatedType(arg)} is not at parameter location ${formatLocatedType(param)}: use a transfer instead (spec §7.12, §16.28)`,
+        `argument ${formatLocatedType(arg)} is not at parameter location ${formatLocatedType(param)}: use a transfer instead`,
         span,
+        ["function-call-typing", "invalid-function-argument-location"],
       );
     }
   }
@@ -1449,8 +1475,9 @@ class TypeChecker {
     }
     if (!locationsEqual(source.location, target.location)) {
       this.error(
-        `invalid assignment across locations: use a transfer instead (spec §7.7, §16.7)`,
+        `invalid assignment across locations: use a transfer instead`,
         span,
+        ["assignment-typing", "invalid-assignment-across-locations"],
       );
     }
   }
@@ -1469,8 +1496,9 @@ class TypeChecker {
     }
     if (!locationsEqual(value.location, returnType.location)) {
       this.error(
-        `return value ${formatLocatedType(value)} is not at return type location ${formatLocatedType(returnType)} (spec §7.13)`,
+        `return value ${formatLocatedType(value)} is not at return type location ${formatLocatedType(returnType)}`,
         span,
+        ["return-typing"],
       );
     }
   }
@@ -1482,8 +1510,9 @@ class TypeChecker {
   ): TransferMode {
     if (!isArraySubtype(source, target)) {
       this.error(
-        `transfer type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)} (spec §7.8, §16.8)`,
+        `transfer type mismatch: ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
+        ["transfer-typing", "invalid-transfer-base-type"],
       );
     }
     const srcLoc = source.location;
@@ -1542,7 +1571,7 @@ class TypeChecker {
     if (locationsEqual(left, right)) {
       return left;
     }
-    this.error("binary operands must be at the same location (spec §7.11)", span);
+    this.error("binary operands must be at the same location", span, ["operators"]);
   }
 
   private requireExpressionAvailable(
@@ -1590,8 +1619,9 @@ class TypeChecker {
   ): LocatedType {
     if (ann.base === "void" && ann.isArray !== true) {
       this.error(
-        "`void` may only be used as a function return type (spec §7.3, §16.40)",
+        "`void` may only be used as a function return type",
         ann.span,
+        ["void", "invalid-use-of-void"],
       );
     }
     return this.resolveTypeAllowingVoid(ann, inferredLocation);
@@ -1621,7 +1651,7 @@ class TypeChecker {
       return { ...resolved, isArray: ann.isArray === true ? true : undefined };
     } catch (e) {
       if (e instanceof TypeResolveError) {
-        this.error(e.message, e.span);
+        this.error(e.message, e.span, e.spec);
       }
       throw e;
     }
@@ -1636,7 +1666,7 @@ class TypeChecker {
       return resolved;
     } catch (e) {
       if (e instanceof TypeResolveError) {
-        this.error(e.message, e.span);
+        this.error(e.message, e.span, e.spec);
       }
       throw e;
     }
@@ -1648,8 +1678,9 @@ class TypeChecker {
     }
     if (!this.endpoints.has(loc.name)) {
       this.error(
-        `unknown endpoint '${loc.name}' (spec §16.1)`,
+        `unknown endpoint '${loc.name}'`,
         span,
+        ["unknown-endpoint"],
       );
     }
   }
@@ -1682,11 +1713,14 @@ class TypeChecker {
     if (holder === "function" && role === "function") {
       return;
     }
-    const cite =
-      holder === "runtime" ? "spec §6.2, §13.3" : "spec §6.1, §16.48";
+    const spec: SpecRefs =
+      holder === "runtime"
+        ? ["function-names", "codegen-function-names"]
+        : ["namespaces", "err-name-already-held"];
     this.error(
-      `'${name}' is ${describeHolder(holder)} and cannot be used as a ${role} name (${cite})`,
+      `'${name}' is ${describeHolder(holder)} and cannot be used as a ${role} name`,
       span,
+      spec,
     );
   }
 
@@ -1725,7 +1759,8 @@ class TypeChecker {
       this.error(`cannot define '${name}' outside a scope`, span);
     }
     if (env.has(name)) {
-      this.error(`variable '${name}' is already defined in this scope (spec §6.4)`, span);
+      this.error(`variable '${name}' is already defined in this scope`, span,
+        ["variable-scope"]);
     }
     env.set(name, type);
   }
@@ -1738,16 +1773,18 @@ class TypeChecker {
     const holder = this.nameHolder(name);
     if (holder !== undefined) {
       this.error(
-        `'${name}' is ${describeHolder(holder)}, not a value (spec §6.1)`,
+        `'${name}' is ${describeHolder(holder)}, not a value`,
         span,
+        ["namespaces"],
       );
     }
     // Visible nowhere here, but declared at top level: a function body cannot
     // see the top-level scope (spec §top-level-let), which is worth saying outright.
     if (this.topLevelEnv.has(name)) {
       this.error(
-        `'${name}' is a top-level variable and is not visible inside a function (spec §6.6)`,
+        `'${name}' is a top-level variable and is not visible inside a function`,
         span,
+        ["top-level-let"],
       );
     }
     this.error(`undefined variable '${name}'`, span);
@@ -1810,8 +1847,8 @@ class TypeChecker {
   }
 
   /** Report an error and abandon type checking (see {@link FailFast}). */
-  private error(message: string, span: Span): never {
-    this.errors.push(typeCheckError(message, span));
+  private error(message: string, span: Span, spec: SpecRefs = []): never {
+    this.errors.push(typeCheckError(message, span, spec));
     throw new FailFast();
   }
 }

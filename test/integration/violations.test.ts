@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compileSource } from "../../src/driver/index.js";
 import { generate, VIOLATIONS } from "../../scripts/fuzz/generator.js";
+import { rejectedFor } from "../../scripts/fuzz/match.js";
+import { specNumber } from "../../src/spec/ref.js";
 
 /**
  * A fixed slice of the mutation-fuzz corpus (see `scripts/fuzz/violate.ts`).
@@ -17,7 +19,7 @@ const MAX_SEEDS = 80;
 
 describe("injected rule violations are rejected (mutation fuzz corpus)", () => {
   for (const violation of VIOLATIONS) {
-    it(`${violation.id} (${violation.spec})`, () => {
+    it(`${violation.id} (${specNumber(violation.spec)})`, () => {
       let checked = 0;
       for (let seed = 1; seed <= MAX_SEEDS && checked < SAMPLES_PER_VIOLATION; seed += 1) {
         const program = generate({
@@ -35,15 +37,13 @@ describe("injected rule violations are rejected (mutation fuzz corpus)", () => {
         assert.equal(
           result.success,
           false,
-          `seed ${seed}: violation of ${violation.spec} compiled successfully ` +
+          `seed ${seed}: violation of ${specNumber(violation.spec)} compiled successfully ` +
             `(injected in ${program.injected.context})\n\n${program.source}`,
         );
         assert.ok(
-          result.errors.some((e) =>
-            violation.expect.some((want) => e.message.includes(want)),
-          ),
-          `seed ${seed}: rejected, but not for ${violation.spec}: ` +
-            JSON.stringify(result.errors.map((e) => e.message)),
+          rejectedFor(violation, result.errors),
+          `seed ${seed}: rejected, but not for ${specNumber(violation.spec)}: ` +
+            JSON.stringify(result.errors.map((e) => ({ message: e.message, spec: e.spec }))),
         );
       }
       assert.ok(

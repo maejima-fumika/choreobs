@@ -1,3 +1,4 @@
+import { specRef } from "../spec/ref.js";
 import type {
   ProjectedProgram,
   ProjectedFunction,
@@ -145,7 +146,7 @@ class BlueScriptEmitter {
         // Finalized to `null` before cleanup (spec §absent-finalization); reaching the
         // emitter means a projection slot was never traversed.
         throw new Error(
-          "internal error: absent reached code generation (spec §13.7)",
+          `internal error: absent reached code generation ${specRef("absent-finalization")}`,
         );
       case "IntegerLiteralExpression":
         return String(expr.value);

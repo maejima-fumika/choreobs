@@ -9,12 +9,13 @@ import type {
   BroadcastStatement,
 } from "../ir/projected.js";
 import { childExpressions } from "../ir/traverse.js";
+import type { SpecCited, SpecRefs } from "../spec/ref.js";
 import { TOP_SCOPE } from "./tags.js";
 
 /** Scope key for communication tags (spec §communication-tags): top-level or function name. */
 export type CommScopeId = string;
 
-export interface CommConsistencyError {
+export interface CommConsistencyError extends SpecCited {
   readonly message: string;
   readonly span?: Span;
 }
@@ -487,8 +488,8 @@ class CommConsistencyChecker {
     }
   }
 
-  private error(message: string, span?: Span): void {
-    this.errors.push({ message, span });
+  private error(message: string, span?: Span, spec: SpecRefs = []): void {
+    this.errors.push({ message, span, spec });
   }
 }
 
