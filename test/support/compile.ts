@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import type { SpecId } from "../../src/spec/ref.js";
-import { assertCites, describeDiags } from "./spec.js";
+import { describeDiags } from "./spec.js";
 import {
   compileSource,
   type CompileResult,
@@ -38,11 +37,6 @@ export function expectFailure(result: CompileResult): void {
   assert.equal(result.outputs.length, 0);
 }
 
-/** Rejected, and rejected for the rule named. */
-export function expectSpecFailure(result: CompileResult, id: SpecId): void {
-  expectFailure(result);
-  assertCites(result.errors, id);
-}
 
 /**
  * Nothing choreographic may survive into the generated BlueScript: no location

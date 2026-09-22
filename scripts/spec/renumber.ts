@@ -9,9 +9,7 @@
  * It does two things and nothing else — it does not invent slugs, move
  * headings, touch fenced blocks, or read any TypeScript.
  */
-import { parseSpec, type SpecDocument } from "./parse.js";
-
-const LINK = /\[(§|Section )(\d+(?:\.\d+)*)\]\(#([a-z][a-z0-9-]*)\)/g;
+import { LINK_REF, parseSpec, type SpecDocument } from "./parse.js";
 
 /**
  * A heading is numbered if it is written with a number today. Chapters and
@@ -61,7 +59,7 @@ export function renumber(text: string): string {
     .map((line, i) =>
       doc.inFence[i] === true
         ? line
-        : line.replace(LINK, (m, kind: string, _old: string, slug: string) => {
+        : line.replace(LINK_REF, (m, kind: string, _old: string, slug: string) => {
             const number = numbers.get(slug);
             return number === undefined ? m : `[${kind}${number}](#${slug})`;
           }),

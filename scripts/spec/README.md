@@ -29,12 +29,15 @@ npm run spec:check      # verify spec.md and the repo agree
 ## Editing spec.md
 
 - **Adding a section.** Write the heading with any digits in front of the
-  title and an anchor, then run `npm run spec:fmt`. It works out the real
-  number and updates every link that points at a section after it.
+  title, then run `npm run spec:fmt`. It works out the real number, writes an
+  anchor derived from the title, and updates every link that points at a
+  section after it. If that anchor would collide with one already in the
+  document it stops and asks you to write the anchor yourself.
 - **Moving or removing one.** Same: run `spec:fmt`. Nothing outside spec.md
   changes, because nothing outside spec.md names a number.
 - **Renaming one.** Edit the title and leave the anchor alone. The slug is
-  the identity, so no citation breaks.
+  the identity, so no citation breaks — a slug is derived from a title once,
+  when the section is born, and never again.
 - **Numbering rule.** `##` and `###` are always numbered. A `####` is numbered
   only if it already is — whether a sub-subsection is worth citing stays the
   author's call. Ordinals count numbered siblings only.

@@ -11,22 +11,27 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
-import { parseSpec, REPO_ROOT, SPEC_PATH, type SpecDocument } from "./parse.js";
+import {
+  LINK_REF,
+  parseSpec,
+  RAW_REF,
+  REPO_ROOT,
+  SLUG_REF,
+  SPEC_PATH,
+  type SpecDocument,
+} from "./parse.js";
 import { renderSections } from "./registry.js";
 import { renumber } from "./renumber.js";
 import { sourceFiles } from "./files.js";
-
-/** `§7.8` — a number written where a slug belongs. */
-const RAW = /§(\d+(?:\.\d+)*)/g;
-/** `§transfer-typing` — a reference as it should be written in code. */
-const SLUG = /§([a-z][a-z0-9-]*)/g;
-const LINK = /\[(§|Section )(\d+(?:\.\d+)*)\]\(#([a-z][a-z0-9-]*)\)/g;
 
 /**
  * The modules that define the notation and explain its hazards. Their `§7.8`s
  * are examples of the form, not citations of a section.
  */
 const NOTATION_MODULES = ["src/spec/", "scripts/spec/"];
+
+/** `Section 7.11` / `Sections 7.11 and 7.11.1` written as plain prose. */
+const PROSE_REF = /\bSections? \d+(\.\d+)*/;
 
 export interface Finding {
   readonly where: string;
@@ -56,7 +61,7 @@ function checkHeadings(doc: SpecDocument, add: (w: string, m: string) => void): 
   for (const h of doc.headings) {
     const where = `spec.md:${h.line}`;
     if (!h.anchored) {
-      add(where, `heading '${h.title}' has no <a id="..."> anchor`);
+      add(where, `heading '${h.title}' has no anchor — run \`npm run spec:fmt\``);
     }
     if (h.title.includes("<a ")) {
       add(where, `heading '${h.title}' carries more than one anchor`);
@@ -79,20 +84,20 @@ function checkSpecBody(doc: SpecDocument, add: (w: string, m: string) => void): 
   doc.lines.forEach((line, i) => {
     const where = `spec.md:${i + 1}`;
     if (doc.inFence[i] === true) {
-      for (const m of line.matchAll(RAW)) {
+      for (const m of line.matchAll(RAW_REF)) {
         add(where, `§${m[1]} inside a code block: write §slug there`);
       }
       return;
     }
     // Outside a fence every reference must be a link, so that renumbering can
     // refill its text.
-    for (const m of line.matchAll(RAW)) {
+    for (const m of line.matchAll(RAW_REF)) {
       const linked = line[m.index - 1] === "[" && line.slice(m.index + m[0].length).startsWith("](#");
       if (!linked) {
         add(where, `bare §${m[1]} in prose: write [§${m[1]}](#slug)`);
       }
     }
-    for (const m of line.matchAll(LINK)) {
+    for (const m of line.matchAll(LINK_REF)) {
       const target = doc.bySlug.get(m[3]!);
       if (target === undefined) {
         add(where, `link to #${m[3]}, which is not a heading`);
@@ -102,12 +107,12 @@ function checkSpecBody(doc: SpecDocument, add: (w: string, m: string) => void): 
         add(where, `link reads §${m[2]} but #${m[3]} is §${target.number}`);
       }
     }
-  });
-  for (const line of doc.lines) {
-    if (/\bSections? \d+(\.\d+)*/.test(line.replace(LINK, ""))) {
-      add("spec.md", `unlinked prose reference: ${line.trim().slice(0, 80)}`);
+    // "Sections 7.11 and 7.11.1" names sections without linking them, so
+    // nothing would keep it in step with a renumber.
+    if (PROSE_REF.test(line.replace(LINK_REF, ""))) {
+      add(where, `unlinked prose reference: ${line.trim().slice(0, 80)}`);
     }
-  }
+  });
 }
 
 function checkSources(doc: SpecDocument, add: (w: string, m: string) => void): void {
@@ -120,12 +125,12 @@ function checkSources(doc: SpecDocument, add: (w: string, m: string) => void): v
     if (!text.includes("§")) {
       continue;
     }
-    for (const m of text.matchAll(SLUG)) {
+    for (const m of text.matchAll(SLUG_REF)) {
       if (!doc.bySlug.has(m[1]!)) {
         add(rel, `§${m[1]} is not a section of spec.md`);
       }
     }
-    for (const m of text.matchAll(RAW)) {
+    for (const m of text.matchAll(RAW_REF)) {
       add(rel, `§${m[1]} is a section number: cite the slug instead`);
     }
   }
