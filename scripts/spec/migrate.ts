@@ -81,15 +81,17 @@ function stepLinks(doc: SpecDocument): string {
       if (doc.inFence[i] === true) {
         return line.replace(REF, (_m, num: string) => `§${requireNumber(doc, num, where).slug}`);
       }
+      // `offset` is into the string being replaced, so the guard has to read
+      // that string and not the one the previous replace started from.
       return outsideCodeSpans(line, (segment) =>
         segment
-          .replace(SECTION_REF, (m, num: string, offset: number) =>
-            alreadyLinked(segment, offset, m.length)
+          .replace(SECTION_REF, (m, num: string, offset: number, whole: string) =>
+            alreadyLinked(whole, offset, m.length)
               ? m
               : `[Section ${num}](#${requireNumber(doc, num, where).slug})`,
           )
-          .replace(REF, (m, num: string, offset: number) =>
-            alreadyLinked(segment, offset, m.length)
+          .replace(REF, (m, num: string, offset: number, whole: string) =>
+            alreadyLinked(whole, offset, m.length)
               ? m
               : `[§${num}](#${requireNumber(doc, num, where).slug})`,
           ),
