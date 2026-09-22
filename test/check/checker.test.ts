@@ -193,7 +193,16 @@ function f@alice(): integer@alice {
 }
 `);
     assert.equal(typed, null);
-    assert.ok(errors.some((e) => e.message.includes("undefined variable 'x'")));
+    // `x` exists; it is the top-level scope that a function body cannot see
+    // (spec §6.6), and the diagnostic says so rather than calling it undefined.
+    assert.ok(
+      errors.some((e) =>
+        e.message.includes(
+          "'x' is a top-level variable and is not visible inside a function",
+        ),
+      ),
+      JSON.stringify(errors),
+    );
   });
 
   it("rejects cross-node local function calls (spec §16.12)", () => {
@@ -344,6 +353,211 @@ function __array@alice(): void {
       errors.some((e) => e.message.includes("reserved runtime name")),
       JSON.stringify(errors),
     );
+  });
+
+  describe("one value name space (spec §6.1, §16.48)", () => {
+    // Endpoints, functions and variables share it, because generated
+    // BlueScript keeps the source name (spec §13.3) and has only one.
+    const rejects = (source: string, needle: string) => {
+      const { typed, errors } = checkSource(source);
+      assert.equal(typed, null, "expected the program to be rejected");
+      assert.ok(
+        errors.some((e) => e.message.includes(needle)),
+        JSON.stringify(errors),
+      );
+    };
+
+    describe("a function name is taken program-wide", () => {
+      it("rejects a variable of that name", () => {
+        rejects(
+          `function g@alice(): integer@alice { return 1@alice; }
+let g: integer@alice = 5@alice;`,
+          "'g' is a function name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects a variable of that name declared before the function", () => {
+        // Functions are hoisted (spec §6.3), so declaration order is not a
+        // way around the rule.
+        rejects(
+          `let g: integer@alice = 5@alice;
+function g@alice(): integer@alice { return 1@alice; }`,
+          "'g' is a function name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects a parameter of that name", () => {
+        rejects(
+          `function g@alice(): integer@alice { return 1@alice; }
+function h@alice(g: integer@alice): integer@alice { return g; }`,
+          "'g' is a function name and cannot be used as a parameter name",
+        );
+      });
+
+      it("rejects a local shadowing it inside a function body", () => {
+        // This is the case that used to type-check and emit BlueScript in
+        // which `g()` reached the variable instead of the function.
+        rejects(
+          `function g@alice(): integer@alice { return 1@alice; }
+function h@alice(): integer@alice {
+  let g: integer@alice = 5@alice;
+  return g + g();
+}`,
+          "'g' is a function name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects a `for` loop variable of that name", () => {
+        rejects(
+          `function i@alice(): integer@alice { return 1@alice; }
+for (let i = 0@every; i < 3@every; i = i + 1@every) { }`,
+          "'i' is a function name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects a transfer destination of that name", () => {
+        rejects(
+          `function y@alice(): integer@alice { return 1@alice; }
+let x: integer@alice = 1@alice;
+let y: integer@bob <- x;`,
+          "'y' is a function name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects it even at a different endpoint from the function", () => {
+        // The rule is program-wide, not per output file (spec §6.1).
+        rejects(
+          `function g@alice(): integer@alice { return 1@alice; }
+function h@bob(g: integer@bob): integer@bob { return g; }`,
+          "'g' is a function name and cannot be used as a parameter name",
+        );
+      });
+    });
+
+    describe("an endpoint name is taken program-wide", () => {
+      it("rejects a variable of that name", () => {
+        rejects(
+          `let alice: integer@alice = 1@alice;`,
+          "'alice' is an endpoint name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects a function of that name", () => {
+        // spec §6.1 used to give exactly this as an allowed example.
+        rejects(
+          `function alice@alice(): void { return; }`,
+          "'alice' is an endpoint name and cannot be used as a function name",
+        );
+      });
+
+      it("rejects a parameter of that name", () => {
+        rejects(
+          `function f@alice(bob: integer@alice): void { return; }`,
+          "'bob' is an endpoint name and cannot be used as a parameter name",
+        );
+      });
+
+      it("reserves an endpoint the source never mentions", () => {
+        // `bob` is declared in choreobs.json but unused here; the name is
+        // taken all the same (spec §2.2, §6.1).
+        rejects(
+          `let bob: integer@alice = 1@alice;`,
+          "'bob' is an endpoint name and cannot be used as a variable name",
+        );
+      });
+
+      it("rejects a local shadowing it inside a function body", () => {
+        rejects(
+          `function f@alice(): integer@alice {
+  let bob: integer@alice = 1@alice;
+  return bob;
+}`,
+          "'bob' is an endpoint name and cannot be used as a variable name",
+        );
+      });
+    });
+
+    describe("a use says what the name actually is (spec §6.1)", () => {
+      // One name is held by at most one thing, so a use that does not fit the
+      // position can name what it found instead of only what it did not.
+      it("reports a function name used as a value", () => {
+        rejects(
+          `function g@alice(): integer@alice { return 1@alice; }
+let y: integer@alice = g;`,
+          "'g' is a function name, not a value",
+        );
+      });
+
+      it("reports an endpoint name used as a value", () => {
+        rejects(
+          `let y: integer@alice = alice;`,
+          "'alice' is an endpoint name, not a value",
+        );
+      });
+
+      it("reports a reserved runtime name used as a value", () => {
+        rejects(
+          `let y: integer@alice = sendInteger;`,
+          "'sendInteger' is a reserved runtime name, not a value",
+        );
+      });
+
+      it("reports a variable used as a callee", () => {
+        rejects(
+          `let v: integer@alice = 1@alice;
+let y: integer@alice = v();`,
+          "'v' is a variable, not a function",
+        );
+      });
+
+      it("reports an endpoint name used as a callee", () => {
+        rejects(
+          `let y: integer@alice = bob();`,
+          "'bob' is an endpoint name, not a function",
+        );
+      });
+
+      it("still says 'undefined variable' when nothing holds the name", () => {
+        rejects(`let y: integer@alice = zzz;`, "undefined variable 'zzz'");
+      });
+
+      it("still says 'undefined function' when nothing holds the name", () => {
+        rejects(`let y: integer@alice = zzz();`, "undefined function 'zzz'");
+      });
+    });
+
+    describe("variables still shadow each other (spec §6.4)", () => {
+      it("allows an inner block to shadow an outer variable", () => {
+        const { typed, errors } = checkSource(`
+let c: boolean@every = true@every;
+let x: integer@alice = 1@alice;
+if (c) { let x: integer@alice = 2@alice; }
+`);
+        assert.equal(errors.length, 0, JSON.stringify(errors));
+        assert.ok(typed);
+      });
+
+      it("allows a `let` to shadow a parameter", () => {
+        const { typed, errors } = checkSource(`
+function f@alice(p: integer@alice): integer@alice {
+  let p: integer@alice = 1@alice;
+  return p;
+}
+`);
+        assert.equal(errors.length, 0, JSON.stringify(errors));
+        assert.ok(typed);
+      });
+
+      it("allows names that resemble but do not equal a reserved one", () => {
+        const { typed, errors } = checkSource(`
+function alice2@alice(): integer@alice { return 1@alice; }
+let bobbie: integer@alice = alice2();
+let aliceCount: integer@alice = 1@alice;
+`);
+        assert.equal(errors.length, 0, JSON.stringify(errors));
+        assert.ok(typed);
+      });
+    });
   });
 
   describe("`length` and `push` are ordinary names (spec §6.2)", () => {

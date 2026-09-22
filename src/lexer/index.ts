@@ -18,4 +18,4 @@ export {
   type EOFToken,
 } from "./tokens.js";
 
-export { tokenize, type TokenizeResult } from "./lexer.js";
+export { tokenize, isIdentifierName, type TokenizeResult } from "./lexer.js";

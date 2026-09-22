@@ -49,7 +49,7 @@ function gain@controller(): float@controller {
     return 0.6@controller;
 }
 
-function command@controller(position: float@controller): float@controller {
+function commandFor@controller(position: float@controller): float@controller {
     let goal = target();
     let k = gain();
     let error = goal - position;
@@ -126,7 +126,7 @@ while (running) {
     observe(trail, atMonitor);
 
     // The controller computes a command and sends it to the plant.
-    let nextCommand: float@controller = command(atController);
+    let nextCommand: float@controller = commandFor(atController);
     let atActuator: float@actuator <- nextCommand;
     position = applyStep(position, atActuator);
     remember(history, position);

@@ -687,17 +687,18 @@ class Projector {
         );
       }
       case "LengthExpression": {
-        const length = expr as TypedLengthExpression;
-        return this.nothingExpression([this.projectDiscarded(length.target)], span);
+        // The receiver is a variable (spec §5.14), so reading it cannot call
+        // anything and the length itself is not taken here: nothing is left to
+        // evaluate. Cleanup removes the `nothing()` (spec §13.9).
+        return this.nothingExpression([], span);
       }
       case "PushExpression": {
         // The append belongs to the array, so it does not happen here; the
-        // receiver and the argument are still evaluated, in order (spec §5.17).
+        // argument is still evaluated (spec §5.17). The receiver is a variable
+        // (spec §5.14), so evaluating it has no effect to preserve — the same
+        // reason `discardedTargetParts` drops it for `xs[i] = v`.
         const push = expr as TypedPushExpression;
-        return this.nothingExpression(
-          [this.projectDiscarded(push.target), this.projectDiscarded(push.value)],
-          span,
-        );
+        return this.nothingExpression([this.projectDiscarded(push.value)], span);
       }
       case "ArrayLiteralExpression": {
         const array = expr as TypedArrayLiteralExpression;

@@ -112,6 +112,18 @@ export function typeCheck(
   return checker.check();
 }
 
+/** How a {@link TypeChecker.nameHolder} result reads in a diagnostic. */
+function describeHolder(holder: "runtime" | "endpoint" | "function"): string {
+  switch (holder) {
+    case "runtime":
+      return "a reserved runtime name";
+    case "endpoint":
+      return "an endpoint name";
+    case "function":
+      return "a function name";
+  }
+}
+
 /**
  * The location a function's body is anchored at, for return type inference.
  * A choreography function is anchored at `every` (spec §7.14.4).
@@ -192,7 +204,7 @@ class TypeChecker {
       if (item.kind !== "FunctionDeclaration") {
         continue;
       }
-      this.rejectReservedRuntimeName(item.name, "function", item.span);
+      this.rejectNameConflict(item.name, "function", item.span);
       const existing = this.functions.get(item.name);
       if (existing !== undefined) {
         this.error(
@@ -486,7 +498,7 @@ class TypeChecker {
         param.span,
         "parameter",
       );
-      this.rejectReservedRuntimeName(param.name, "parameter", param.span);
+      this.rejectNameConflict(param.name, "parameter", param.span);
       if (env.has(param.name)) {
         this.error(
           `duplicate parameter '${param.name}' in the same scope`,
@@ -1222,13 +1234,33 @@ class TypeChecker {
     return { expr, choreoType };
   }
 
+  /**
+   * Reports a callee that names no function (spec §6.1).
+   *
+   * Since one name is held by at most one thing, this can name what the callee
+   * actually is instead of only reporting the absence of a function.
+   */
+  private reportNotAFunction(name: string, span: Span): never {
+    const holder = this.nameHolder(name);
+    if (holder !== undefined) {
+      this.error(
+        `'${name}' is ${describeHolder(holder)}, not a function (spec §6.1)`,
+        span,
+      );
+    }
+    if (this.findVariable(name) !== undefined) {
+      this.error(`'${name}' is a variable, not a function (spec §6.1)`, span);
+    }
+    this.error(`undefined function '${name}'`, span);
+  }
+
   private checkCall(
     expr: CallExpression,
     ctx: ExecutionContext,
   ): TypedCallExpression {
     const decl = this.functions.get(expr.callee);
     if (decl === undefined) {
-      this.error(`undefined function '${expr.callee}'`, expr.span);
+      this.reportNotAFunction(expr.callee, expr.span);
     }
     this.validateCallTarget(decl, expr.span);
     const symbol = this.functionSymbol(decl);
@@ -1623,25 +1655,71 @@ class TypeChecker {
   }
 
   /**
-   * Generated BlueScript keeps the source name (spec §13.3), so a user
-   * identifier that collides with a runtime support function would capture the
-   * compiler's own call to it (spec §6.2, §13.8, §14.1).
+   * The single gate every declared name passes through (spec §6.1).
+   *
+   * Endpoints, functions and variables share one value name space, because
+   * generated BlueScript keeps the source name (spec §13.3) and has only one:
+   * a variable emitted beside a function of the same name shadows it, and the
+   * call the program meant to make would reach the variable instead.
+   *
+   * Endpoint names and function names are taken program-wide — endpoints
+   * because they are declared in `choreobs.json` (spec §2.2), functions
+   * because they are global and hoisted (spec §6.2, §6.3). Variables and
+   * parameters are block-scoped and may still shadow each other (spec §6.4);
+   * they may not take a name either of the other two already holds.
    */
-  private rejectReservedRuntimeName(
+  private rejectNameConflict(
     name: string,
     role: "function" | "variable" | "parameter",
     span: Span,
   ): void {
-    if (isReservedRuntimeName(name)) {
-      this.error(
-        `'${name}' is a reserved runtime name and cannot be used as a ${role} name (spec §6.2, §13.3)`,
-        span,
-      );
+    const holder = this.nameHolder(name);
+    if (holder === undefined) {
+      return;
     }
+    // A function redeclaration is reported by `collectFunctions` with its own,
+    // more specific message (spec §6.2).
+    if (holder === "function" && role === "function") {
+      return;
+    }
+    const cite =
+      holder === "runtime" ? "spec §6.2, §13.3" : "spec §6.1, §16.48";
+    this.error(
+      `'${name}' is ${describeHolder(holder)} and cannot be used as a ${role} name (${cite})`,
+      span,
+    );
+  }
+
+  /**
+   * What already holds `name` in the value name space (spec §6.1), if
+   * anything.
+   *
+   * One name is held by at most one of these, which is what lets a use of a
+   * name say what it actually is rather than only what it is not. Consulted
+   * both where a name is declared ({@link rejectNameConflict}) and where one
+   * is used and turns out not to be what the position needs.
+   *
+   * Both tables are complete before any of those questions is asked:
+   * `endpoints` is fixed at construction, `functions` by `collectFunctions`,
+   * which runs before any body is checked.
+   */
+  private nameHolder(
+    name: string,
+  ): "runtime" | "endpoint" | "function" | undefined {
+    if (isReservedRuntimeName(name)) {
+      return "runtime";
+    }
+    if (this.endpoints.has(name)) {
+      return "endpoint";
+    }
+    if (this.functions.has(name)) {
+      return "function";
+    }
+    return undefined;
   }
 
   private defineLocal(name: string, type: LocatedType, span: Span): void {
-    this.rejectReservedRuntimeName(name, "variable", span);
+    this.rejectNameConflict(name, "variable", span);
     const env = this.currentEnv();
     if (env === undefined) {
       this.error(`cannot define '${name}' outside a scope`, span);
@@ -1653,6 +1731,30 @@ class TypeChecker {
   }
 
   private lookupVariable(name: string, span: Span): LocatedType {
+    const hit = this.findVariable(name);
+    if (hit !== undefined) {
+      return hit;
+    }
+    const holder = this.nameHolder(name);
+    if (holder !== undefined) {
+      this.error(
+        `'${name}' is ${describeHolder(holder)}, not a value (spec §6.1)`,
+        span,
+      );
+    }
+    // Visible nowhere here, but declared at top level: a function body cannot
+    // see the top-level scope (spec §6.6), which is worth saying outright.
+    if (this.topLevelEnv.has(name)) {
+      this.error(
+        `'${name}' is a top-level variable and is not visible inside a function (spec §6.6)`,
+        span,
+      );
+    }
+    this.error(`undefined variable '${name}'`, span);
+  }
+
+  /** Resolves a variable without reporting when there is none. */
+  private findVariable(name: string): LocatedType | undefined {
     for (let i = this.envStack.length - 1; i >= 0; i--) {
       const hit = this.envStack[i]!.get(name);
       if (hit !== undefined) {
@@ -1660,12 +1762,9 @@ class TypeChecker {
       }
     }
     if (this.currentFunction === undefined) {
-      const top = this.topLevelEnv.get(name);
-      if (top !== undefined) {
-        return top;
-      }
+      return this.topLevelEnv.get(name);
     }
-    this.error(`undefined variable '${name}'`, span);
+    return undefined;
   }
 
   private pushEnv(env: Map<string, LocatedType>): void {

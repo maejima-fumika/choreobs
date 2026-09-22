@@ -50,6 +50,25 @@ export function tokenize(source: string): TokenizeResult {
   return new Lexer(source).tokenize();
 }
 
+/**
+ * Whether `name` is something the source could write as an identifier
+ * (spec §4.3): the right shape, and not a reserved word (spec §4.4).
+ *
+ * Answered by running the real lexer rather than by a second copy of the rule,
+ * so that a change to identifier syntax or to {@link KEYWORDS} cannot leave
+ * this behind. Endpoint names are checked with it (spec §2.2): a name the
+ * source cannot write after `@` names an endpoint no program can reach.
+ */
+export function isIdentifierName(name: string): boolean {
+  const { tokens, errors } = tokenize(name);
+  return (
+    errors.length === 0 &&
+    tokens.length === 2 &&
+    tokens[0]!.kind === TokenKind.Identifier &&
+    tokens[1]!.kind === TokenKind.EOF
+  );
+}
+
 class Lexer {
   private readonly tokens: Token[] = [];
   private readonly errors: LexicalError[] = [];

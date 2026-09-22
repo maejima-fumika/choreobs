@@ -66,6 +66,9 @@ const NEEDS_TWO_FUNCTIONS = new Set([
   "crossEndpointLocalCall",
   "choreographyCallFromLocal",
   "shortCircuitChoreographyCall",
+  // A function is registered only once its own body is done, so taking a
+  // function's name needs a second function for the injection to land in.
+  "functionNameAsVariable",
 ]);
 
 const INTEGER: Ty = { base: "integer", isArray: false };
@@ -98,6 +101,47 @@ function subtypesOf(ty: Ty): readonly Ty[] {
 
 export function generate(options: GenOptions): GeneratedProgram {
   return new Generator(options).run();
+}
+
+/**
+ * Every prefix the generator mints names with: variables (`declareName`,
+ * `genFor`), parameters, and the violation temporaries. Function names use
+ * `f<n>` from their own counter.
+ */
+const GENERATED_NAME = /^(?:v|t|i|p|bad|f)\d+$/;
+
+/** Identifiers the violation cases emit verbatim. */
+const GENERATED_LITERAL_NAMES = ["sendInteger", "nosuchendpoint"];
+
+/**
+ * Rejects an endpoint set the generator cannot safely generate against.
+ *
+ * Endpoints, functions and variables share one name space (spec §6.1), so an
+ * endpoint named like something the generator mints — `f1`, `v2`, the
+ * `sendInteger` it uses for the reserved-name violation — would make its
+ * *valid* programs violate §6.1 or §6.2. `run.ts` would then report those
+ * rejections as compiler bugs, and `violate.ts` would count them as caught
+ * violations for the wrong reason. The prefixes are load-bearing, so the
+ * assumption is checked rather than left implicit.
+ */
+export function assertUsableEndpoints(endpoints: readonly string[]): void {
+  const fail = (message: string): never => {
+    console.error(`error: ${message}`);
+    process.exit(1);
+  };
+  // Two are needed to transfer at all, and `--vary` divides by one less.
+  if (endpoints.length < 2) {
+    fail(`need at least 2 endpoints, got ${endpoints.length}`);
+  }
+  for (const name of endpoints) {
+    if (GENERATED_NAME.test(name) || GENERATED_LITERAL_NAMES.includes(name)) {
+      fail(
+        `endpoint '${name}' collides with the names the generator mints; ` +
+          `pick one that is not <v|t|i|p|bad|f><digits> or ` +
+          `${GENERATED_LITERAL_NAMES.join("/")} (spec §6.1)`,
+      );
+    }
+  }
 }
 
 class Generator {
@@ -1009,6 +1053,23 @@ class Generator {
         lines.push(`let ${n}: integer@${p} = 1@${p};`);
         lines.push(`let ${n}: integer@${p} = 2@${p};`);
         break;
+      case "endpointNameAsVariable":
+        // Endpoints, functions and variables share one name space (spec §6.1),
+        // so a declared endpoint's name is not available to a variable. `q` is
+        // deliberately not the location written after `@`, matching the
+        // example in spec §16.48.
+        lines.push(`let ${q}: integer@${p} = 1@${p};`);
+        break;
+      case "functionNameAsVariable": {
+        // `fns` holds the functions emitted above this point. Not filtered by
+        // `callableFrom`: a conflict with a local function at another endpoint
+        // is an error all the same, because the rule is stated over the whole
+        // program and not per output file (spec §6.1).
+        const taken = this.fns[0];
+        if (taken === undefined) return false;
+        lines.push(`let ${taken.name}: integer@${p} = 1@${p};`);
+        break;
+      }
       case "arrayLiteralWithoutLocation":
         lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
         break;
@@ -1187,6 +1248,16 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "unknownEndpoint", spec: "§16.1", expect: ["nosuchendpoint"] },
   { id: "unsupportedEquality", spec: "§16.17", expect: ["'=='"] },
   { id: "duplicateInScope", spec: "§6.4", expect: ["already", "duplicate", "redeclar"] },
+  {
+    id: "endpointNameAsVariable",
+    spec: "§16.48",
+    expect: ["is an endpoint name and cannot be used as a"],
+  },
+  {
+    id: "functionNameAsVariable",
+    spec: "§16.48",
+    expect: ["is a function name and cannot be used as a"],
+  },
   { id: "arrayLiteralWithoutLocation", spec: "§16.31", expect: ["location"] },
   { id: "nestedArray", spec: "§16.30", expect: ["nested", "array"] },
   { id: "typeMismatch", spec: "§16.6", expect: ["cannot assign boolean"] },

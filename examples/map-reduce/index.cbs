@@ -109,7 +109,7 @@ function reduceCount@driver(a: integer@driver, b: integer@driver): integer@drive
     return a + b;
 }
 
-function mean@driver(total: float@driver, n: integer@driver): float@driver {
+function meanOf@driver(total: float@driver, n: integer@driver): float@driver {
     if (n === 0@driver) {
         return 0.0@driver;
     }
@@ -148,7 +148,7 @@ let c2: integer@driver <- partialCount2;
 
 let totalSum: float@driver = reduceSum(s1, s2);
 let totalCount: integer@driver = reduceCount(c1, c2);
-let globalMean: float@driver = mean(totalSum, totalCount);
+let globalMean: float@driver = meanOf(totalSum, totalCount);
 
 // ---------------------------------------------------------------------------
 // Pass 2: every worker needs the same mean, so it is broadcast

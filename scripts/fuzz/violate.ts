@@ -11,7 +11,12 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { compileSource } from "../../src/driver/index.js";
-import { generate, VIOLATIONS, type ViolationInfo } from "./generator.js";
+import {
+  assertUsableEndpoints,
+  generate,
+  VIOLATIONS,
+  type ViolationInfo,
+} from "./generator.js";
 
 interface Tally {
   caught: number;
@@ -39,6 +44,7 @@ function parseArgs(argv: readonly string[]) {
 
 function run(): void {
   const args = parseArgs(process.argv.slice(2));
+  assertUsableEndpoints(args.endpoints);
   const violations: readonly ViolationInfo[] =
     args.only === "" ? VIOLATIONS : VIOLATIONS.filter((v) => v.id === args.only);
   if (violations.length === 0) {

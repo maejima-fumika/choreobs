@@ -9,7 +9,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { compileSource } from "../../src/driver/index.js";
-import { generate } from "./generator.js";
+import { assertUsableEndpoints, generate } from "./generator.js";
 
 type Verdict = "ok" | "crash" | "commConsistency" | "rejected" | "badOutput";
 
@@ -79,6 +79,7 @@ function normalizeMessage(message: string): string {
 
 function run(): void {
   const args = parseArgs(process.argv.slice(2));
+  assertUsableEndpoints(args.endpoints);
   const counts: Record<Verdict, number> = {
     ok: 0,
     crash: 0,

@@ -417,7 +417,7 @@ let v: integer@alice = xs[sends()];
 let xs: integer[]@alice = [0]@alice;
 xs.push(sends());
 `),
-        /^nothing\(null, sends\(\)\);$/m,
+        /^nothing\(sends\(\)\);$/m,
       );
     });
   });

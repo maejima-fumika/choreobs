@@ -83,8 +83,12 @@ project/
 
 * `endpoints` must be an array of strings.
 * Each string in `endpoints` names one endpoint and defines an individual location.
+* Each name is held in the value namespace for the whole program (spec §6.1): no function, variable or parameter may take an endpoint's name, whether or not the source ever writes `@` with it.
+* Each name must be an identifier (spec §4.3) and must not be a reserved word (spec §4.4). An endpoint name is written after `@` in the source (spec §5.2) and is also pasted into the output file name (spec §2.3): a name that is not an identifier would name an endpoint no program could refer to, and would still name a file — `../x` would place that file outside the output directory.
+* A name must not begin with `__`, which is reserved for the compiler (spec §4.3, §6.2), on the same terms as every other identifier the source writes.
+* The **reserved runtime names** of spec §6.2 — `nothing`, the communication API names, `__array` and `__push` — are *not* reserved here, apart from the `__` prefix above. An endpoint name reaches the generated code only as a string literal (spec §13.8) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
 * The names must be distinct. A repeated name is an error: it would give two output files the same name, and make one endpoint both the sender and the receiver of the same communication.
-* `every` is a reserved word and must not appear in `endpoints`.
+* `every` is a reserved word and must not appear in `endpoints`. This is a special case of the reserved-word rule above, called out separately because `every` names the location that is deliberately never listed (spec §3.4).
 * Every individual location used in a `.cbs` source file must be listed in `endpoints`. The location `every` is never listed.
 * The compiler generates a `.bs` file for each endpoint listed in `endpoints`, even if that endpoint is not used in the source.
 * By default, the compiler reads `choreobs.json` from the same directory as the input `.cbs` file.
@@ -926,28 +930,76 @@ different orders. Every endpoint program therefore preserves this one order
 
 ### 6.1 Namespaces
 
-ChoreoBS has the following namespaces:
+ChoreoBS has two namespaces:
 
-* location names;
-* variable names;
-* function names;
-* type names / keywords.
+* the **value namespace**, which holds location names, function names, and
+  variable and parameter names together;
+* type names / keywords, which are reserved words (spec §4.4) and so can never
+  be written as an identifier at all.
 
-Location names may be the same as variable names or function names.
+There is one value namespace rather than three because the generated code has
+one. BlueScript keeps the source name (spec §13.3), so a variable emitted
+beside a function of the same name shadows it, and the call the program meant
+to make would reach the variable instead. This is the same reasoning that
+reserves the runtime names in spec §6.2, applied to the program's own names.
 
-Example:
+#### What holds a name, and for how long
+
+* An **endpoint name** is declared in `choreobs.json` (spec §2.2) and holds its
+  name for the whole program, whether or not the source ever writes `@` with
+  it.
+* A **function name** is global and hoisted (spec §6.2, §6.3), so it too holds
+  its name for the whole program.
+* A **variable or parameter name** is block-scoped (spec §6.4). It may shadow
+  another variable or parameter, but it may not take a name an endpoint or a
+  function already holds.
+
+So the following are errors (spec §16.48):
 
 ```ts
-function alice@alice(): void {
+function alice@alice(): void {   // `alice` is an endpoint name
     return;
 }
+```
+
+```ts
+let bob: integer@alice = 1@alice;   // `bob` is an endpoint name
+```
+
+```ts
+function g@alice(): integer@alice { return 1@alice; }
+
+function h@alice(): integer@alice {
+    let g: integer@alice = 5@alice;   // `g` is a function name
+    return g + g();
+}
+```
+
+The last one is the case the single namespace exists to prevent: with separate
+namespaces `g` would read as the variable and `g()` as the function, and the
+projection would emit a BlueScript body in which `g` is a number and `g()` is
+not callable.
+
+The rule is stated over the whole program, not over each generated file. A
+function and a variable that would never be projected to the same endpoint are
+still an error, on the same terms as the reserved runtime names of spec §6.2,
+which are reserved everywhere and not only where the compiler happens to call
+them.
+
+Allowed — shadowing between variables is unaffected (spec §6.4), and a name
+merely resembling a held one is an ordinary name:
+
+```ts
+function alice2@alice(): integer@alice { return 1@alice; }
+
+let aliceCount: integer@alice = alice2();
 ```
 
 ### 6.2 Function Names
 
 * Function overloading is not supported in v0.
-* The same function name must not be defined more than once.
-* Function names are global: two functions may not share a name, whatever their locations, and a choreography function may not share a name with a local one.
+* Function names are global: a name may be defined only once, whatever the functions' locations, and a choreography function may not share a name with a local one.
+* A function name is held in the value namespace (spec §6.1), so no variable or parameter may take it, and it may not be an endpoint name either.
 * The **reserved runtime names** listed below cannot be used as a function name, a variable name, or a parameter name.
 
 #### Reserved Runtime Names
@@ -1036,6 +1088,10 @@ let x: integer@alice = 2@alice;
 
 A declaration in an inner block may shadow one from an outer block, and a `let`
 in a function body may shadow a parameter.
+
+Shadowing reaches variables and parameters only. A `let` may not shadow a
+function name or an endpoint name: those are held for the whole program
+(spec §6.1).
 
 ```ts
 let x: integer@alice = 1@alice;
@@ -3076,7 +3132,7 @@ discards their values and yields `null` (spec §14.1).
 strict binary:        e1 op e2   =>  nothing(project(e1), project(e2))
 unary:                op e       =>  nothing(project(e))
 index:                xs[i]      =>  nothing(project(xs), project(i))
-length:               xs.length  =>  nothing(project(xs))
+length:               xs.length  =>  nothing()
 array literal:        [e1, ...]  =>  nothing(project(e1), ...)
 call, callee here:    f(e1, ...) =>  f(project(e1), ...)
 call, callee absent:  f(e1, ...) =>  nothing(project(e1), ...)
@@ -3099,6 +3155,18 @@ choreography calls out of both operands: there is nothing left for `P` to run.
 The recursion never crosses back: a subexpression whose value happens to reside
 at `P` is still only evaluated, never handed back as a value. A call's
 arguments are the one exception, since the call does want those values.
+
+`.length` drops its receiver where `xs[i]` keeps its own, because the two are
+not the same kind of operand. The receiver of `.length` must be a variable
+(spec §5.14), so reading it cannot call anything and there is nothing to
+preserve; that leaves `nothing()`, which cleanup removes (spec §13.9). The
+receiver of `[]` is an arbitrary expression — `f()[i]` is well-formed — and may
+hold a choreography call, so it is reproduced like any other operand.
+
+`xs.push(v)` is not in the table. It is `void`, so it never stands in a value
+position (spec §7.2, §16.40); the only place it occurs is as a statement, and
+its rule is given with the other statement forms in §12.10. It drops its
+receiver for the same reason `.length` does.
 
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
 Core v0 (spec §13.9, §17.6).
@@ -3659,8 +3727,19 @@ nothing(indexCall(), valueCall());
 The compiler must not generate invalid code such as `null[null] = null`.
 
 `xs.push(v)` follows the same shape: the append is performed where `xs` resides,
-and elsewhere only the receiver's and the argument's evaluation is left behind
-(spec §12.14.1).
+and elsewhere only the argument's evaluation is left behind (spec §12.14.1):
+
+```text
+project_P(xs.push(v);) = nothing(project_P(v));
+```
+
+The receiver is dropped in both rules for the same reason, and in `xs.length`
+for that reason too (spec §12.3). `xs` is a variable — the grammar admits
+nothing else as an assignment target or as the receiver of `.length` and
+`.push` (spec §5.14) — so reading it cannot call anything, and there is no
+evaluation to preserve. Reproducing it would leave a `null` argument that
+carries no computation and that cleanup cannot fold away once a sibling
+argument holds one (spec §13.9.2).
 
 ### 12.11 Function Projection
 
@@ -5682,6 +5761,100 @@ let d: boolean@alice = c && yes();
 The restriction is deliberately blunt in Core v0: it also rejects cases that
 would be safe, such as an operation at `@every`, where every endpoint holds the
 condition and would short-circuit identically. See §17.6.
+
+### 16.47 Invalid Endpoint Name
+
+An endpoint name must be an identifier (spec §4.3), must not be a reserved word
+(spec §4.4), and must not begin with `__` (spec §6.2). See §2.2.
+
+Disallowed:
+
+```json
+{
+  "endpoints": ["alice", "worker-1"]
+}
+```
+
+```json
+{
+  "endpoints": ["alice", "while"]
+}
+```
+
+```json
+{
+  "endpoints": ["alice", "__internal"]
+}
+```
+
+A name that is not an identifier cannot be written after `@`, so it would name
+an endpoint no program could refer to — and it would still name an output file
+(spec §2.3), which `../x` would place outside the output directory.
+
+Allowed — the reserved runtime names (spec §6.2) do not apply to endpoints,
+which reach the generated code only as string literals and file names:
+
+```json
+{
+  "endpoints": ["alice", "sendInteger"]
+}
+```
+
+### 16.48 Name Already Held in the Value Namespace
+
+Location names, function names, and variable and parameter names share one
+namespace (spec §6.1). Endpoint names and function names are held for the whole
+program; a variable or parameter may not take one.
+
+Disallowed — a variable or parameter taking a function's name:
+
+```ts
+function g@alice(): integer@alice { return 1@alice; }
+
+function h@alice(): integer@alice {
+    let g: integer@alice = 5@alice;
+    return g + g();
+}
+```
+
+Disallowed in either order, because functions are hoisted (spec §6.3):
+
+```ts
+let g: integer@alice = 5@alice;
+
+function g@alice(): integer@alice {
+    return 1@alice;
+}
+```
+
+Disallowed — a function taking an endpoint's name:
+
+```ts
+function alice@alice(): void {
+    return;
+}
+```
+
+Disallowed — a variable or parameter taking an endpoint's name, even one the
+source never writes after `@`:
+
+```ts
+let bob: integer@alice = 1@alice;
+```
+
+The rule is stated over the whole program. A function and a variable that
+would never be projected to the same endpoint are still an error; see the
+reasoning in spec §6.1.
+
+Allowed — shadowing between variables and parameters is unaffected
+(spec §6.4):
+
+```ts
+function f@alice(p: integer@alice): integer@alice {
+    let p: integer@alice = 1@alice;
+    return p;
+}
+```
 
 ***
 
