@@ -155,7 +155,7 @@ export interface ParenthesizedExpression {
   readonly span: Span;
 }
 
-/** `receiveInteger("alice", "top_0")` etc. (spec §transfer-projection). */
+/** `receiveInteger("alice", "__top_0")` etc. (spec §transfer-projection). */
 export interface ReceiveExpression {
   readonly kind: "ReceiveExpression";
   readonly comm: CommKind;

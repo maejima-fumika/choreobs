@@ -17,11 +17,11 @@ let y: integer@bob <- x;
     assert.equal(
       bs(result, "alice"),
       `let x: integer = 42;
-sendInteger("bob", "top_0", x);`,
+sendInteger("bob", "__top_0", x);`,
     );
     assert.equal(
       bs(result, "bob"),
-      `let y: integer = receiveInteger("alice", "top_0");`,
+      `let y: integer = receiveInteger("alice", "__top_0");`,
     );
   });
 
@@ -40,7 +40,7 @@ if (ok) {
     assert.equal(
       bs(result, "alice"),
       `let localOk: boolean = true;
-broadcastBoolean("top_0", localOk);
+broadcastBoolean("__top_0", localOk);
 let ok: boolean = localOk;
 if (ok) {
 } else {
@@ -48,7 +48,7 @@ if (ok) {
     );
     assert.equal(
       bs(result, "bob"),
-      `let ok: boolean = receiveBoolean("alice", "top_0");
+      `let ok: boolean = receiveBoolean("alice", "__top_0");
 if (ok) {
   let msg: string = "ok";
 } else {
@@ -94,11 +94,11 @@ let y: integer@bob <- x;
   return c;
 }
 let x: integer = add(1, 2);
-sendInteger("bob", "top_0", x);`,
+sendInteger("bob", "__top_0", x);`,
     );
     assert.equal(
       bs(result, "bob"),
-      `let y: integer = receiveInteger("alice", "top_0");`,
+      `let y: integer = receiveInteger("alice", "__top_0");`,
     );
   });
 
@@ -160,17 +160,17 @@ while (cont) {
       `let cont: boolean = true;
 while (cont) {
   let x: integer = 1;
-  sendInteger("bob", "top_0", x);
-  cont = receiveBoolean("bob", "top_1");
+  sendInteger("bob", "__top_0", x);
+  cont = receiveBoolean("bob", "__top_1");
 }`,
     );
     assert.equal(
       bs(result, "bob"),
       `let cont: boolean = true;
 while (cont) {
-  let y: integer = receiveInteger("alice", "top_0");
+  let y: integer = receiveInteger("alice", "__top_0");
   let nextLocal: boolean = false;
-  broadcastBoolean("top_1", nextLocal);
+  broadcastBoolean("__top_1", nextLocal);
   cont = nextLocal;
 }`,
     );
@@ -192,13 +192,13 @@ for (
       bs(result, "alice"),
       `for (let i: integer = 0; i < 3; i = i + 1) {
   let x: integer = i;
-  sendInteger("bob", "top_0", x);
+  sendInteger("bob", "__top_0", x);
 }`,
     );
     assert.equal(
       bs(result, "bob"),
       `for (let i: integer = 0; i < 3; i = i + 1) {
-  let y: integer = receiveInteger("alice", "top_0");
+  let y: integer = receiveInteger("alice", "__top_0");
 }`,
     );
   });

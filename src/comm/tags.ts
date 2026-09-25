@@ -11,4 +11,12 @@ export class CommTagGenerator {
   }
 }
 
-export const TOP_SCOPE = "top";
+/**
+ * The scope name tags at the top level are numbered within
+ * (spec §communication-tags).
+ *
+ * It carries the compiler-reserved `__` prefix (spec §function-names), so no
+ * user function name can equal it and no function's tags can collide with the
+ * top level's.
+ */
+export const TOP_SCOPE = "__top";

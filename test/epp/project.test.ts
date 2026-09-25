@@ -81,7 +81,7 @@ let y: integer@bob <- x;
     const send = findStmt(alice.body, "SendStatement");
     if (send?.kind === "SendStatement") {
       assert.equal(send.destinationEndpoint, "bob");
-      assert.equal(send.tag, "top_0");
+      assert.equal(send.tag, "__top_0");
     }
 
     const bobLet = findStmt(bob.body, "LetStatement");
@@ -90,7 +90,7 @@ let y: integer@bob <- x;
       assert.equal(bobLet.initializer.kind, "ReceiveExpression");
       if (bobLet.initializer.kind === "ReceiveExpression") {
         assert.equal(bobLet.initializer.sourceEndpoint, "alice");
-        assert.equal(bobLet.initializer.tag, "top_0");
+        assert.equal(bobLet.initializer.tag, "__top_0");
       }
     }
     assert.equal(findStmt(bob.body, "SendStatement"), undefined);

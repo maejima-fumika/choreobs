@@ -27,7 +27,7 @@ let y: integer@bob <- x;
     assert.equal(typed.items.length, 2);
     const recv = transferAt(typed, 1);
     assert.equal(recv.transferMode, "direct");
-    assert.equal(recv.commTag, "top_0");
+    assert.equal(recv.commTag, "__top_0");
   });
 
   describe("locations are never inferred from context (spec §explicit-location-annotations)", () => {
@@ -1633,6 +1633,57 @@ let ys: float[]@alice = xs;
 `);
       assert.equal(typed, null);
       assert.ok(errors.some((e) => e.message.includes("cannot assign")));
+    });
+
+    it("rejects an integer array literal under a float annotation (spec §array-invariance)", () => {
+      const { typed, errors } = checkSource(`
+let xs: float[]@alice = [1, 2]@alice;
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("cannot assign integer[]@alice to float[]@alice"),
+        ),
+        JSON.stringify(errors),
+      );
+      assertCites(errors, "array-type-invariance");
+    });
+
+    it("rejects a scalar initializer under an array annotation (spec §type-mismatch)", () => {
+      const { typed, errors } = checkSource(`
+let xs: integer[]@alice = 1@alice;
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("cannot assign integer@alice to integer[]@alice"),
+        ),
+        JSON.stringify(errors),
+      );
+      // Not invariance: one side is not an array at all (spec §type-mismatch).
+      assertCites(errors, "type-mismatch");
+    });
+
+    it("rejects the same literal in a `for` initializer (spec §array-invariance)", () => {
+      const { typed, errors } = checkSource(`
+for (let xs: float[]@alice = [1, 2]@alice; true@every; ) {
+}
+`);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("cannot assign integer[]@alice to float[]@alice"),
+        ),
+        JSON.stringify(errors),
+      );
+    });
+
+    it("keeps the empty array literal taking its element type from the annotation", () => {
+      const { typed, errors } = checkSource(`
+let xs: float[]@alice = []@alice;
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
     });
 
     it("accepts an array local copy from @every", () => {

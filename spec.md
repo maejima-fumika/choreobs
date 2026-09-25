@@ -42,12 +42,12 @@ After EPP:
 ```ts
 // index_alice.bs
 let x: integer = 10;
-sendInteger("bob", "top_0", x);
+sendInteger("bob", "__top_0", x);
 ```
 
 ```ts
 // index_bob.bs
-let y: integer = receiveInteger("alice", "top_0");
+let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 ***
@@ -220,7 +220,7 @@ A local copy of an `@every` array with `<-` creates a fresh mutable array at the
 
 * Location names follow the same lexical rules as ordinary identifiers.
 * Location names may contain uppercase letters.
-* An individual location name may be the same as a variable name or a function name.
+* A location name is held in the value namespace for the whole program, so no function, variable or parameter may take it (spec [§6.1](#namespaces), [§16.48](#err-name-already-held)).
 * `every` is reserved.
 
 ***
@@ -753,6 +753,7 @@ PostfixOp ::= "[" Expression "]"
 PrimaryExpression ::= Literal
                     | ArrayLiteral
                     | LengthExpression
+                    | PushExpression
                     | Identifier
                     | FunctionCall
                     | "(" Expression ")"
@@ -821,11 +822,8 @@ null@alice
 
 ### 5.16 Array Literals <a id="array-literals"></a>
 
-Array literals have the following form:
-
-```ebnf
-ArrayLiteral ::= "[" ArgumentList? "]" LocationAnnotation?
-```
+Array literals are produced by the `ArrayLiteral` rule of [§5.14](#expressions).
+This section gives their typing and elaboration rules.
 
 Examples:
 
@@ -1010,10 +1008,13 @@ that call. The following are therefore reserved in every one of the three
 positions:
 
 * `nothing` — the compiler-generated placeholder helper (spec [§14.1](#nothing));
-* every communication and clone API name (spec [§13.9](#communication-api)): `sendInteger`,
-  `receiveInteger`, `broadcastInteger`, `cloneInteger`, and the corresponding
+* every communication and clone API name (spec [§13.9](#communication-api)). These are
+  `sendInteger`, `receiveInteger` and `broadcastInteger`, and the corresponding
   names for `Float`, `Boolean`, `String`, `Null`, `IntegerArray`, `FloatArray`
-  and `BooleanArray`;
+  and `BooleanArray`; plus the three clone helpers, which exist for the array
+  types alone: `cloneIntegerArray`, `cloneFloatArray` and `cloneBooleanArray`.
+  There is no `cloneInteger` and no scalar clone of any type, so none is
+  reserved;
 * `__array` and `__push` — compiler-internal call sentinels;
 * every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.8](#transfer-typing), [§12.9](#transfer-projection)), and reserving the prefix lets it do so without consulting the program.
 
@@ -1742,7 +1743,8 @@ the same-base-type rule above (spec [§16.43](#invalid-comparison-or-equality-op
 
 These operators are available for `boolean`.
 
-The inferred result type is `boolean` at the operand location.
+Both operands must be located at the same location (spec [§7.6](#location-matching-and-residency)),
+and the result is a `boolean` there.
 
 Unlike every other operator, these two evaluate their right operand
 conditionally (spec [§5.17](#evaluation-order)). Neither operand may contain a call to a
@@ -1808,13 +1810,24 @@ let xs: integer[]@alice = [1, 2]@alice;
 let ys: float[]@alice = xs;
 ```
 
-Array literals may still be checked against an explicitly expected array type.
+An array literal is no exception. It is typed on its own, by the array literal typing rule below, and the resulting array type is then checked against the annotation by the same invariance rule.
+
+Disallowed:
 
 ```ts
 let xs: float[]@alice = [1, 2]@alice;
 ```
 
-This is allowed because each integer element is checked against the expected `float` element type. It is not an array subtyping conversion.
+`[1, 2]@alice` is an `integer[]@alice`, and `integer[]` is not compatible with `float[]`. An annotation does not push an expected element type into the literal's elements; write the elements at the element type instead:
+
+```ts
+let xs: float[]@alice = [1.0, 2.0]@alice;
+let ys: float[]@alice = [1, 2.5]@alice;
+```
+
+`ys` is allowed because the literal's own element type is already `float`: `integer` and `float` elements have LUB `float`.
+
+The one initializer that does take its element type from the annotation is the empty array literal, which has no element type of its own.
 
 #### Array Literal Typing <a id="array-literal-typing"></a>
 
@@ -2903,13 +2916,13 @@ EPP at `alice`:
 
 ```ts
 let x: integer = 10;
-sendInteger("bob", "top_0", x);
+sendInteger("bob", "__top_0", x);
 ```
 
 EPP at `bob`:
 
 ```ts
-let y: integer = receiveInteger("alice", "top_0");
+let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 ### 11.3 Broadcast Communication <a id="broadcast-communication"></a>
@@ -2925,14 +2938,14 @@ EPP at `alice`:
 
 ```ts
 let x: boolean = true;
-broadcastBoolean("top_0", x);
+broadcastBoolean("__top_0", x);
 let c: boolean = x;
 ```
 
 EPP at `bob`:
 
 ```ts
-let c: boolean = receiveBoolean("alice", "top_0");
+let c: boolean = receiveBoolean("alice", "__top_0");
 ```
 
 For scalar broadcast, the sender-side `@every` binding may be initialized from the source value.
@@ -2948,7 +2961,7 @@ EPP at `alice`:
 
 ```ts
 let xs: float[] = [1.1, 2.2];
-broadcastFloatArray("top_0", xs);
+broadcastFloatArray("__top_0", xs);
 let ys: float[] = cloneFloatArray(xs);
 ```
 
@@ -3016,7 +3029,7 @@ Each transfer that performs communication — that is, each `direct` or `broadca
 
 Tags have the following properties:
 
-* They are unique within a compilation unit. Uniqueness within a function is not enough: two communications in different functions could otherwise share a tag and be in flight at the same time. The recommended format below achieves this because function names are global (spec [§6.2](#function-names)) — but note that the top-level scope name must then not be one a function can take.
+* They are unique within a compilation unit. Uniqueness within a function is not enough: two communications in different functions could otherwise share a tag and be in flight at the same time. The recommended format below achieves this because function names are global (spec [§6.2](#function-names)), and because the top-level scope name carries the compiler-reserved `__` prefix, which no function name may take (spec [§4.3](#identifiers), [§6.2](#function-names)). A scope name is therefore either a function's name or `__top`, and the two can never be the same.
 * They are stable within the same compilation unit.
 * Implementations may choose any string format.
 
@@ -3050,8 +3063,8 @@ Recommended format:
 Examples:
 
 ```text
-top_0
-top_1
+__top_0
+__top_1
 foo_0
 foo_1
 ```
@@ -3112,32 +3125,63 @@ the call even when the result lives somewhere else entirely.
 
 #### The Rule <a id="expression-projection-rule"></a>
 
-Projection is a structural recursion over the expression. For an expression
+Projection is a structural recursion over the expression, and it has two modes.
+Which one applies is decided by whoever asks for the projection, not by the
+expression:
+
+```text
+project_P(e)    the value projection: what P computes when it needs e's value
+discard_P(e)    the evaluation-only projection: what P still runs when it does not
+```
+
+`project_P` is the one the source's own value positions use. For an expression
 `e : T@L` at endpoint `P`:
 
 ```text
-if residesAt(L, P):
-    project each subexpression and keep the form
-else:
-    do not perform the operation; preserve the subexpressions' evaluation
+project_P(e : T@L) =
+    if residesAt(L, P):  keep the form, projecting each subexpression with project_P
+    else:                discard_P(e)
 ```
 
-The second branch is the whole of the difference. `P` has no value to apply the
+`discard_P` is the whole of the difference. `P` has no value to apply the
 operator or the callee to, so neither is reproduced. What *is* reproduced is
 the evaluation of the operands, structurally and in source order, collected in
 a compiler-generated `nothing(...)` that evaluates each one exactly once,
 discards their values and yields `null` (spec [§14.1](#nothing)).
 
+**`discard_P` is defined on the form of `e` alone, and never consults
+`residesAt`.** Once a result is being discarded, a subexpression whose value
+happens to reside at `P` is still only evaluated, never handed back as a value.
+A call's arguments are the one exception, since the call does want those
+values: they are projected with `project_P`, and each then decides for itself.
+
 ```text
-strict binary:        e1 op e2   =>  nothing(project(e1), project(e2))
-unary:                op e       =>  nothing(project(e))
-index:                xs[i]      =>  nothing(project(xs), project(i))
-length:               xs.length  =>  nothing()
-array literal:        [e1, ...]  =>  nothing(project(e1), ...)
-call, callee here:    f(e1, ...) =>  f(project(e1), ...)
-call, callee absent:  f(e1, ...) =>  nothing(project(e1), ...)
-literal, identifier:                 absent
+strict binary:        e1 op e2    =>  nothing(discard(e1), discard(e2))
+short-circuit:        e1 && e2    =>  absent
+                      e1 || e2    =>  absent
+unary:                op e        =>  nothing(discard(e))
+parenthesized:        ( e )       =>  discard(e)
+index:                xs[i]       =>  nothing(discard(xs), discard(i))
+length:               xs.length   =>  nothing()
+push:                 xs.push(v)  =>  nothing(discard(v))
+array literal:        [e1, ...]   =>  nothing(discard(e1), ...)
+call, callee here:    f(e1, ...)  =>  f(project(e1), ...)
+call, callee absent:  f(e1, ...)  =>  nothing(project(e1), ...)
+literal, identifier:                  absent
 ```
+
+The statement forms that discard a result name `discard_P` directly: a `let`
+whose binding is absent here ([§12.8](#let-projection)), an assignment whose
+target is ([§12.10](#assignment-projection)), a `for` header slot
+([§12.14](#for-projection)), and — the one case where the expression's own
+residency is beside the point — the source of a transfer at every endpoint
+that is not its sender ([§12.9](#transfer-projection)).
+
+A statement that discards a single expression keeps that expression's
+projection as it stands. `nothing(...)` appears only where two or more
+expressions have to be held in one slot (spec [§12.10](#assignment-projection)),
+or where a form has no operands left to hold — `xs.length`, and a call to an
+absent function with no arguments.
 
 A call whose callee `P` does generate is kept as a call, not wrapped: the
 projected callee returns `null` at `P` (spec [§12.2](#type-projection)), so the call already stands
@@ -3147,14 +3191,11 @@ arguments do not: they are ordinary expressions that may contain choreography
 calls of their own. With no arguments that leaves `nothing()`, which cleanup
 removes (spec [§13.10](#projected-ast-cleanup)).
 
-`&&` and `||` are the exception. `nothing(...)` evaluates all of its arguments,
-so hoisting a short-circuit operand into one would run code the original
-skipped. They project to `absent` instead, which is sound because [§16.46](#choreography-call-in-a-short-circuit-operand) keeps
-choreography calls out of both operands: there is nothing left for `P` to run.
-
-The recursion never crosses back: a subexpression whose value happens to reside
-at `P` is still only evaluated, never handed back as a value. A call's
-arguments are the one exception, since the call does want those values.
+`&&` and `||` are the one row that keeps nothing at all. `nothing(...)`
+evaluates all of its arguments, so hoisting a short-circuit operand into one
+would run code the original skipped. Discarding them whole is sound because
+[§16.46](#choreography-call-in-a-short-circuit-operand) keeps choreography calls
+out of both operands: there is nothing left for `P` to run.
 
 `.length` drops its receiver where `xs[i]` keeps its own, because the two are
 not the same kind of operand. The receiver of `.length` must be a variable
@@ -3163,10 +3204,13 @@ preserve; that leaves `nothing()`, which cleanup removes (spec [§13.10](#projec
 receiver of `[]` is an arbitrary expression — `f()[i]` is well-formed — and may
 hold a choreography call, so it is reproduced like any other operand.
 
-`xs.push(v)` is not in the table. It is `void`, so it never stands in a value
-position (spec [§7.2](#located-types), [§16.40](#invalid-use-of-void)); the only place it occurs is as a statement, and
-its rule is given with the other statement forms in [§12.10](#assignment-projection). It drops its
-receiver for the same reason `.length` does.
+`xs.push(v)` is `void`, so it never stands in a value position (spec
+[§7.2](#located-types), [§16.40](#invalid-use-of-void)); the only place it occurs
+is as an expression statement. Its result still travels with the array's
+location (spec [§7.12](#array-typing)), so at an endpoint that does not hold the
+array `project_P` falls through to the `push` row above — which is exactly the
+statement rule [§12.10](#assignment-projection) states. It drops its receiver for
+the same reason `.length` does.
 
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
 Core v0 (spec [§13.10](#projected-ast-cleanup), [§17.6](#future-work)).
@@ -3396,8 +3440,8 @@ Where it does not, the operator is not applied at all; the operands are still
 evaluated, in order (spec [§12.3](#expression-projection)):
 
 ```text
-project_P(e1 op e2) = nothing(project_P(e1), project_P(e2))
-project_P(op e)     = nothing(project_P(e))
+discard_P(e1 op e2) = nothing(discard_P(e1), discard_P(e2))
+discard_P(op e)     = nothing(discard_P(e))
 ```
 
 EPP at `bob` — both operands are literals there, so the statement simplifies to
@@ -3425,12 +3469,13 @@ nothing(relay(null));
 argument, so
 
 ```text
-e1 && e2  =>  nothing(project(e1), project(e2))
-e1 || e2  =>  nothing(project(e1), project(e2))
+e1 && e2  =>  nothing(discard(e1), discard(e2))
+e1 || e2  =>  nothing(discard(e1), discard(e2))
 ```
 
-would run a right operand the original short-circuited past. In Core v0 they
-project to `absent` where the result is absent, which loses nothing because
+would run a right operand the original short-circuited past. Their row in
+[§12.3](#expression-projection) discards them whole instead: `discard_P` of
+either operator is `absent`, operands and all. That loses nothing because
 [§16.46](#choreography-call-in-a-short-circuit-operand) forbids choreography calls in either operand — the only work that would
 have to survive.
 
@@ -3456,8 +3501,12 @@ Where the binding is absent at `P`, no binding is generated, but the
 initializer is still evaluated — the store goes, the evaluation stays:
 
 ```text
-project_P(let x = e;) = project_P(e);
+project_P(let x = e;) = discard_P(e);
 ```
+
+A `let` in a `for` header is the exception: it keeps its binding at every
+endpoint, because the name has to stay declared for the rest of the header
+(spec [§12.14](#for-projection)).
 
 EPP at `bob` — the initializer is a literal, so the statement simplifies to
 `null` and disappears (spec [§13.10](#projected-ast-cleanup)):
@@ -3490,10 +3539,17 @@ sender's location, but the computations inside it may not.
 > that evaluates the statement, and before that endpoint's own send, receive or
 > copy.
 
-The sender evaluates it as the payload. Every other endpoint evaluates it for
-its computations alone, as an evaluation-only expression statement placed
-*before* the receive, so that the calls inside it meet the sender's in the same
-order.
+The sender evaluates it as the payload, with `project_P`. Every other endpoint
+evaluates it for its computations alone, as `discard_P(source)` standing as an
+expression statement placed *before* the receive, so that the calls inside it
+meet the sender's in the same order.
+
+`discard_P` is what makes this work in both directions. The source belongs to
+the sender's location, but a source at `@every` resides at every endpoint, and
+a receiver has no use for its value either way — it is about to receive one.
+Because `discard_P` never consults `residesAt`
+(spec [§12.3](#expression-projection)), the source is reduced to its
+computations at every non-sender alike, whatever its location.
 
 ```ts
 function g(): integer@alice {
@@ -3508,23 +3564,25 @@ let y: integer@bob <- g();
 EPP at `alice`:
 
 ```ts
-sendInteger("bob", "top_0", g());
+sendInteger("bob", "__top_0", g());
 ```
 
 EPP at `bob`:
 
 ```ts
 g();
-let y: integer = receiveInteger("alice", "top_0");
+let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 Omitting `g()` at `bob` would leave `alice` blocked inside `g` forever. The same
 holds at every receiver of a broadcast, and at endpoints the transfer skips
 altogether.
 
-Where the source holds no computation for an endpoint, the statement simplifies
-to `null` and disappears (spec [§13.10](#projected-ast-cleanup)), which is why the ordinary cases below
-show no extra statement.
+Where `discard_P` of the source yields `null` — that is, where the source holds
+no call this endpoint has to make — the statement disappears in cleanup
+(spec [§13.10](#projected-ast-cleanup)), which is why the ordinary cases below
+show no extra statement. A bare identifier or literal source is the common
+case: it discards to `absent`, and so to `null`.
 
 Where the source value has to be used more than once at the sender — a
 broadcast, which both sends and keeps its own copy — a compiler-generated
@@ -3541,13 +3599,13 @@ where `x : integer@alice`.
 EPP at `alice`:
 
 ```ts
-sendInteger("bob", "top_0", x);
+sendInteger("bob", "__top_0", x);
 ```
 
 EPP at `bob`:
 
 ```ts
-let y: integer = receiveInteger("alice", "top_0");
+let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 #### Broadcast <a id="epp-broadcast"></a>
@@ -3565,14 +3623,14 @@ EPP at `alice`:
 
 ```ts
 let xs: integer[] = [1, 2];
-broadcastIntegerArray("top_0", xs);
+broadcastIntegerArray("__top_0", xs);
 let ys: integer[] = cloneIntegerArray(xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "top_0");
+let ys: integer[] = receiveIntegerArray("alice", "__top_0");
 ```
 
 #### Local Copy <a id="epp-local-copy"></a>
@@ -3633,9 +3691,9 @@ EPP at `alice`:
 
 ```ts
 let src: integer = 1;
-sendInteger("bob", "top_0", src);
+sendInteger("bob", "__top_0", src);
 let e: integer = 0;
-broadcastInteger("top_1", src);
+broadcastInteger("__top_1", src);
 e = src;
 let s: integer = 0;
 s = src;
@@ -3648,9 +3706,9 @@ EPP at `bob`:
 
 ```ts
 let d: integer = 0;
-d = receiveInteger("alice", "top_0");
+d = receiveInteger("alice", "__top_0");
 let e: integer = 0;
-e = receiveInteger("alice", "top_1");
+e = receiveInteger("alice", "__top_1");
 ```
 
 A receiver must not re-declare the destination — `let d: integer = receive...`
@@ -3677,7 +3735,7 @@ EPP at `alice`:
 
 ```ts
 let __transfer_0: integer = nextValue();
-broadcastInteger("top_0", __transfer_0);
+broadcastInteger("__top_0", __transfer_0);
 let n: integer = __transfer_0;
 ```
 
@@ -3698,7 +3756,7 @@ EPP to endpoint `P`:
 * Otherwise, drop the store but keep the right-hand side's evaluation:
 
 ```text
-project_P(x = e;) = project_P(e);
+project_P(x = e;) = discard_P(e);
 ```
 
 For an array element assignment `xs[i] = v;`, the assignment is generated only
@@ -3707,7 +3765,7 @@ expressions are kept, in the order [§5.17](#evaluation-order) evaluates them �
 value:
 
 ```text
-project_P(xs[i] = v;) = nothing(project_P(i), project_P(v));
+project_P(xs[i] = v;) = nothing(discard_P(i), discard_P(v));
 ```
 
 Dropping the index would be a communication bug, not just dead code: the index
@@ -3730,7 +3788,7 @@ The compiler must not generate invalid code such as `null[null] = null`.
 and elsewhere only the argument's evaluation is left behind (spec [§12.15](#array-projection)):
 
 ```text
-project_P(xs.push(v);) = nothing(project_P(v));
+project_P(xs.push(v);) = nothing(discard_P(v));
 ```
 
 The receiver is dropped in both rules for the same reason, and in `xs.length`
@@ -3796,10 +3854,12 @@ nothing(get3Mcu(), get4Mcu());
 ```
 
 With no arguments there is nothing left to evaluate, and `nothing()` is removed
-by cleanup (spec [§13.10](#projected-ast-cleanup)):
+by cleanup (spec [§13.10](#projected-ast-cleanup)). A call names no location
+(spec [§7.13](#function-call-typing)), so this is an ordinary call to a
+`localFunction` declared at `mcu`, projected at `server`:
 
 ```ts
-localFunction@mcu();
+localFunction();
 ```
 
 ```text
@@ -3893,11 +3953,13 @@ for (let i: integer = 0; i < 10; i = i + 1) {
 
 A `let` in the header keeps its binding at every endpoint, as `null` where the
 value is absent (spec [§12.2](#type-projection)), so the name stays declared.
+This is the one place a `let` binding survives its value; a `let` *statement*
+drops the binding instead (spec [§12.8](#let-projection)).
 
 An assignment clause has no such fallback: the variable it assigns to may not
 exist at this endpoint at all, and a header slot holds an expression, not the
-*statement* that [§12.10](#assignment-projection) would produce. The clause therefore keeps just the
-projection of the expressions it evaluated — the same `nothing(...)` [§12.10](#assignment-projection)
+*statement* that [§12.10](#assignment-projection) would produce. The clause therefore keeps just
+`discard_P` of the expressions it evaluated — the same `nothing(...)` [§12.10](#assignment-projection)
 builds, sitting in the slot as an expression. Once that simplifies to `null`,
 the slot is **omitted** entirely (spec [§13.10](#projected-ast-cleanup)). The compiler must not emit an
 assignment to a name that is absent here, nor `null[null] = null` for an absent
@@ -3987,13 +4049,13 @@ EPP at `alice`:
 
 ```ts
 let xs: integer[] = [1, 2];
-sendIntegerArray("bob", "top_0", xs);
+sendIntegerArray("bob", "__top_0", xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "top_0");
+let ys: integer[] = receiveIntegerArray("alice", "__top_0");
 ```
 
 Broadcast to `@every` uses a fresh copy at all endpoints, including the sender.
@@ -4009,14 +4071,14 @@ EPP at `alice`:
 
 ```ts
 let xs: integer[] = [1, 2];
-broadcastIntegerArray("top_0", xs);
+broadcastIntegerArray("__top_0", xs);
 let ys: integer[] = cloneIntegerArray(xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "top_0");
+let ys: integer[] = receiveIntegerArray("alice", "__top_0");
 ```
 
 ### 12.16 Top-Level Projection <a id="top-level-projection"></a>
@@ -4034,13 +4096,13 @@ EPP at `alice`:
 
 ```ts
 let x: integer = 10;
-sendInteger("bob", "top_0", x);
+sendInteger("bob", "__top_0", x);
 ```
 
 EPP at `bob`:
 
 ```ts
-let y: integer = receiveInteger("alice", "top_0");
+let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 ***
@@ -4422,9 +4484,9 @@ nothing(nothing(f()), null)
 It must not remove communication operations such as:
 
 ```ts
-sendInteger("bob", "top_0", x);
-receiveInteger("alice", "top_0");
-broadcastBoolean("top_1", c);
+sendInteger("bob", "__top_0", x);
+receiveInteger("alice", "__top_0");
+broadcastBoolean("__top_1", c);
 ```
 
 It must not remove assignments, loops, conditionals, or function declarations merely because they contain `null` values.
@@ -4510,13 +4572,13 @@ EPP at `alice`:
 
 ```ts
 let x: integer = 42;
-sendInteger("bob", "top_0", x);
+sendInteger("bob", "__top_0", x);
 ```
 
 EPP at `bob`:
 
 ```ts
-let y: integer = receiveInteger("alice", "top_0");
+let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 ***
@@ -4540,21 +4602,27 @@ EPP at `alice` before cleanup:
 
 ```ts
 let localOk: boolean = true;
-broadcastBoolean("top_0", localOk);
+broadcastBoolean("__top_0", localOk);
 let ok: boolean = localOk;
 
 if (ok) {
-    nothing(null);
+    null;
 } else {
-    nothing(null);
+    null;
 }
 ```
+
+Each branch declares a variable at `bob`, so `alice` keeps only the
+initializer's evaluation (spec [§12.8](#let-projection)). That is a single
+expression, and a single discarded expression takes no `nothing(...)` wrapper
+(spec [§12.3](#expression-projection)); the literal projects to `absent`, which
+finalization turns into `null` (spec [§13.8](#absent-finalization)).
 
 EPP at `alice` after cleanup:
 
 ```ts
 let localOk: boolean = true;
-broadcastBoolean("top_0", localOk);
+broadcastBoolean("__top_0", localOk);
 let ok: boolean = localOk;
 
 if (ok) {
@@ -4565,7 +4633,7 @@ if (ok) {
 EPP at `bob`:
 
 ```ts
-let ok: boolean = receiveBoolean("alice", "top_0");
+let ok: boolean = receiveBoolean("alice", "__top_0");
 
 if (ok) {
     let msg: string = "ok";
@@ -4686,9 +4754,9 @@ let cont: boolean = true;
 
 while (cont) {
     let x: integer = 1;
-    sendInteger("bob", "top_0", x);
+    sendInteger("bob", "__top_0", x);
 
-    cont = receiveBoolean("bob", "top_1");
+    cont = receiveBoolean("bob", "__top_1");
 }
 ```
 
@@ -4698,10 +4766,10 @@ EPP at `bob`:
 let cont: boolean = true;
 
 while (cont) {
-    let y: integer = receiveInteger("alice", "top_0");
+    let y: integer = receiveInteger("alice", "__top_0");
 
     let nextLocal: boolean = false;
-    broadcastBoolean("top_1", nextLocal);
+    broadcastBoolean("__top_1", nextLocal);
     cont = nextLocal;
 }
 ```
@@ -4728,7 +4796,7 @@ EPP at `alice`:
 ```ts
 for (let i: integer = 0; i < 3; i = i + 1) {
     let x: integer = i;
-    sendInteger("bob", "top_0", x);
+    sendInteger("bob", "__top_0", x);
 }
 ```
 
@@ -4736,7 +4804,7 @@ EPP at `bob`:
 
 ```ts
 for (let i: integer = 0; i < 3; i = i + 1) {
-    let y: integer = receiveInteger("alice", "top_0");
+    let y: integer = receiveInteger("alice", "__top_0");
 }
 ```
 
@@ -4889,13 +4957,13 @@ let xs: integer[] = [1, 2, 3];
 xs[1] = 10;
 xs.push(20);
 let n: integer = xs.length;
-sendIntegerArray("bob", "top_0", xs);
+sendIntegerArray("bob", "__top_0", xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "top_0");
+let ys: integer[] = receiveIntegerArray("alice", "__top_0");
 ```
 
 Input:
@@ -5449,13 +5517,21 @@ let xs: integer[]@alice = []@alice;
 
 ### 16.33 Array Type Invariance <a id="array-type-invariance"></a>
 
-Array types are invariant.
+Array types are invariant (spec [§7.12](#array-typing)).
 
 Disallowed:
 
 ```ts
 let xs: integer[]@alice = [1, 2]@alice;
 let ys: float[]@alice = xs;
+```
+
+An array literal is typed on its own and then checked by the same rule, so an annotation does not widen its element type either.
+
+Also disallowed:
+
+```ts
+let zs: float[]@alice = [1, 2]@alice;
 ```
 
 ### 16.34 Invalid `@every` Array Assignment to Individual Location <a id="err-every-array-assignment"></a>
@@ -5577,6 +5653,18 @@ function f(a: void): void { return; }   // parameter type
 function g(): void { return; }
 
 let y: void <- g();         // transfer destination
+```
+
+A `return` value is a value position like any other, so a `void` computation is
+rejected there too — even inside a `void` function, where `return;` is the form
+to write (spec [§5.12](#return-statement), [§7.14](#return-typing)):
+
+```ts
+function g@alice(): void { return; }
+
+function h@alice(): void {
+    return g();             // return value
+}
 ```
 
 `xs.push(v)` is the other void computation (spec [§7.2](#located-types), [§7.12](#array-typing)), and is

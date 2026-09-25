@@ -27,7 +27,7 @@ let y: integer@bob <- x;
       "alice",
     );
     assert.match(code, /let x: integer = 42;/);
-    assert.match(code, /sendInteger\("bob", "top_0", x\);/);
+    assert.match(code, /sendInteger\("bob", "__top_0", x\);/);
     assert.doesNotMatch(code, /@/);
   });
 
@@ -39,7 +39,7 @@ let y: integer@bob <- x;
 `,
       "bob",
     );
-    assert.match(code, /let y: integer = receiveInteger\("alice", "top_0"\);/);
+    assert.match(code, /let y: integer = receiveInteger\("alice", "__top_0"\);/);
   });
 
   it("emits broadcast (spec §example-broadcast)", () => {
@@ -50,7 +50,7 @@ let ok: boolean@every <- localOk;
 `,
       "alice",
     );
-    assert.match(alice, /broadcastBoolean\("top_0", localOk\)/);
+    assert.match(alice, /broadcastBoolean\("__top_0", localOk\)/);
     assert.match(alice, /let ok: boolean = localOk;/);
 
     const bob = pipeline(
@@ -60,7 +60,7 @@ let ok: boolean@every <- localOk;
 `,
       "bob",
     );
-    assert.match(bob, /let ok: boolean = receiveBoolean\("alice", "top_0"\)/);
+    assert.match(bob, /let ok: boolean = receiveBoolean\("alice", "__top_0"\)/);
   });
 
   it("drops a call to another endpoint's local function entirely (spec §calling-local-from-choreography, §expression-projection)", () => {
@@ -138,8 +138,8 @@ let y: integer@bob <- x;
       const aliceBs = readFileSync(alicePath, "utf8");
       const bobBs = readFileSync(bobPath, "utf8");
 
-      assert.match(aliceBs, /sendInteger\("bob", "top_0", x\)/);
-      assert.match(bobBs, /receiveInteger\("alice", "top_0"\)/);
+      assert.match(aliceBs, /sendInteger\("bob", "__top_0", x\)/);
+      assert.match(bobBs, /receiveInteger\("alice", "__top_0"\)/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -211,7 +211,7 @@ let ys: integer[]@bob <- xs;
     assert.match(alice, /xs\[1\] = 10;/);
     assert.match(alice, /xs\.push\(20\);/);
     assert.match(alice, /let n: integer = xs\.length;/);
-    assert.match(alice, /sendIntegerArray\("bob", "top_0", xs\);/);
+    assert.match(alice, /sendIntegerArray\("bob", "__top_0", xs\);/);
 
     const bob = pipeline(
       `
@@ -220,6 +220,6 @@ let ys: integer[]@bob <- xs;
 `,
       "bob",
     );
-    assert.match(bob, /receiveIntegerArray\("alice", "top_0"\)/);
+    assert.match(bob, /receiveIntegerArray\("alice", "__top_0"\)/);
   });
 });

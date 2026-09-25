@@ -18,7 +18,7 @@ import {
 
 describe("integration — compile pipeline", () => {
   describe("communication edge cases", () => {
-    it("assigns increasing top-level comm tags (top_0, top_1, …)", () => {
+    it("assigns increasing top-level comm tags (__top_0, __top_1, …)", () => {
       const result = compile(`
 let a: integer@alice = 1@alice;
 let b: integer@bob <- a;
@@ -26,10 +26,10 @@ let c: integer@alice = 0@alice;
 c <- b;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendInteger\("bob", "top_0", a\)/);
-      assert.match(bs(result, "alice"), /receiveInteger\("bob", "top_1"\)/);
-      assert.match(bs(result, "bob"), /receiveInteger\("alice", "top_0"\)/);
-      assert.match(bs(result, "bob"), /sendInteger\("alice", "top_1", b\)/);
+      assert.match(bs(result, "alice"), /sendInteger\("bob", "__top_0", a\)/);
+      assert.match(bs(result, "alice"), /receiveInteger\("bob", "__top_1"\)/);
+      assert.match(bs(result, "bob"), /receiveInteger\("alice", "__top_0"\)/);
+      assert.match(bs(result, "bob"), /sendInteger\("alice", "__top_1", b\)/);
     });
 
     it("supports comm statements on existing variables", () => {
@@ -42,12 +42,12 @@ y <- x;
       assert.equal(
         bs(result, "alice"),
         `let x: integer = 1;
-sendInteger("bob", "top_0", x);`,
+sendInteger("bob", "__top_0", x);`,
       );
       assert.equal(
         bs(result, "bob"),
         `let y: integer = 0;
-y = receiveInteger("alice", "top_0");`,
+y = receiveInteger("alice", "__top_0");`,
       );
     });
 
@@ -63,7 +63,7 @@ worker();
       expectSuccess(result);
       assert.match(bs(result, "alice"), /sendInteger\("bob", "worker_0", x\)/);
       assert.match(bs(result, "bob"), /receiveInteger\("alice", "worker_0"\)/);
-      assert.doesNotMatch(bs(result, "alice"), /top_0/);
+      assert.doesNotMatch(bs(result, "alice"), /__top_0/);
     });
 
     it("emits type-specific APIs for float and string", () => {
@@ -74,10 +74,10 @@ let m: string@alice = "hi"@alice;
 let n: string@bob <- m;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendFloat\("bob", "top_0", f\)/);
-      assert.match(bs(result, "bob"), /receiveFloat\("alice", "top_0"\)/);
-      assert.match(bs(result, "alice"), /sendString\("bob", "top_1", m\)/);
-      assert.match(bs(result, "bob"), /receiveString\("alice", "top_1"\)/);
+      assert.match(bs(result, "alice"), /sendFloat\("bob", "__top_0", f\)/);
+      assert.match(bs(result, "bob"), /receiveFloat\("alice", "__top_0"\)/);
+      assert.match(bs(result, "alice"), /sendString\("bob", "__top_1", m\)/);
+      assert.match(bs(result, "bob"), /receiveString\("alice", "__top_1"\)/);
       assertNoChoreoResidue(bs(result, "alice"));
       assertNoChoreoResidue(bs(result, "bob"));
     });
@@ -176,10 +176,10 @@ ys <- xs;
 `);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      assert.match(alice, /broadcastFloatArray\("top_0", xs\);/);
+      assert.match(alice, /broadcastFloatArray\("__top_0", xs\);/);
       // The sender must not alias `xs`; it clones like every receiver does.
       assert.match(alice, /ys = cloneFloatArray\(xs\);/);
-      assert.match(bs(result, "bob"), /ys = receiveFloatArray\("alice", "top_0"\);/);
+      assert.match(bs(result, "bob"), /ys = receiveFloatArray\("alice", "__top_0"\);/);
     });
 
     it("widens integer to float across a transfer (spec §transfer-typing)", () => {
@@ -188,8 +188,8 @@ let n: integer@alice = 3@alice;
 let m: float@bob <- n;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendFloat\("bob", "top_0", n\);/);
-      assert.match(bs(result, "bob"), /let m: float = receiveFloat\("alice", "top_0"\);/);
+      assert.match(bs(result, "alice"), /sendFloat\("bob", "__top_0", n\);/);
+      assert.match(bs(result, "bob"), /let m: float = receiveFloat\("alice", "__top_0"\);/);
     });
   });
 
@@ -294,8 +294,8 @@ let x: integer@alice = 2@alice;
 
         const aliceBs = readFileSync(join(dir, "index_alice.bs"), "utf8");
         const bobBs = readFileSync(join(dir, "index_bob.bs"), "utf8");
-        assert.match(aliceBs, /sendInteger\("bob", "top_0", x\)/);
-        assert.match(bobBs, /receiveInteger\("alice", "top_0"\)/);
+        assert.match(aliceBs, /sendInteger\("bob", "__top_0", x\)/);
+        assert.match(bobBs, /receiveInteger\("alice", "__top_0"\)/);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -428,8 +428,8 @@ let x: null@alice = null@alice;
 let y: null@bob <- x;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendNull\("bob", "top_0", x\);/);
-      assert.match(bs(result, "bob"), /let y: null = receiveNull\("alice", "top_0"\);/);
+      assert.match(bs(result, "alice"), /sendNull\("bob", "__top_0", x\);/);
+      assert.match(bs(result, "bob"), /let y: null = receiveNull\("alice", "__top_0"\);/);
       // Regression: `null` used to fall back to the integer channel.
       assert.doesNotMatch(bs(result, "alice"), /sendInteger/);
       assert.doesNotMatch(bs(result, "bob"), /receiveInteger/);
@@ -441,8 +441,8 @@ let x: null@alice = null@alice;
 let y: null@every <- x;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /broadcastNull\("top_0", x\);/);
-      assert.match(bs(result, "bob"), /receiveNull\("alice", "top_0"\)/);
+      assert.match(bs(result, "alice"), /broadcastNull\("__top_0", x\);/);
+      assert.match(bs(result, "bob"), /receiveNull\("alice", "__top_0"\)/);
     });
 
     it("§choreobs-json rejects a duplicate endpoint name", () => {
@@ -456,7 +456,7 @@ let y: null@every <- x;
       );
     });
 
-    it("§communication-tags keeps tags unique when a function is named after the top-level scope", () => {
+    it("§communication-tags reserves the top-level scope name, so a function named 'top' gets its own series", () => {
       const result = compile(`
 function top(): void {
   let a: integer@alice = 1@alice;
@@ -469,9 +469,11 @@ top();
 `);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      const tags = [...alice.matchAll(/"(top_\d+)"/g)].map((m) => m[1]);
-      assert.equal(tags.length, 2);
-      assert.equal(new Set(tags).size, 2, `tags collided: ${tags.join(", ")}`);
+      const tags = [...alice.matchAll(/"((?:__)?top_\d+)"/g)].map((m) => m[1]);
+      // The function is numbered in scope `top`, the top level in the reserved
+      // `__top` — two series that cannot run into each other.
+      assert.deepEqual(tags.slice().sort(), ["__top_0", "top_0"]);
+      assert.equal(new Set(tags).size, tags.length, `tags collided: ${tags.join(", ")}`);
     });
 
     it("§transfer-typing evaluates a broadcast source exactly once at the sender", () => {
@@ -488,7 +490,7 @@ let n: integer@every <- nextValue();
         .filter((l) => l.includes("nextValue()") && !l.startsWith("function"));
       assert.equal(calls.length, 1, alice);
       assert.match(alice, /let __transfer_0: integer = nextValue\(\);/);
-      assert.match(alice, /broadcastInteger\("top_0", __transfer_0\);/);
+      assert.match(alice, /broadcastInteger\("__top_0", __transfer_0\);/);
       assert.match(alice, /let n: integer = __transfer_0;/);
     });
 
@@ -503,7 +505,7 @@ let xs: integer[]@every <- makeArray();
         .split("\n")
         .filter((l) => l.includes("makeArray()") && !l.startsWith("function"));
       assert.equal(calls.length, 1, alice);
-      assert.match(alice, /broadcastIntegerArray\("top_0", __transfer_0\);/);
+      assert.match(alice, /broadcastIntegerArray\("__top_0", __transfer_0\);/);
       assert.match(alice, /let xs: integer\[\] = cloneIntegerArray\(__transfer_0\);/);
     });
 
@@ -514,7 +516,7 @@ let ok: boolean@every <- plain;
 `);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      assert.match(alice, /broadcastBoolean\("top_0", plain\);/);
+      assert.match(alice, /broadcastBoolean\("__top_0", plain\);/);
       assert.doesNotMatch(alice, /__transfer/);
     });
 
@@ -608,8 +610,8 @@ let n: integer@alice = xs.length;
 let ys: integer[]@bob <- xs;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendIntegerArray\("bob", "top_0", xs\)/);
-      assert.match(bs(result, "bob"), /receiveIntegerArray\("alice", "top_0"\)/);
+      assert.match(bs(result, "alice"), /sendIntegerArray\("bob", "__top_0", xs\)/);
+      assert.match(bs(result, "bob"), /receiveIntegerArray\("alice", "__top_0"\)/);
     });
 
     it("rejects assigning @every array to individual-location array", () => {

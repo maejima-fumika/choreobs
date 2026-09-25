@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { tagSource } from "../support/pipeline.js";
+import { TOP_SCOPE } from "../../src/comm/tags.js";
 import type {
   TypedProgram,
   TypedStatement,
@@ -58,7 +59,7 @@ function transfers(typed: TypedProgram): { scope: string; tag?: string }[] {
     if ("decl" in item) {
       walkBlock(item.decl.name, item.body);
     } else {
-      walkStatement("top", item.statement);
+      walkStatement(TOP_SCOPE, item.statement);
     }
   }
   return out;
@@ -76,7 +77,7 @@ let a: integer@alice = 1@alice;
 let b: integer@bob <- a;
 let c: integer@alice <- b;
 `);
-    assert.deepEqual(tags(typed), ["top_0", "top_1"]);
+    assert.deepEqual(tags(typed), ["__top_0", "__top_1"]);
   });
 
   it("numbers each function in its own scope", () => {
@@ -97,11 +98,11 @@ let u: integer@bob <- t;
       { scope: "worker", tag: "worker_0" },
       { scope: "worker", tag: "worker_1" },
       { scope: "other", tag: "other_0" },
-      { scope: "top", tag: "top_0" },
+      { scope: TOP_SCOPE, tag: "__top_0" },
     ]);
   });
 
-  it("shares one counter, so a function named 'top' cannot collide", () => {
+  it("gives a function named 'top' its own series, since the top-level scope name is reserved", () => {
     const typed = tagSource(`
 function top(): void {
   let x: integer@alice = 1@alice;
@@ -110,10 +111,14 @@ function top(): void {
 let a: integer@alice = 2@alice;
 let b: integer@bob <- a;
 `);
+    // `__top` carries the compiler-reserved prefix (spec §function-names), so no
+    // function name can equal it and the two series cannot collide.
+    assert.deepEqual(transfers(typed), [
+      { scope: "top", tag: "top_0" },
+      { scope: TOP_SCOPE, tag: "__top_0" },
+    ]);
     const assigned = tags(typed);
-    assert.equal(assigned.length, 2);
-    assert.equal(new Set(assigned).size, 2, `tags collided: ${assigned}`);
-    assert.deepEqual(assigned, ["top_0", "top_1"]);
+    assert.equal(new Set(assigned).size, assigned.length, `tags collided: ${assigned}`);
   });
 
   it("assigns no tag to a local copy (spec §transfer-typing)", () => {
@@ -124,7 +129,7 @@ let a: integer@alice <- e;
 let b: integer@alice <- same;
 let c: integer@bob <- same;
 `);
-    assert.deepEqual(tags(typed), [null, null, "top_0"]);
+    assert.deepEqual(tags(typed), [null, null, "__top_0"]);
   });
 
   it("numbers through nested control structures in source order", () => {
@@ -145,11 +150,11 @@ if (flag) {
 let last: integer@bob <- a;
 `);
     assert.deepEqual(tags(typed), [
-      "top_0", // if-then
-      "top_1", // while inside if-then
-      "top_2", // else
-      "top_3", // for inside else
-      "top_4", // after the if
+      "__top_0", // if-then
+      "__top_1", // while inside if-then
+      "__top_2", // else
+      "__top_3", // for inside else
+      "__top_4", // after the if
     ]);
   });
 
@@ -160,7 +165,7 @@ for (let i: integer@every = 0@every; i < 3@every; i = i + 1@every) {
   let x: integer@bob <- a;
 }
 `);
-    assert.deepEqual(tags(typed), ["top_0"]);
+    assert.deepEqual(tags(typed), ["__top_0"]);
   });
 
   it("tags a broadcast like any other communication", () => {
@@ -169,7 +174,7 @@ let a: integer@alice = 1@alice;
 let shared: integer@every <- a;
 let back: integer@bob <- a;
 `);
-    assert.deepEqual(tags(typed), ["top_0", "top_1"]);
+    assert.deepEqual(tags(typed), ["__top_0", "__top_1"]);
   });
 
   it("leaves the rest of the typed program untouched", () => {

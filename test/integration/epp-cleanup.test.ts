@@ -75,7 +75,7 @@ if (ok) {
       const result = compile(source);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      assert.match(alice, /broadcastBoolean\("top_0", localOk\)/);
+      assert.match(alice, /broadcastBoolean\("__top_0", localOk\)/);
       assert.match(alice, /if \(ok\) \{\s*\} else \{\s*\}/);
       assert.doesNotMatch(alice, /nothing/);
     });
@@ -94,7 +94,7 @@ if (ok) {
       const result = compile(source);
       expectSuccess(result);
       const bob = bs(result, "bob");
-      assert.match(bob, /receiveBoolean\("alice", "top_0"\)/);
+      assert.match(bob, /receiveBoolean\("alice", "__top_0"\)/);
       assert.match(bob, /let msg: string = "ok"/);
       assert.match(bob, /let msg: string = "ng"/);
     });
@@ -112,22 +112,22 @@ let ok: boolean@every <- x;
 
       assert.match(
         bs(result, "alice"),
-        /broadcastBoolean\("top_0", x\)/,
+        /broadcastBoolean\("__top_0", x\)/,
       );
       assert.match(
         bs(result, "bob"),
-        /let ok: boolean = receiveBoolean\("alice", "top_0"\)/,
+        /let ok: boolean = receiveBoolean\("alice", "__top_0"\)/,
       );
       assert.match(
         bs(result, "carol"),
-        /let ok: boolean = receiveBoolean\("alice", "top_0"\)/,
+        /let ok: boolean = receiveBoolean\("alice", "__top_0"\)/,
       );
       assert.equal(bs(result, "bob"), bs(result, "carol"));
     });
   });
 
   describe("for-loop communication EPP (spec §example-for-loop)", () => {
-    it("reuses top_0 tag on each loop iteration at both endpoints", () => {
+    it("reuses __top_0 tag on each loop iteration at both endpoints", () => {
       const source = `
 for (
   let i: integer@every = 0@every;
@@ -142,9 +142,9 @@ for (
       expectSuccess(result);
       const alice = bs(result, "alice");
       const bob = bs(result, "bob");
-      assert.match(alice, /sendInteger\("bob", "top_0", x\)/);
-      assert.match(bob, /receiveInteger\("alice", "top_0"\)/);
-      assert.doesNotMatch(alice, /top_1/);
+      assert.match(alice, /sendInteger\("bob", "__top_0", x\)/);
+      assert.match(bob, /receiveInteger\("alice", "__top_0"\)/);
+      assert.doesNotMatch(alice, /__top_1/);
     });
   });
 
@@ -464,7 +464,7 @@ function g(): integer@alice {
         .join("\n");
       assert.equal(body.match(/g\(\)/g)?.length, 1);
       assert.match(body, /^let __transfer_0: integer = g\(\);$/m);
-      assert.match(body, /^broadcastInteger\("top_0", __transfer_0\);$/m);
+      assert.match(body, /^broadcastInteger\("__top_0", __transfer_0\);$/m);
     });
 
     it("evaluates the source at an endpoint the transfer skips", () => {

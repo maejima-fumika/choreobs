@@ -977,6 +977,9 @@ class Generator {
         lines.push(`let ${n}: integer[]@${p} = [1, 2]@${p};`);
         lines.push(`let ${n}b: float[]@${p} = ${n};`);
         break;
+      case "arrayLiteralInvariance":
+        lines.push(`let ${n}: float[]@${p} = [1, 2]@${p};`);
+        break;
       case "everyArrayToIndividual":
         if (!choreography) return false;
         lines.push(`let ${n}: integer[]@every = [1, 2]@every;`);
@@ -1234,6 +1237,7 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "everyValueInLocalFunction", spec: "invalid-value-used-inside-local-function", expect: ["local function", "every"] },
   { id: "otherLocationInLocalFunction", spec: "invalid-value-used-inside-local-function", expect: ["local function", "location"] },
   { id: "arrayInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]", "invarian"] },
+  { id: "arrayLiteralInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
   { id: "everyArrayToIndividual", spec: "err-every-array-assignment", expect: ["use a transfer instead", "cannot assign"] },
   { id: "arrayEquality", spec: "invalid-array-equality", expect: ["array", "equal"] },
   { id: "arrayIndexWrongLocation", spec: "invalid-array-index-location", expect: ["index"] },

@@ -134,6 +134,14 @@ function functionLocationOf(decl: FunctionDeclaration): Location {
 }
 
 /**
+ * `[]@L` — the one expression with no element type of its own, which is why an
+ * annotation may supply it (spec §array-literal-typing, §cannot-infer-empty-array-element-type).
+ */
+function isEmptyArrayLiteral(expr: Expression): boolean {
+  return expr.kind === "ArrayLiteralExpression" && expr.elements.length === 0;
+}
+
+/**
  * Thrown by {@link TypeChecker.error} to abandon the rest of type checking.
  *
  * Checking stops at the first error (spec §compile-time-errors). Continuing would mean inventing
@@ -610,22 +618,31 @@ class TypeChecker {
     stmt: LetStatement,
     ctx: ExecutionContext,
   ): TypedLetStatement {
-    const initializer = this.checkExpression(stmt.initializer, ctx);
-    if (
-      stmt.type === undefined &&
-      stmt.initializer.kind === "ArrayLiteralExpression" &&
-      stmt.initializer.elements.length === 0
-    ) {
-      this.error("cannot infer empty array element type", stmt.span,
+    return { stmt, ...this.checkLetBinding(stmt, ctx) };
+  }
+
+  /**
+   * The local an initialized `let` introduces (spec §let-statement).
+   *
+   * A `for` initializer declares one the same way (spec §for-statement,
+   * §for-initializer-let-type-inference), so both go through here.
+   */
+  private checkLetBinding(
+    binding: LetStatement | ForLetInit,
+    ctx: ExecutionContext,
+  ): { readonly choreoType: LocatedType; readonly initializer: TypedExpression } {
+    const initializer = this.checkExpression(binding.initializer, ctx);
+    if (binding.type === undefined && isEmptyArrayLiteral(binding.initializer)) {
+      this.error("cannot infer empty array element type", binding.span,
         ["cannot-infer-empty-array-element-type"]);
     }
     const choreoType =
-      stmt.type !== undefined
-        ? this.resolveLetType(stmt.type, initializer, stmt.span)
-        : this.inferredValueType(initializer, stmt.span);
-    this.requireExpressionAvailable(choreoType.location, ctx, stmt.span);
-    this.defineLocal(stmt.name, choreoType, stmt.span);
-    return { stmt, choreoType, initializer };
+      binding.type !== undefined
+        ? this.resolveLetType(binding.type, initializer, binding.span)
+        : this.inferredValueType(initializer, binding.span);
+    this.requireExpressionAvailable(choreoType.location, ctx, binding.span);
+    this.defineLocal(binding.name, choreoType, binding.span);
+    return { choreoType, initializer };
   }
 
   /**
@@ -673,25 +690,13 @@ class TypeChecker {
       span,
       "variable type",
     );
-    if (choreoType.isArray) {
-      if (!initializer.choreoType.isArray) {
-        this.error(
-          `cannot assign ${formatLocatedType(initializer.choreoType)} to ${formatLocatedType(choreoType)}`,
-          span,
-        );
-      }
-      if (initializer.expr.kind === "ArrayLiteralExpression") {
-        if (initializer.expr.elements.length === 0) {
-          return choreoType;
-        }
-        const expectedElement = locatedType(choreoType.base, choreoType.location);
-        const typedArray = initializer as TypedArrayLiteralExpression;
-        for (const element of typedArray.elements) {
-          this.validateAssignmentLike(expectedElement, element.choreoType, element.expr.span);
-        }
-        return choreoType;
-      }
-      this.validateAssignmentLike(choreoType, initializer.choreoType, span);
+    // An empty array literal is the one initializer with no element type of
+    // its own, so the annotation supplies it (spec §array-literal-typing).
+    // Every other initializer, array literal or not, infers its own type and is
+    // checked against the annotation below (spec §array-invariance):
+    // `let xs: float[]@alice = [1, 2]@alice;` is a type error, because the
+    // literal is `integer[]`.
+    if (choreoType.isArray === true && isEmptyArrayLiteral(initializer.expr)) {
       return choreoType;
     }
     this.validateAssignmentLike(choreoType, initializer.choreoType, span);
@@ -830,22 +835,7 @@ class TypeChecker {
     init: ForLetInit,
     ctx: ExecutionContext,
   ): TypedForLetInit {
-    const initializer = this.checkExpression(init.initializer, ctx);
-    if (
-      init.type === undefined &&
-      init.initializer.kind === "ArrayLiteralExpression" &&
-      init.initializer.elements.length === 0
-    ) {
-      this.error("cannot infer empty array element type", init.span,
-        ["cannot-infer-empty-array-element-type"]);
-    }
-    const choreoType =
-      init.type !== undefined
-        ? this.resolveLetType(init.type, initializer, init.span)
-        : this.inferredValueType(initializer, init.span);
-    this.requireExpressionAvailable(choreoType.location, ctx, init.span);
-    this.defineLocal(init.name, choreoType, init.span);
-    return { init, choreoType, initializer };
+    return { init, ...this.checkLetBinding(init, ctx) };
   }
 
   private checkForAssignmentInit(
@@ -1471,6 +1461,9 @@ class TypeChecker {
       this.error(
         `cannot assign ${formatLocatedType(source)} to ${formatLocatedType(target)}`,
         span,
+        source.isArray === true && target.isArray === true
+          ? ["array-typing", "array-type-invariance"]
+          : ["type-mismatch"],
       );
     }
     if (!locationsEqual(source.location, target.location)) {

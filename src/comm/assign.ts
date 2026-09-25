@@ -44,8 +44,9 @@ export function assignCommTags(typed: TypedProgram): TypedProgram {
  * The scope a tag is numbered within: the enclosing function, or the top level
  * (spec §communication-tags).
  *
- * One generator is shared across all scopes, so a function named `top` draws
- * from the same counter as the top-level scope rather than colliding with it.
+ * The top-level scope name carries the compiler-reserved `__` prefix
+ * (spec §function-names), so it cannot equal any function name and the two
+ * series cannot collide.
  *
  * `comm/consistency.ts` re-derives this same rule from the *projected* IR, to
  * check after the fact what this pass decided. The two must agree; they are
