@@ -183,12 +183,12 @@ function add@alice(a: integer@alice, b: integer@alice) {
 function f@alice(c: boolean@alice) {
   if (c) {
     if (c) {
-      return 1@alice;
+      return 1.0@alice;
     } else {
       return 2.5@alice;
     }
   } else {
-    return 3@alice;
+    return 3.0@alice;
   }
 }
 `);
@@ -209,8 +209,8 @@ function log@alice() {
       assert.equal(functionDecl(typed, 0).returnType.base, "void");
     });
 
-    it("infers numeric LUB for conditional returns (§function-return-type-inference)", () => {
-      const typed = expectTypeCheckSuccess(`
+    it("rejects integer and float returns, which have no LUB (§function-return-type-inference)", () => {
+      expectSpecFailure(`
 function f@alice(c: boolean@alice) {
   if (c) {
     return 1@alice;
@@ -218,8 +218,7 @@ function f@alice(c: boolean@alice) {
     return 2.5@alice;
   }
 }
-`);
-      assert.equal(functionDecl(typed, 0).returnType.base, "float");
+`, "function-return-type-inference");
     });
 
     it("infers return type for choreography function binary at alice (§operators, §function-return-type-inference)", () => {
@@ -296,7 +295,7 @@ let r: integer@alice = f();
       assert.equal(functionDecl(typed, 1).returnType.base, "integer");
     });
 
-    it("widens along a chain of omitted return types (§function-return-type-inference)", () => {
+    it("propagates along a chain of omitted return types (§function-return-type-inference)", () => {
       const typed = expectTypeCheckSuccess(`
 function g@alice() { return 1.5@alice; }
 function f@alice() { return g(); }
@@ -504,7 +503,7 @@ function g@alice(n: integer@alice) {
     it("infers located array literals", () => {
       const typed = expectTypeCheckSuccess(`
 let xs = [1, 2, 3]@alice;
-let ys = [1, 2.5]@alice;
+let ys = [1.0, 2.5]@alice;
 let zs = [true, false]@alice;
 `);
       const a = typed.items[0];

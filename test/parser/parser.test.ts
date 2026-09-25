@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CHOREOGRAPHY_CONTEXT } from "../../src/ast/context.js";
 import { parse } from "../../src/parser/index.js";
+import type { Expression } from "../../src/ast/expressions.js";
 
 describe("ChoreoBS parser", () => {
   describe("parsing stops at the first syntax error", () => {
@@ -168,6 +169,74 @@ let y: integer@bob <- x;`;
 
     it("rejects an unknown array operation", () => {
       parseFail(`let n: integer@alice = xs.pop;`, "unknown array operation '.pop'");
+    });
+  });
+
+  describe("numeric conversion syntax (spec §expressions, §numeric-conversion)", () => {
+    /** The tree with every node parenthesized, so precedence is visible. */
+    function shape(expr: Expression): string {
+      switch (expr.kind) {
+        case "BinaryExpression":
+          return `(${shape(expr.left)} ${expr.operator} ${shape(expr.right)})`;
+        case "ConversionExpression":
+          return `(${shape(expr.operand)} as ${expr.target})`;
+        case "UnaryExpression":
+          return `(${expr.operator}${shape(expr.operand)})`;
+        case "IdentifierExpression":
+          return expr.name;
+        case "ParenthesizedExpression":
+          return `[${shape(expr.expression)}]`;
+        default:
+          return expr.kind;
+      }
+    }
+
+    function initializerShape(expression: string): string {
+      const { program, errors } = parse(`let r = ${expression};`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      const item = program?.items[0];
+      assert.ok(item?.kind === "TopLevelStatement" && item.statement.kind === "LetStatement");
+      return shape(item.statement.initializer);
+    }
+
+    it("shares the relational level and associates to the left, as in TypeScript", () => {
+      assert.equal(initializerShape("a + b as float"), "((a + b) as float)");
+      assert.equal(initializerShape("a * b as float"), "((a * b) as float)");
+      assert.equal(initializerShape("-a as float"), "((-a) as float)");
+      assert.equal(initializerShape("a as float < b"), "((a as float) < b)");
+      assert.equal(initializerShape("a < b as float"), "((a < b) as float)");
+      assert.equal(initializerShape("a as float as integer"), "((a as float) as integer)");
+      assert.equal(initializerShape("a as float === b"), "((a as float) === b)");
+      assert.equal(initializerShape("a + (b as float)"), "(a + [(b as float)])");
+    });
+
+    it("makes a conversion the left operand of the tighter operators after it", () => {
+      assert.equal(initializerShape("a as float + b"), "((a as float) + b)");
+      assert.equal(
+        initializerShape("a as float * b + c"),
+        "(((a as float) * b) + c)",
+      );
+      assert.equal(
+        initializerShape("a as float + b < c"),
+        "(((a as float) + b) < c)",
+      );
+    });
+
+    it("rejects a target other than a bare integer or float", () => {
+      for (const [source, needle] of [
+        ["let r = a as boolean;", "must be 'integer' or 'float', found 'boolean'"],
+        ["let r = a as float[];", "arrays cannot be converted"],
+        ["let r = a as float@bob;", "carries no location"],
+        ["let r = a as;", "must be 'integer' or 'float', found ';'"],
+      ] as const) {
+        const { program, errors } = parse(source);
+        assert.equal(program, null, source);
+        assert.ok(errors.some((e) => e.message.includes(needle)), JSON.stringify(errors));
+        assert.ok(
+          errors.some((e) => e.spec.includes("invalid-numeric-conversion")),
+          JSON.stringify(errors),
+        );
+      }
     });
   });
 

@@ -1,5 +1,5 @@
 import type { Span } from "../ast/span.js";
-import type { BaseType } from "../ast/syntax-types.js";
+import type { BaseType, NumericType } from "../ast/syntax-types.js";
 import type {
   ArithmeticOperator,
   RelationalOperator,
@@ -52,6 +52,7 @@ export type ProjectedExpression =
   | IdentifierExpression
   | BinaryExpression
   | UnaryExpression
+  | ConversionExpression
   | CallExpression
   | IndexExpression
   | PropertyLengthExpression
@@ -115,6 +116,14 @@ export interface BinaryExpression {
 export interface UnaryExpression {
   readonly kind: "UnaryExpression";
   readonly operator: UnaryOperator;
+  readonly operand: ProjectedExpression;
+  readonly span: Span;
+}
+
+/** Emitted as BlueScript's own `as` (spec §numeric-conversion-code-generation). */
+export interface ConversionExpression {
+  readonly kind: "ConversionExpression";
+  readonly target: NumericType;
   readonly operand: ProjectedExpression;
   readonly span: Span;
 }

@@ -42,12 +42,6 @@ export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
   if (a === b) {
     return inferenceOk(a);
   }
-  if (
-    (a === "integer" && b === "float") ||
-    (a === "float" && b === "integer")
-  ) {
-    return inferenceOk("float");
-  }
   return inferenceError(
     `incompatible return types: cannot compute least upper bound of ${a} and ${b}`,
     ["function-return-type-inference"],

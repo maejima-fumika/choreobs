@@ -32,6 +32,7 @@ export const TokenKind = {
   Boolean: "Boolean",
   String: "String",
   Void: "Void",
+  As: "As",
 
   // Keywords — reserved but unsupported in v0 (spec §keywords)
   Break: "Break",

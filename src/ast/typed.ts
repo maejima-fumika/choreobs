@@ -20,6 +20,7 @@ import type {
   Expression,
   BinaryExpression,
   UnaryExpression,
+  ConversionExpression,
   LiteralExpression,
   ArrayLiteralExpression,
   IdentifierExpression,
@@ -193,6 +194,7 @@ export interface TypedBlock {
 export type TypedExpression =
   | TypedBinaryExpression
   | TypedUnaryExpression
+  | TypedConversionExpression
   | TypedLiteralExpression
   | TypedArrayLiteralExpression
   | TypedIdentifierExpression
@@ -211,6 +213,12 @@ export interface TypedBinaryExpression {
 
 export interface TypedUnaryExpression {
   readonly expr: UnaryExpression;
+  readonly choreoType: LocatedType;
+  readonly operand: TypedExpression;
+}
+
+export interface TypedConversionExpression {
+  readonly expr: ConversionExpression;
   readonly choreoType: LocatedType;
   readonly operand: TypedExpression;
 }

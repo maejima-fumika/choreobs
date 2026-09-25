@@ -66,12 +66,13 @@ export interface GeneratedProgram {
 /** Array element types are restricted to these (spec §array-typing, §unsupported-array-element-type). */
 const ARRAY_BASES: readonly Base[] = ["integer", "float", "boolean"];
 const ALL_BASES: readonly Base[] = ["integer", "float", "boolean", "string"];
+/** The operands of the arithmetic and relational operators and of `as` (spec §operators, §numeric-conversion). */
+const NUMERIC_BASES: readonly Base[] = ["integer", "float"];
 
 /** Violations whose shape needs at least two functions in the program. */
 const NEEDS_TWO_FUNCTIONS = new Set([
   "crossEndpointLocalCall",
   "choreographyCallFromLocal",
-  "shortCircuitChoreographyCall",
   // A function is registered only once its own body is done, so taking a
   // function's name needs a second function for the injection to land in.
   "functionNameAsVariable",
@@ -92,17 +93,6 @@ function mulberry32(seed: number): () => number {
 
 function sameTy(a: Ty, b: Ty): boolean {
   return a.base === b.base && a.isArray === b.isArray;
-}
-
-/** spec §subtyping: `integer <: float`, plus reflexivity. Arrays are invariant (§array-typing). */
-function subtypesOf(ty: Ty): readonly Ty[] {
-  if (ty.isArray) {
-    return [ty];
-  }
-  if (ty.base === "float") {
-    return [{ base: "float", isArray: false }, { base: "integer", isArray: false }];
-  }
-  return [ty];
 }
 
 export function generate(options: GenOptions): GeneratedProgram {
@@ -208,6 +198,11 @@ class Generator {
 
   private int(min: number, max: number): number {
     return min + Math.floor(this.rng() * (max - min + 1));
+  }
+
+  /** An `integer` or `float` scalar type (spec §operators, §numeric-conversion). */
+  private numericTy(): Ty {
+    return { base: this.pick(NUMERIC_BASES), isArray: false };
   }
 
   private pick<T>(xs: readonly T[]): T {
@@ -334,18 +329,12 @@ class Generator {
     return scope.filter((b) => b.loc === loc && sameTy(b.ty, ty));
   }
 
-  /**
-   * `callFree` forbids choreography calls anywhere below this point. It is set
-   * inside `&&` / `||` operands, where spec §choreography-call-in-a-short-circuit-operand rejects them: the endpoints
-   * that do not hold the result cannot know whether the operand was evaluated.
-   */
   private genExpr(
     ty: Ty,
     loc: Loc,
     scope: readonly Binding[],
     ctx: Ctx,
     depth: number,
-    callFree = false,
   ): string {
     const choices: (() => string)[] = [];
     const vars = this.varsOf(scope, ty, loc);
@@ -360,7 +349,7 @@ class Generator {
     }
 
     if (depth < this.maxExprDepth) {
-      this.addCompoundChoices(choices, ty, loc, scope, ctx, depth, callFree);
+      this.addCompoundChoices(choices, ty, loc, scope, ctx, depth);
     }
     return this.pick(choices)();
   }
@@ -372,11 +361,9 @@ class Generator {
     scope: readonly Binding[],
     ctx: Ctx,
     depth: number,
-    callFree: boolean,
   ): void {
     const next = depth + 1;
-    const sub = (t: Ty) => this.genExpr(t, loc, scope, ctx, next, callFree);
-    const subCallFree = (t: Ty) => this.genExpr(t, loc, scope, ctx, next, true);
+    const sub = (t: Ty) => this.genExpr(t, loc, scope, ctx, next);
 
     if (!ty.isArray) {
       // Index access: xs[i] where xs : T[]@loc (spec §array-typing).
@@ -393,9 +380,15 @@ class Generator {
       }
     }
 
-    if (!ty.isArray && (ty.base === "integer" || ty.base === "float")) {
+    if (!ty.isArray && NUMERIC_BASES.includes(ty.base)) {
       // Both operands at the same location; result is there too (spec §operators).
       choices.push(() => `(${sub(ty)} ${this.pick(["+", "-", "*"])} ${sub(ty)})`);
+      // Either numeric type converts to either, `ty` included; the result stays
+      // at the operand's location (spec §numeric-conversion).
+      choices.push(() => `(${sub(this.numericTy())} as ${ty.base})`);
+      // Unparenthesized, the conversion is the left operand of the `+` after it,
+      // as in TypeScript (spec §expressions).
+      choices.push(() => `(${sub(this.numericTy())} as ${ty.base} + ${sub(ty)})`);
     }
 
     if (!ty.isArray && ty.base === "string") {
@@ -404,13 +397,10 @@ class Generator {
 
     if (!ty.isArray && ty.base === "boolean") {
       choices.push(() => {
-        const numeric: Ty = { base: this.pick(["integer", "float"] as const), isArray: false };
+        const numeric = this.numericTy();
         return `(${sub(numeric)} ${this.pick(["<", "<=", ">", ">="])} ${sub(numeric)})`;
       });
-      choices.push(
-        () =>
-          `(${subCallFree(BOOLEAN)} ${this.pick(["&&", "||"])} ${subCallFree(BOOLEAN)})`,
-      );
+      choices.push(() => `(${sub(BOOLEAN)} ${this.pick(["&&", "||"])} ${sub(BOOLEAN)})`);
       choices.push(() => `!(${sub(BOOLEAN)})`);
       choices.push(() => {
         // `===` / `!==` are undefined for array types (spec §array-typing).
@@ -422,15 +412,12 @@ class Generator {
     const callable = this.fns.filter(
       (f) =>
         this.callableFrom(f, ctx) &&
-        !(callFree && f.at === undefined) &&
         f.ret !== undefined &&
         sameTy(f.ret.ty, ty) &&
         f.ret.loc === loc,
     );
     if (callable.length > 0) {
-      choices.push(() =>
-        this.genCall(this.pick(callable), scope, ctx, next, callFree),
-      );
+      choices.push(() => this.genCall(this.pick(callable), scope, ctx, next));
     }
   }
 
@@ -459,11 +446,8 @@ class Generator {
     scope: readonly Binding[],
     ctx: Ctx,
     depth: number,
-    callFree = false,
   ): string {
-    const args = fn.params.map((p) =>
-      this.genExpr(p.ty, p.loc, scope, ctx, depth, callFree),
-    );
+    const args = fn.params.map((p) => this.genExpr(p.ty, p.loc, scope, ctx, depth));
     return `${fn.name}(${args.join(", ")})`;
   }
 
@@ -548,7 +532,7 @@ class Generator {
       ty.isArray && this.chance(0.15)
         ? `[]@${loc}`
         : this.genExpr(
-            this.pick(subtypesOf(ty)),
+            ty,
             loc,
             scope,
             ctx,
@@ -586,8 +570,7 @@ class Generator {
     const dst = this.someLocation(ctx);
     const src = this.someLocation(ctx);
     const name = this.declareName("t", scope, depth);
-    const sourceTy = this.pick(subtypesOf(ty));
-    const source = this.genExpr(sourceTy, src, scope, ctx, 1);
+    const source = this.genExpr(ty, src, scope, ctx, 1);
     this.recordTransfer(src, dst, ty);
     this.emit(indent, `let ${name}: ${this.formatType(ty, dst)} <- ${source};`);
     scope.push({ name, ty, loc: dst, depth });
@@ -604,7 +587,7 @@ class Generator {
       return this.genLetAnnotated(scope, ctx, indent, depth);
     }
     const value = this.genExpr(
-      this.pick(subtypesOf(target.ty)),
+      target.ty,
       target.loc,
       scope,
       ctx,
@@ -625,7 +608,7 @@ class Generator {
     }
     const src = this.someLocation(ctx);
     const source = this.genExpr(
-      this.pick(subtypesOf(target.ty)),
+      target.ty,
       src,
       scope,
       ctx,
@@ -648,7 +631,7 @@ class Generator {
     const element: Ty = { base: target.ty.base, isArray: false };
     const index = this.genExpr(INTEGER, target.loc, scope, ctx, 2);
     const value = this.genExpr(
-      this.pick(subtypesOf(element)),
+      element,
       target.loc,
       scope,
       ctx,
@@ -670,7 +653,7 @@ class Generator {
     }
     const element: Ty = { base: target.ty.base, isArray: false };
     const value = this.genExpr(
-      this.pick(subtypesOf(element)),
+      element,
       target.loc,
       scope,
       ctx,
@@ -781,11 +764,6 @@ class Generator {
     const violation = this.options.violation;
     if (violation === undefined || this.injected !== undefined) {
       return this.chance(0.5);
-    }
-    if (violation === "shortCircuitChoreographyCall") {
-      // Needs a choreography function to call, and a choreography context to
-      // call it from.
-      return false;
     }
     if (violation === "choreographyCallFromLocal") {
       // The first function is the choreography one; later ones are local, so
@@ -953,6 +931,31 @@ class Generator {
       case "transferArrayElementMismatch":
         lines.push(`let ${n}: float[]@${p} <- [1, 2]@${choreography ? q : p};`);
         break;
+      // `integer` and `float` are unrelated (spec §subtyping): no widening at a
+      // `let` or a transfer, and no promotion inside an operator.
+      case "numericAssignMismatch":
+        lines.push(`let ${n}: float@${p} = 1@${p};`);
+        break;
+      case "transferNumericWidening":
+        lines.push(`let ${n}: float@${p} <- 1@${choreography ? q : p};`);
+        break;
+      case "mixedNumericArithmetic":
+        lines.push(`let ${n} = 1@${p} + 1.5@${p};`);
+        break;
+      case "mixedNumericComparison":
+        lines.push(`let ${n}: boolean@${p} = 1@${p} < 1.5@${p};`);
+        break;
+      case "conversionNonNumericOperand":
+        lines.push(`let ${n} = true@${p} as float;`);
+        break;
+      case "conversionArrayOperand":
+        lines.push(`let ${n}: integer[]@${p} = [1]@${p};`);
+        lines.push(`let ${n}b = ${n} as float;`);
+        break;
+      case "conversionLocatedTarget":
+        // A parse error: the target is a bare base type (spec §expressions).
+        lines.push(`let ${n} = 1@${p} as float@${p};`);
+        break;
       case "ifConditionWrongLocation":
         lines.push(`if (true@${condBad}) {`, `}`);
         break;
@@ -1045,6 +1048,20 @@ class Generator {
       case "unaryArrayOperand":
         lines.push(`let ${n}: boolean[]@${p} = [true, false]@${p};`);
         lines.push(`let ${n}b: boolean@${p} = !${n};`);
+        break;
+      // An array carries its element type in `base`, so these three slip past
+      // any operand check that looks at `base` alone (spec §operators).
+      case "arithmeticArrayOperand":
+        lines.push(`let ${n}: integer[]@${p} = [1, 2]@${p};`);
+        lines.push(`let ${n}b = ${n} + ${n};`);
+        break;
+      case "comparisonArrayOperand":
+        lines.push(`let ${n}: integer[]@${p} = [1, 2]@${p};`);
+        lines.push(`let ${n}b: boolean@${p} = ${n} < ${n};`);
+        break;
+      case "logicalArrayOperand":
+        lines.push(`let ${n}: boolean[]@${p} = [true, false]@${p};`);
+        lines.push(`let ${n}b: boolean@${p} = ${n} && ${n};`);
         break;
       case "transferDestinationInLocalFunction":
         // Legal in a choreography context; inside `function@p` the destination
@@ -1158,30 +1175,6 @@ class Generator {
         lines.push(`${target.name}(${args.join(", ")});`);
         break;
       }
-      case "shortCircuitChoreographyCall": {
-        // The endpoints that do not hold the result cannot know whether the
-        // short-circuited operand ran, so a choreography call is banned from
-        // both operands (spec §choreography-call-in-a-short-circuit-operand). It has to be a choreography context:
-        // a local function may not call one at all, which §calling-choreography-from-local catches first.
-        if (!choreography) return false;
-        const target = this.fns.find(
-          (f) => f.at === undefined && f.ret !== undefined && !f.ret.ty.isArray,
-        );
-        if (target === undefined || target.ret === undefined) return false;
-        const loc = target.ret.loc;
-        const callOf = () =>
-          `${target.name}(${target.params
-            .map((param) => this.genExpr(param.ty, param.loc, scope, ctx, 2))
-            .join(", ")})`;
-        // `&&` needs boolean operands at one location (spec §operators); a call that
-        // does not already return boolean is compared with itself to get one.
-        const operand =
-          target.ret.ty.base === "boolean"
-            ? callOf()
-            : `(${callOf()} === ${callOf()})`;
-        lines.push(`let ${n}: boolean@${loc} = (true@${loc} && ${operand});`);
-        break;
-      }
       case "choreographyCallFromLocal": {
         if (choreography) return false;
         const target = this.fns.find((f) => f.at === undefined);
@@ -1231,6 +1224,13 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "assignAcrossLocations", spec: "invalid-assignment-across-locations", expect: ["transfer instead"] },
   { id: "transferBaseMismatch", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
   { id: "transferArrayElementMismatch", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
+  { id: "numericAssignMismatch", spec: "type-mismatch", expect: ["cannot assign integer"] },
+  { id: "transferNumericWidening", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
+  { id: "mixedNumericArithmetic", spec: "invalid-arithmetic-or-logical-operand", expect: ["same numeric type"] },
+  { id: "mixedNumericComparison", spec: "invalid-comparison-or-equality-operands", expect: ["same numeric type"] },
+  { id: "conversionNonNumericOperand", spec: "invalid-numeric-conversion", expect: ["requires an integer or float operand"] },
+  { id: "conversionArrayOperand", spec: "invalid-numeric-conversion", expect: ["requires an integer or float operand"] },
+  { id: "conversionLocatedTarget", spec: "invalid-numeric-conversion", expect: ["carries no location"] },
   { id: "ifConditionWrongLocation", spec: "invalid-if-condition", expect: ["condition", "not usable in local function"] },
   { id: "whileConditionWrongLocation", spec: "invalid-while-condition", expect: ["condition", "not usable in local function"] },
   { id: "forConditionWrongLocation", spec: "invalid-for-condition", expect: ["condition", "not usable in local function"] },
@@ -1245,6 +1245,9 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "voidVariable", spec: "invalid-use-of-void", expect: ["void"] },
   { id: "reservedRuntimeName", spec: "function-names", expect: ["reserved runtime name"] },
   { id: "unaryArrayOperand", spec: "invalid-unary-operand", expect: [] },
+  { id: "arithmeticArrayOperand", spec: "invalid-arithmetic-or-logical-operand", expect: [] },
+  { id: "comparisonArrayOperand", spec: "invalid-comparison-or-equality-operands", expect: [] },
+  { id: "logicalArrayOperand", spec: "invalid-arithmetic-or-logical-operand", expect: [] },
   {
     id: "voidEquality",
     spec: "invalid-comparison-or-equality-operands",
@@ -1287,11 +1290,6 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "everyArrayArgumentToIndividual", spec: "err-every-array-argument", expect: ["argument", "every", "cannot"] },
   { id: "crossEndpointLocalCall", spec: "calling-another-endpoints-local-function", expect: ["cannot call"] },
   { id: "choreographyCallFromLocal", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
-  {
-    id: "shortCircuitChoreographyCall",
-    spec: "choreography-call-in-a-short-circuit-operand",
-    expect: ["must not contain a call to choreography function"],
-  },
 ];
 
 export const VIOLATION_IDS: readonly string[] = VIOLATIONS.map((v) => v.id);

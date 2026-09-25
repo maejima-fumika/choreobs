@@ -10,6 +10,14 @@ export type BaseType =
   | "null"
   | "void";
 
+/** The base types a numeric conversion `e as T` accepts and yields (spec §numeric-conversion). */
+export type NumericType = "integer" | "float";
+
+/** The operands of the arithmetic operators and of `as` (spec §operators, §numeric-conversion). */
+export function isNumericType(base: BaseType): base is NumericType {
+  return base === "integer" || base === "float";
+}
+
 /**
  * Type syntax: `BaseType` or `BaseType @ Location` (spec §types).
  *

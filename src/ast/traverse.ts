@@ -4,11 +4,9 @@ import { assertNever } from "../util/exhaustive.js";
 /**
  * The direct child expressions of `expr`, in evaluation order (spec §evaluation-order).
  *
- * The checker asks two different questions of an expression tree — which
- * functions does this body call (§inference-and-recursion), and does this short-circuit operand
- * hold a choreography call (§choreography-call-in-a-short-circuit-operand) — and both used to carry their own copy of
- * the shape. The shape lives here, once, and `assertNever` makes a new
- * expression form a compile error rather than a silently unvisited subtree.
+ * The checker uses it to find which functions a body calls (§inference-and-recursion).
+ * The shape lives here, once, and `assertNever` makes a new expression form a
+ * compile error rather than a silently unvisited subtree.
  */
 export function childExpressions(expr: Expression): readonly Expression[] {
   switch (expr.kind) {
@@ -18,6 +16,7 @@ export function childExpressions(expr: Expression): readonly Expression[] {
     case "BinaryExpression":
       return [expr.left, expr.right];
     case "UnaryExpression":
+    case "ConversionExpression":
       return [expr.operand];
     case "CallExpression":
       return expr.args;

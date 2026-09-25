@@ -10,7 +10,12 @@ import type {
 } from "../ir/projected.js";
 import { emitType } from "./types.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
-import { ARRAY_SENTINEL, NOTHING_HELPER, PUSH_SENTINEL } from "../runtime/names.js";
+import {
+  ARRAY_SENTINEL,
+  LOGICAL_HELPERS,
+  NOTHING_HELPER,
+  PUSH_SENTINEL,
+} from "../runtime/names.js";
 
 export function emit(program: ProjectedProgram): string {
   return new BlueScriptEmitter().emitProgram(program);
@@ -161,11 +166,20 @@ class BlueScriptEmitter {
       case "IdentifierExpression":
         return expr.name;
       case "BinaryExpression":
+        // BlueScript's `&&` and `||` short-circuit; ChoreoBS's do not (spec §logical-operator-code-generation).
+        if (expr.operator === "&&" || expr.operator === "||") {
+          const helper = LOGICAL_HELPERS[expr.operator];
+          return `${helper}(${this.emitExpr(expr.left)}, ${this.emitExpr(expr.right)})`;
+        }
         return `${this.emitExpr(expr.left)} ${expr.operator} ${this.emitExpr(expr.right)}`;
       case "UnaryExpression":
         return expr.operator === "!"
           ? `!${this.emitExpr(expr.operand)}`
           : `(-${this.emitExpr(expr.operand)})`;
+      // BlueScript's own `as`, parenthesized so that it survives any enclosing
+      // operator (spec §numeric-conversion-code-generation).
+      case "ConversionExpression":
+        return `(${this.emitExpr(expr.operand)} as ${expr.target})`;
       case "CallExpression": {
         if (expr.callee === ARRAY_SENTINEL) {
           return `[${expr.args.map((a) => this.emitExpr(a)).join(", ")}]`;
@@ -185,7 +199,10 @@ class BlueScriptEmitter {
       case "NothingExpression":
         return `${NOTHING_HELPER}(${expr.parts.map((p) => this.emitExpr(p)).join(", ")})`;
       case "ParenthesizedExpression":
-        return `(${this.emitExpr(expr.expression)})`;
+        // A conversion brings its own parentheses; the source's would double them.
+        return expr.expression.kind === "ConversionExpression"
+          ? this.emitExpr(expr.expression)
+          : `(${this.emitExpr(expr.expression)})`;
       case "ReceiveExpression":
         return `${receiveFunction(expr.comm)}("${expr.sourceEndpoint}", "${expr.tag}")`;
     }

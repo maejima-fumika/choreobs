@@ -13,7 +13,8 @@ export {
 } from "./context.js";
 export type { ExecutionContext } from "./context.js";
 
-export type { BaseType, TypeAnnotation } from "./syntax-types.js";
+export type { BaseType, NumericType, TypeAnnotation } from "./syntax-types.js";
+export { isNumericType } from "./syntax-types.js";
 
 export type {
   ArithmeticOperator,
@@ -38,6 +39,7 @@ export type {
   Expression,
   BinaryExpression,
   UnaryExpression,
+  ConversionExpression,
   LiteralExpression,
   ArrayLiteralExpression,
   IdentifierExpression,
@@ -100,6 +102,7 @@ export type {
   TypedExpression,
   TypedBinaryExpression,
   TypedUnaryExpression,
+  TypedConversionExpression,
   TypedLiteralExpression,
   TypedArrayLiteralExpression,
   TypedIdentifierExpression,

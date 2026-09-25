@@ -336,7 +336,7 @@ function sends2(): integer@alice {
       return bs(result, "bob");
     }
 
-    it("keeps operand order under nested strict operators (§transfer-operator)", () => {
+    it("keeps operand order under nested binary operators (§transfer-operator)", () => {
       // The nesting mirrors the source tree, and `nothing` evaluates its
       // arguments left to right, so the call order is the source's.
       assert.match(
@@ -491,7 +491,7 @@ let y: integer@alice <- x;
     });
   });
 
-  describe("§choreography-call-in-a-short-circuit-operand short-circuit operands", () => {
+  describe("§logical-operator-projection && and || do not short-circuit", () => {
     const PING = `
 function ping(): boolean@alice {
   let b: integer@bob = 1@bob;
@@ -500,44 +500,46 @@ function ping(): boolean@alice {
 }
 `;
 
-    it("rejects a choreography call in the right operand", () => {
+    it("keeps a choreography call in the right operand at every endpoint", () => {
       const result = compile(`${PING}
 let c: boolean@alice = false@alice;
 let d: boolean@alice = c && ping();
 `);
-      assert.equal(result.success, false);
-      assert.ok(
-        result.errors.some((e) =>
-          e.message.includes("must not contain a call to choreography function"),
-        ),
-        JSON.stringify(result.errors),
-      );
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /^let d: boolean = __and\(c, ping\(\)\);$/m);
+      assert.match(bs(result, "bob"), /^nothing\(null, ping\(\)\);$/m);
     });
 
-    it("rejects a choreography call in the left operand", () => {
+    it("keeps a choreography call in the left operand at every endpoint", () => {
       const result = compile(`${PING}
 let c: boolean@alice = false@alice;
 let d: boolean@alice = ping() || c;
 `);
-      assert.equal(result.success, false);
-      assert.ok(
-        result.errors.some((e) =>
-          e.message.includes("must not contain a call to choreography function"),
-        ),
-        JSON.stringify(result.errors),
-      );
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /^let d: boolean = __or\(ping\(\), c\);$/m);
+      assert.match(bs(result, "bob"), /^nothing\(ping\(\), null\);$/m);
     });
 
-    it("still allows a local call, which cannot communicate", () => {
+    it("drops the operator entirely where no operand calls anything", () => {
       const result = compile(`
-function yes@alice(): boolean@alice {
-  return true@alice;
-}
 let c: boolean@alice = false@alice;
-let d: boolean@alice = c && yes();
+let d: boolean@alice = c && true@alice;
+let e: integer@bob = 1@bob;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /let d: boolean = c && yes\(\);/);
+      assert.match(bs(result, "alice"), /^let d: boolean = __and\(c, true\);$/m);
+      assert.equal(bs(result, "bob"), "let e: integer = 1;");
+    });
+
+    it("spells a local function's && as __and too", () => {
+      const result = compile(`
+function both@alice(a: boolean@alice, b: boolean@alice): boolean@alice {
+  return a && b;
+}
+let d: boolean@alice = both(true@alice, false@alice);
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "alice"), /return __and\(a, b\);/);
     });
   });
 

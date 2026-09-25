@@ -182,14 +182,52 @@ ys <- xs;
       assert.match(bs(result, "bob"), /ys = receiveFloatArray\("alice", "__top_0"\);/);
     });
 
-    it("widens integer to float across a transfer (spec §transfer-typing)", () => {
+    it("converts at the sender when the source is a conversion (spec §numeric-conversion)", () => {
       const result = compile(`
 let n: integer@alice = 3@alice;
-let m: float@bob <- n;
+let m: float@bob <- n as float;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendFloat\("bob", "__top_0", n\);/);
-      assert.match(bs(result, "bob"), /let m: float = receiveFloat\("alice", "__top_0"\);/);
+      assert.match(bs(result, "alice"), /sendFloat\("bob", "__top_0", \(n as float\)\);/);
+      assert.equal(bs(result, "bob"), `let m: float = receiveFloat("alice", "__top_0");`);
+    });
+  });
+
+  describe("numeric conversion projection (spec §numeric-conversion-projection)", () => {
+    it("keeps `as` where the value resides and emits nothing of it elsewhere", () => {
+      const result = compile(`
+function relay(v: integer@alice): integer@alice {
+    let w: integer@bob <- v;
+    let back: integer@alice <- w;
+    return back;
+}
+
+let n: integer@alice = 3@alice;
+let x: float@alice = n as float;
+let y: float@alice = relay(n) as float;
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      assert.match(alice, /let x: float = \(n as float\);/);
+      assert.match(alice, /let y: float = \(relay\(n\) as float\);/);
+      const bob = bs(result, "bob");
+      // Only the call survives, bare: no `as`, and no `nothing(...)` around it,
+      // unlike a unary operator (spec §binary-and-unary-operation-projection).
+      assert.match(bob, /^relay\(null\);$/m);
+      assert.doesNotMatch(bob, / as /);
+      assert.doesNotMatch(bob, /nothing/);
+    });
+
+    it("does not double parentheses the source already wrote", () => {
+      const result = compile(`
+let n: integer@alice = 3@alice;
+let x: float@alice = 1.5@alice + (n as float);
+let y: float@alice = x as integer + 1@alice as float;
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      assert.match(alice, /let x: float = 1\.5 \+ \(n as float\);/);
+      assert.match(alice, /let y: float = \(\(x as integer\) \+ 1 as float\);/);
     });
   });
 

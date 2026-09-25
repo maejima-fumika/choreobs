@@ -3,12 +3,12 @@ import type { Location } from "../ast/location.js";
 import type { ExecutionContext } from "../ast/context.js";
 import type { LocatedType } from "../ast/typed.js";
 
-/** Base type subtyping (spec §subtyping). */
+/**
+ * Base type subtyping (spec §subtyping). The relation is reflexivity alone:
+ * `integer` and `float` are unrelated, so neither stands in for the other.
+ */
 export function isSubtype(source: BaseType, target: BaseType): boolean {
-  if (source === target) {
-    return true;
-  }
-  return source === "integer" && target === "float";
+  return source === target;
 }
 
 export function isArraySubtype(source: LocatedType, target: LocatedType): boolean {

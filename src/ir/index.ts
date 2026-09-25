@@ -12,6 +12,7 @@ export type {
   IdentifierExpression,
   BinaryExpression,
   UnaryExpression,
+  ConversionExpression,
   CallExpression,
   NothingExpression,
   ParenthesizedExpression,

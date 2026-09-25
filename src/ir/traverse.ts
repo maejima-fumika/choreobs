@@ -43,6 +43,7 @@ export function mapExpressionChildren(
     case "BinaryExpression":
       return { ...expr, left: f(expr.left), right: f(expr.right) };
     case "UnaryExpression":
+    case "ConversionExpression":
       return { ...expr, operand: f(expr.operand) };
     case "CallExpression":
       return { ...expr, args: expr.args.map(f) };

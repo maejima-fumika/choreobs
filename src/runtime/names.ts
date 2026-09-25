@@ -1,4 +1,5 @@
 import type { CommKind } from "../ir/projected.js";
+import type { LogicalOperator } from "../ast/operators.js";
 import {
   broadcastFunction,
   cloneFunction,
@@ -41,6 +42,16 @@ export const ARRAY_SENTINEL = "__array";
 export const PUSH_SENTINEL = "__push";
 
 /**
+ * The runtime helpers `&&` and `||` are emitted as (spec §logical-operator-code-generation, §and-or-helpers).
+ * BlueScript's own operators short-circuit and ChoreoBS's do not, so a call —
+ * which evaluates both arguments first — stands in for them.
+ */
+export const LOGICAL_HELPERS: Readonly<Record<LogicalOperator, string>> = {
+  "&&": "__and",
+  "||": "__or",
+};
+
+/**
  * Every compiler-introduced name starts with this, and the source language
  * reserves the prefix (spec §identifiers, §function-names). That is what lets EPP mint temporaries
  * — `__transfer_0` and the like — without checking them against the program.
@@ -67,6 +78,7 @@ export const RESERVED_RUNTIME_NAMES: ReadonlySet<string> = new Set<string>([
   NOTHING_HELPER,
   ARRAY_SENTINEL,
   PUSH_SENTINEL,
+  ...Object.values(LOGICAL_HELPERS),
   ...ALL_COMM_KINDS.flatMap((comm) => [
     sendFunction(comm),
     receiveFunction(comm),

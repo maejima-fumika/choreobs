@@ -158,9 +158,9 @@ let y: integer@alice <- x;
     assert.equal(recv.commTag, undefined);
   });
 
-  it("accepts a scalar local copy from @every literals with subtyping", () => {
+  it("accepts a scalar local copy from @every literals", () => {
     const { errors } = checkSource(`
-let y: float@alice <- 1@every;
+let y: float@alice <- 1.0@every;
 let b: boolean@bob <- true@every;
 `);
     assert.equal(errors.length, 0);
@@ -658,6 +658,44 @@ let n = -xs;
     assertCites(errors, "invalid-unary-operand");
   });
 
+  it("rejects an array operand of an arithmetic operator (spec §operators, §invalid-arithmetic-or-logical-operand)", () => {
+    const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1, 2]@alice;
+let ys = xs + xs;
+`);
+    assert.equal(typed, null);
+    assertCites(errors, "invalid-arithmetic-or-logical-operand");
+  });
+
+  it("rejects an array operand of a comparison (spec §operators, §invalid-comparison-or-equality-operands)", () => {
+    const { typed, errors } = checkSource(`
+let xs: integer[]@alice = [1, 2]@alice;
+let b = xs < xs;
+`);
+    assert.equal(typed, null);
+    assertCites(errors, "invalid-comparison-or-equality-operands");
+  });
+
+  it("rejects an array operand of a logical operator (spec §operators, §invalid-arithmetic-or-logical-operand)", () => {
+    const { typed, errors } = checkSource(`
+let bs: boolean[]@alice = [true]@alice;
+let b = bs && bs;
+`);
+    assert.equal(typed, null);
+    assertCites(errors, "invalid-arithmetic-or-logical-operand");
+  });
+
+  it("rejects a non-boolean operand of a logical operator (spec §invalid-arithmetic-or-logical-operand)", () => {
+    const { typed, errors } = checkSource(`let b = 1@alice && true@alice;`);
+    assert.equal(typed, null);
+    assertCites(errors, "invalid-arithmetic-or-logical-operand");
+  });
+
+  it("still accepts string concatenation (spec §string-concatenation)", () => {
+    const { errors } = checkSource(`let s = "a"@alice + "b"@alice;`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+  });
+
   it("types unary operators at the operand location (spec §operators)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
@@ -765,7 +803,7 @@ return x;
       );
     });
 
-    it("rejects it as a short-circuit operand", () => {
+    it("rejects it as a logical operand", () => {
       const { errors } = checkSource(
         `${XS}let b: boolean@alice = true@alice && xs.push(1@alice);`,
       );
@@ -873,20 +911,95 @@ xs.length;
     });
   });
 
-  it("accepts a relational comparison between integer and float (spec §operators)", () => {
+  it("rejects a relational comparison between integer and float (spec §operators, §invalid-comparison-or-equality-operands)", () => {
     const { typed, errors } = checkSource(`
 let b: boolean@alice = 1@alice < 1.5@alice;
 `);
-    assert.equal(errors.length, 0, JSON.stringify(errors));
-    assert.ok(typed);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("same numeric type")),
+      JSON.stringify(errors),
+    );
+    assertCites(errors, "invalid-comparison-or-equality-operands");
   });
 
-  it("accepts a transfer widening integer to float (spec §transfer-typing)", () => {
-    const { errors } = checkSource(`
+  it("rejects arithmetic between integer and float in either order (spec §operators, §invalid-arithmetic-or-logical-operand)", () => {
+    // `integer` and `float` are unrelated (spec §subtyping), so there is no
+    // promotion to `float`.
+    for (const source of [
+      `let x = 1@alice + 1.5@alice;`,
+      `let x = 1.5@alice * 2@alice;`,
+      `let x: float@alice = 1.5@alice;\nlet y: integer@alice = 2@alice;\nlet z = x / y;`,
+    ]) {
+      const { typed, errors } = checkSource(source);
+      assert.equal(typed, null, source);
+      assert.ok(
+        errors.some((e) => e.message.includes("same numeric type")),
+        JSON.stringify(errors),
+      );
+      assertCites(errors, "invalid-arithmetic-or-logical-operand");
+    }
+  });
+
+  describe("numeric conversion (spec §numeric-conversion)", () => {
+    it("converts in either direction, and to the operand's own type", () => {
+      // No subtyping stands behind these (spec §subtyping): each annotation
+      // is met only because the conversion yields exactly that type.
+      const { typed, errors } = checkSource(`
+let n: integer@alice = 3@alice;
+let x: float@alice = n as float;
+let m: integer@alice = x as integer;
+let same: integer@alice = n as integer;
+let y: float@alice = 1.5@alice + (n as float);
+let e: float@every = 1@every as float;
+`);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    });
+
+    it("keeps the operand's location, so moving the value still needs `<-`", () => {
+      const { typed, errors } = checkSource(`
+let n: integer@alice = 3@alice;
+let x: float@bob = n as float;
+`);
+      assert.equal(typed, null);
+      assertCites(errors, "invalid-assignment-across-locations");
+
+      const transfer = checkSource(`
+let n: integer@alice = 3@alice;
+let x: float@bob <- n as float;
+`);
+      assert.equal(transfer.errors.length, 0, JSON.stringify(transfer.errors));
+    });
+
+    it("rejects an operand that is not a numeric scalar (spec §invalid-numeric-conversion)", () => {
+      for (const source of [
+        `let b = true@alice as float;`,
+        `let s = "1"@alice as integer;`,
+        `let xs: integer[]@alice = [1]@alice;\nlet ys = xs as float;`,
+        `function g@alice(): void { return; }\nlet v = g() as float;`,
+      ]) {
+        const { typed, errors } = checkSource(source);
+        assert.equal(typed, null, source);
+        assert.ok(
+          errors.some((e) => e.message.includes("requires an integer or float operand")),
+          JSON.stringify(errors),
+        );
+        assertCites(errors, "invalid-numeric-conversion");
+      }
+    });
+  });
+
+  it("rejects a transfer from integer to float (spec §invalid-transfer-base-type)", () => {
+    const { typed, errors } = checkSource(`
 let y: integer@alice = 1@alice;
 let x: float@bob <- y;
 `);
-    assert.equal(errors.length, 0, JSON.stringify(errors));
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("transfer type mismatch")),
+      JSON.stringify(errors),
+    );
   });
 
   it("rejects a transfer narrowing float to integer (spec §invalid-transfer-base-type)", () => {
@@ -962,8 +1075,8 @@ let b: string@alice = 1@alice;
       }
     });
 
-    it("keeps the base type from the annotation, widening the initializer", () => {
-      const { typed, errors } = checkSource(`let a: float = 3@alice;`);
+    it("keeps the base type from the annotation", () => {
+      const { typed, errors } = checkSource(`let a: float = 3.0@alice;`);
       assert.equal(errors.length, 0, JSON.stringify(errors));
       const item = typed?.items[0];
       if (item && "statement" in item && "choreoType" in item.statement) {
@@ -1395,12 +1508,12 @@ add(10@every);
       );
     });
 
-    it("rejects integer@every argument to float@alice parameter (spec §invalid-function-argument-location)", () => {
+    it("rejects float@every argument to float@alice parameter (spec §invalid-function-argument-location)", () => {
       const { typed, errors } = checkSource(`
 function add@alice(a: float@alice) {
   return a;
 }
-add(10@every);
+add(10.0@every);
 `);
       assert.equal(typed, null);
       assert.ok(
@@ -1508,21 +1621,30 @@ function f@alice(): void {
     });
   });
 
-  it("allows explicit float let from integer initializer (spec §subtyping, §let-type-inference)", () => {
-    const { errors } = checkSource(`
+  it("rejects an integer initializer under a float annotation (spec §subtyping, §type-mismatch)", () => {
+    const { typed, errors } = checkSource(`
 let x: float@alice = 1@alice;
 `);
-    assert.equal(errors.length, 0);
+    assert.equal(typed, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("cannot assign integer@alice to float@alice")),
+      JSON.stringify(errors),
+    );
+    assertCites(errors, "type-mismatch");
   });
 
   describe("return typing (spec §return-typing)", () => {
-    it("allows integer return for float return type via subtyping", () => {
-      const { errors } = checkSource(`
+    it("rejects integer return for float return type (spec §subtyping)", () => {
+      const { typed, errors } = checkSource(`
 function f@alice(): float@alice {
   return 1@alice;
 }
 `);
-      assert.equal(errors.length, 0);
+      assert.equal(typed, null);
+      assert.ok(
+        errors.some((e) => e.message.includes("return type integer@alice is not compatible with float@alice")),
+        JSON.stringify(errors),
+      );
     });
 
     it("rejects return at unavailable location", () => {
@@ -1614,7 +1736,7 @@ function f(a: integer@alice) {
     it("accepts array literal, index, assignment, push, and length", () => {
       const { typed, errors } = checkSource(`
 let xs: integer[]@alice = [1, 2, 3]@alice;
-let ys: float[]@alice = [1, 2.5]@alice;
+let ys: float[]@alice = [1.0, 2.5]@alice;
 let zs: boolean[]@bob = [true, false]@bob;
 let empty: integer[]@alice = []@alice;
 let x: integer@alice = xs[0@alice];
@@ -1647,6 +1769,22 @@ let xs: float[]@alice = [1, 2]@alice;
         JSON.stringify(errors),
       );
       assertCites(errors, "array-type-invariance");
+    });
+
+    it("rejects an array literal mixing integer and float elements (spec §array-literal-typing)", () => {
+      // The two have no LUB (spec §subtyping), with or without an annotation.
+      for (const source of [
+        `let xs = [1, 2.5]@alice;`,
+        `let xs: float[]@alice = [1, 2.5]@alice;`,
+      ]) {
+        const { typed, errors } = checkSource(source);
+        assert.equal(typed, null, source);
+        assert.ok(
+          errors.some((e) => e.message.includes("incompatible mixed element types")),
+          JSON.stringify(errors),
+        );
+        assertCites(errors, "array-typing");
+      }
     });
 
     it("rejects a scalar initializer under an array annotation (spec §type-mismatch)", () => {

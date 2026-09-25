@@ -183,7 +183,7 @@ function average@alice(arr: float[]@alice): float@alice {
   for (let i = 0@alice; i < arr.length; i = i + 1@alice) {
     sum = sum + arr[i];
   }
-  return sum / arr.length;
+  return sum / (arr.length as float);
 }
 let arr: float[]@every = [1.1, 2.2, 4.5]@every;
 let arrAlice: float[]@alice <- arr;
@@ -193,6 +193,7 @@ let avg: float@alice = average(arrAlice);
     );
     assert.match(alice, /cloneFloatArray\(arr\)/);
     assert.match(alice, /average\(arrAlice\)/);
+    assert.match(alice, /return sum \/ \(arr\.length as float\);/);
     assert.doesNotMatch(alice, /sendFloatArray/);
   });
 
@@ -221,5 +222,20 @@ let ys: integer[]@bob <- xs;
       "bob",
     );
     assert.match(bob, /receiveIntegerArray\("alice", "__top_0"\)/);
+  });
+
+  it("emits && and || as the non-short-circuiting helpers (spec §logical-operator-code-generation)", () => {
+    const alice = pipeline(
+      `
+let a: boolean@alice = true@alice;
+let b: boolean@alice = false@alice;
+let c: boolean@alice = a && b || !a;
+let d: boolean@alice = a && (b || a);
+`,
+      "alice",
+    );
+    assert.match(alice, /let c: boolean = __or\(__and\(a, b\), !a\);/);
+    assert.match(alice, /let d: boolean = __and\(a, \(__or\(b, a\)\)\);/);
+    assert.doesNotMatch(alice, /&&|\|\|/);
   });
 });

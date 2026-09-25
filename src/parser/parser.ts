@@ -1,5 +1,5 @@
 import type { Span } from "../ast/span.js";
-import type { BaseType, TypeAnnotation } from "../ast/syntax-types.js";
+import { isNumericType, type BaseType, type TypeAnnotation } from "../ast/syntax-types.js";
 import type { Location, LocationAnnotation } from "../ast/location.js";
 import {
   CHOREOGRAPHY_CONTEXT,
@@ -32,6 +32,7 @@ import type {
   Expression,
   BinaryExpression,
   UnaryExpression,
+  ConversionExpression,
   LiteralExpression,
   ArrayLiteralExpression,
   IdentifierExpression,
@@ -70,6 +71,19 @@ import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-uti
  */
 const LENGTH_PROPERTY = "length";
 const PUSH_METHOD = "push";
+
+/**
+ * The type keywords (spec §types). A type annotation accepts every one; `as`
+ * accepts only the numeric ones (spec §numeric-conversion).
+ */
+const BASE_TYPE_OF_TOKEN: Partial<Record<TokenKind, BaseType>> = {
+  [TokenKind.Integer]: "integer",
+  [TokenKind.Float]: "float",
+  [TokenKind.Boolean]: "boolean",
+  [TokenKind.String]: "string",
+  [TokenKind.Null]: "null",
+  [TokenKind.Void]: "void",
+};
 
 export interface ParseResult {
   readonly program: Program | null;
@@ -236,15 +250,7 @@ class Parser {
 
   private parseBaseType(): { type: BaseType; token: Token } {
     const token = this.current();
-    const map: Partial<Record<TokenKind, BaseType>> = {
-      [TokenKind.Integer]: "integer",
-      [TokenKind.Float]: "float",
-      [TokenKind.Boolean]: "boolean",
-      [TokenKind.String]: "string",
-      [TokenKind.Null]: "null",
-      [TokenKind.Void]: "void",
-    };
-    const base = map[token.kind];
+    const base = BASE_TYPE_OF_TOKEN[token.kind];
     if (base === undefined) {
       throw this.fail(`expected type name, found '${token.lexeme}'`);
     }
@@ -602,65 +608,109 @@ class Parser {
   }
 
   private parseLogicalOr(): Expression {
-    return this.parseBinaryLeft(
-      () => this.parseLogicalAnd(),
-      (left, operator, right, opToken) =>
-        this.makeBinary(left, operator, right, opToken),
-      TokenKind.BarBar,
-      "||",
-    );
+    return this.parseBinaryLeft(() => this.parseLogicalAnd(), [TokenKind.BarBar], ["||"]);
   }
 
   private parseLogicalAnd(): Expression {
-    return this.parseBinaryLeft(
-      () => this.parseEquality(),
-      (left, operator, right, opToken) =>
-        this.makeBinary(left, operator, right, opToken),
-      TokenKind.AmpAmp,
-      "&&",
-    );
+    return this.parseBinaryLeft(() => this.parseEquality(), [TokenKind.AmpAmp], ["&&"]);
   }
 
   private parseEquality(): Expression {
     return this.parseBinaryLeft(
       () => this.parseRelational(),
-      (left, operator, right, opToken) =>
-        this.makeBinary(left, operator, right, opToken),
       [TokenKind.StrictEqual, TokenKind.StrictNotEqual],
       ["===", "!=="],
     );
   }
 
+  /**
+   * The relational operators and `as` share one level and associate to the
+   * left, as in TypeScript (spec §expressions): `a + b as float` is
+   * `(a + b) as float`, and `x as float < y` is `(x as float) < y`.
+   *
+   * Also as in TypeScript, a conversion then serves as the left operand of any
+   * tighter operators that follow it: `x as float * 2.0 + 1.0` is
+   * `((x as float) * 2.0) + 1.0`.
+   */
   private parseRelational(): Expression {
-    return this.parseBinaryLeft(
-      () => this.parseAdditive(),
-      (left, operator, right, opToken) =>
-        this.makeBinary(left, operator, right, opToken),
-      [
-        TokenKind.Less,
-        TokenKind.LessEqual,
-        TokenKind.Greater,
-        TokenKind.GreaterEqual,
-      ],
-      ["<", "<=", ">", ">="],
-    );
+    const kinds: readonly TokenKind[] = [
+      TokenKind.Less,
+      TokenKind.LessEqual,
+      TokenKind.Greater,
+      TokenKind.GreaterEqual,
+    ];
+    const operators: readonly BinaryOperator[] = ["<", "<=", ">", ">="];
+    let left = this.parseAdditive();
+    for (;;) {
+      left = this.continueBinaryLeft(left, () => this.parseAdditive(), kinds, operators);
+      if (!this.match(TokenKind.As)) {
+        return left;
+      }
+      left = this.continueAdditive(
+        this.continueMultiplicative(this.finishConversion(left)),
+      );
+    }
+  }
+
+  /**
+   * The target after `as` (spec §numeric-conversion): a bare `integer` or
+   * `float`. Neither an array type nor a location may follow it, because the
+   * conversion changes only the base type and the result stays where the
+   * operand is.
+   */
+  private finishConversion(operand: Expression): ConversionExpression {
+    const token = this.current();
+    const target = BASE_TYPE_OF_TOKEN[token.kind];
+    if (target === undefined || !isNumericType(target)) {
+      throw this.fail(
+        `the target of 'as' must be 'integer' or 'float', found '${token.lexeme}'`,
+        ["invalid-numeric-conversion"],
+      );
+    }
+    this.advance();
+    if (this.check(TokenKind.LBracket)) {
+      throw this.fail(
+        "the target of 'as' must be 'integer' or 'float': arrays cannot be converted",
+        ["invalid-numeric-conversion"],
+      );
+    }
+    if (this.check(TokenKind.At)) {
+      throw this.fail(
+        "the target of 'as' carries no location: the result stays where the operand is",
+        ["invalid-numeric-conversion"],
+      );
+    }
+    return {
+      kind: "ConversionExpression",
+      target,
+      operand,
+      span: spanMerge(spanOfNode(operand), spanOf(token)),
+    };
   }
 
   private parseAdditive(): Expression {
-    return this.parseBinaryLeft(
+    return this.continueAdditive(this.parseMultiplicative());
+  }
+
+  /** `left (("+" | "-") MultiplicativeExpression)*`, with `left` already parsed. */
+  private continueAdditive(left: Expression): Expression {
+    return this.continueBinaryLeft(
+      left,
       () => this.parseMultiplicative(),
-      (left, operator, right, opToken) =>
-        this.makeBinary(left, operator, right, opToken),
       [TokenKind.Plus, TokenKind.Minus],
       ["+", "-"],
     );
   }
 
   private parseMultiplicative(): Expression {
-    return this.parseBinaryLeft(
+    return this.continueMultiplicative(this.parseUnary());
+  }
+
+  /** `left (("*" | "/" | "%") UnaryExpression)*`, with `left` already parsed. */
+  private continueMultiplicative(left: Expression): Expression {
+    return this.continueBinaryLeft(
+      left,
       () => this.parseUnary(),
-      (left, operator, right, opToken) =>
-        this.makeBinary(left, operator, right, opToken),
       [TokenKind.Star, TokenKind.Slash, TokenKind.Percent],
       ["*", "/", "%"],
     );
@@ -931,32 +981,31 @@ class Parser {
     };
   }
 
+  /** A left-associative level: `operand (op operand)*`. */
   private parseBinaryLeft(
     parseOperand: () => Expression,
-    makeNode: (
-      left: Expression,
-      operator: BinaryOperator,
-      right: Expression,
-      opToken: Token,
-    ) => BinaryExpression,
-    kinds: TokenKind | TokenKind[],
-    operators: BinaryOperator | BinaryOperator[],
+    kinds: readonly TokenKind[],
+    operators: readonly BinaryOperator[],
   ): Expression {
-    let left = parseOperand();
-    const kindList = Array.isArray(kinds) ? kinds : [kinds];
-    const opList = Array.isArray(operators) ? operators : [operators];
+    return this.continueBinaryLeft(parseOperand(), parseOperand, kinds, operators);
+  }
 
-    while (true) {
-      const index = kindList.indexOf(this.current().kind);
+  /** The loop of `parseBinaryLeft`, starting from an operand already parsed. */
+  private continueBinaryLeft(
+    left: Expression,
+    parseOperand: () => Expression,
+    kinds: readonly TokenKind[],
+    operators: readonly BinaryOperator[],
+  ): Expression {
+    for (;;) {
+      const index = kinds.indexOf(this.current().kind);
       if (index === -1) {
-        break;
+        return left;
       }
       const opToken = this.advance();
-      const operator = opList[index]!;
       const right = parseOperand();
-      left = makeNode(left, operator, right, opToken);
+      left = this.makeBinary(left, operators[index]!, right, opToken);
     }
-    return left;
   }
 
   private isLiteralToken(token: Token): boolean {

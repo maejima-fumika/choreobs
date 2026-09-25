@@ -1,5 +1,6 @@
 import type { AstNode } from "./span.js";
 import type { LocatedLiteral } from "./literals.js";
+import type { NumericType } from "./syntax-types.js";
 import type {
   BinaryOperator,
   UnaryOperator,
@@ -14,6 +15,7 @@ import type {
 export type Expression =
   | BinaryExpression
   | UnaryExpression
+  | ConversionExpression
   | LiteralExpression
   | ArrayLiteralExpression
   | IdentifierExpression
@@ -33,6 +35,16 @@ export interface BinaryExpression extends AstNode {
 export interface UnaryExpression extends AstNode {
   readonly kind: "UnaryExpression";
   readonly operator: UnaryOperator;
+  readonly operand: Expression;
+}
+
+/**
+ * `operand as target` (spec §numeric-conversion). The target is a bare numeric
+ * base type: it carries no location, since the result stays where the operand is.
+ */
+export interface ConversionExpression extends AstNode {
+  readonly kind: "ConversionExpression";
+  readonly target: NumericType;
   readonly operand: Expression;
 }
 

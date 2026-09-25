@@ -106,6 +106,15 @@ let x /* inner */ : integer = 1;`;
     assert.equal(tokens[3]?.kind, TokenKind.True);
   });
 
+  it("reserves `as` for numeric conversion (spec §keywords, §numeric-conversion)", () => {
+    assert.deepEqual(kinds("x as float"), [
+      TokenKind.Identifier,
+      TokenKind.As,
+      TokenKind.Float,
+      TokenKind.EOF,
+    ]);
+  });
+
   it("maps unsupported v0 words to keyword tokens", () => {
     assert.equal(tokenize("break").tokens[0]?.kind, TokenKind.Break);
     assert.equal(tokenize("async").tokens[0]?.kind, TokenKind.Async);

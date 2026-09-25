@@ -113,14 +113,14 @@ function meanOf@driver(total: float@driver, n: integer@driver): float@driver {
     if (n === 0@driver) {
         return 0.0@driver;
     }
-    return total / n;
+    return total / (n as float);
 }
 
 function variance@driver(squaredTotal: float@driver, n: integer@driver): float@driver {
     if (n <= 1@driver) {
         return 0.0@driver;
     }
-    return squaredTotal / (n - 1@driver);
+    return squaredTotal / ((n - 1@driver) as float);
 }
 
 function newReport@driver(): float[]@driver {
@@ -193,7 +193,7 @@ let rounds: integer@every <- totalAbove;
 for (let round = 0@every; round < rounds; round = round + 1@every) {
     // Each round re-checks the shared mean against a worker-local threshold.
     let roundAt1: integer@worker1 <- round;
-    let bump: float@worker1 = meanAt1 + roundAt1;
+    let bump: float@worker1 = meanAt1 + (roundAt1 as float);
     let bumped: float@driver <- bump;
     report.push(bumped);
 }

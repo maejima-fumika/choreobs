@@ -26,40 +26,24 @@ function parseFunctionBody(bodySource: string): Block {
 
 describe("return inference utilities (spec §function-return-type-inference)", () => {
   describe("lubBase", () => {
-    it("computes numeric lubs", () => {
-      const ii = lubBase("integer", "integer");
-      assert.equal(ii.ok, true);
-      if (ii.ok) {
-        assert.equal(ii.value, "integer");
-      }
-      const ift = lubBase("integer", "float");
-      assert.equal(ift.ok, true);
-      if (ift.ok) {
-        assert.equal(ift.value, "float");
-      }
-      const fi = lubBase("float", "integer");
-      assert.equal(fi.ok, true);
-      if (fi.ok) {
-        assert.equal(fi.value, "float");
-      }
-      const ff = lubBase("float", "float");
-      assert.equal(ff.ok, true);
-      if (ff.ok) {
-        assert.equal(ff.value, "float");
-      }
-    });
-
-    it("accepts identical non-numeric types", () => {
-      const bb = lubBase("boolean", "boolean");
-      assert.equal(bb.ok, true);
-      if (bb.ok) {
-        assert.equal(bb.value, "boolean");
+    it("returns T for lub(T, T)", () => {
+      for (const base of ["integer", "float", "boolean", "string", "null"] as const) {
+        const r = lubBase(base, base);
+        assert.equal(r.ok, true, base);
+        if (r.ok) {
+          assert.equal(r.value, base);
+        }
       }
     });
 
     it("rejects incompatible base types", () => {
       assert.equal(lubBase("integer", "boolean").ok, false);
       assert.equal(lubBase("string", "integer").ok, false);
+    });
+
+    it("gives integer and float no lub, in either order (spec §subtyping)", () => {
+      assert.equal(lubBase("integer", "float").ok, false);
+      assert.equal(lubBase("float", "integer").ok, false);
     });
   });
 
@@ -83,16 +67,12 @@ describe("return inference utilities (spec §function-return-type-inference)", (
   });
 
   describe("lubLocatedType", () => {
-    it("joins integer and float at the same location", () => {
+    it("does not join integer and float at the same location", () => {
       const r = lubLocatedType(
         locatedType("integer", alice),
         locatedType("float", alice),
       );
-      assert.equal(r.ok, true);
-      if (r.ok) {
-        assert.equal(r.value.base, "float");
-        assert.deepEqual(r.value.location, alice);
-      }
+      assert.equal(r.ok, false);
     });
 
     it("fails when locations differ", () => {
@@ -177,7 +157,7 @@ let x = 1@alice;
       }
     });
 
-    it("infers float from mixed integer and float returns (§function-return-type-inference)", () => {
+    it("rejects mixed integer and float returns (§function-return-type-inference)", () => {
       const body = parseFunctionBody(`
 if (true@alice) {
   return 1@alice;
@@ -189,10 +169,10 @@ if (true@alice) {
         value(locatedType("integer", alice)),
         value(locatedType("float", alice)),
       ]);
-      assert.equal(r.ok, true);
-      if (r.ok) {
-        assert.equal(r.value.base, "float");
-        assert.deepEqual(r.value.location, alice);
+      assert.equal(r.ok, false);
+      if (!r.ok) {
+        assert.ok(r.message.includes("incompatible return types"), r.message);
+        assert.deepEqual(r.spec, ["function-return-type-inference"]);
       }
     });
 

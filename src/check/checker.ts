@@ -22,6 +22,7 @@ import type {
   Expression,
   BinaryExpression,
   UnaryExpression,
+  ConversionExpression,
   LiteralExpression,
   ArrayLiteralExpression,
   IdentifierExpression,
@@ -58,6 +59,7 @@ import type {
   TypedExpressionStatement,
   TypedBinaryExpression,
   TypedUnaryExpression,
+  TypedConversionExpression,
   TypedLiteralExpression,
   TypedArrayLiteralExpression,
   TypedIdentifierExpression,
@@ -71,6 +73,7 @@ import type {
 } from "../ast/typed.js";
 import type { ChoreoBSConfig } from "../config/types.js";
 import { CHOREOGRAPHY_CONTEXT } from "../ast/context.js";
+import { isNumericType } from "../ast/syntax-types.js";
 import {
   contextAsLocation,
   formatLocatedType,
@@ -85,7 +88,7 @@ import {
   resolveTypeAnnotation,
   validateArrayTypeAnnotation,
 } from "./resolve.js";
-import type { SpecRefs } from "../spec/ref.js";
+import type { SpecId, SpecRefs } from "../spec/ref.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
 import { assertNever } from "../util/exhaustive.js";
 import { childExpressions } from "../ast/traverse.js";
@@ -977,6 +980,8 @@ class TypeChecker {
         return this.checkBinary(expr, ctx);
       case "UnaryExpression":
         return this.checkUnary(expr, ctx);
+      case "ConversionExpression":
+        return this.checkConversion(expr, ctx);
       case "LiteralExpression":
         return this.checkLiteral(expr, ctx);
       case "ArrayLiteralExpression":
@@ -1009,57 +1014,14 @@ class TypeChecker {
       ctx,
       expr.span,
     );
-    this.requireShortCircuitOperandsCallFree(expr);
     return { expr, choreoType, left, right };
   }
 
   /**
-   * `&&` and `||` evaluate their right operand only when the left one does not
-   * already decide the result (spec §evaluation-order), and that decision is made from a
-   * value that lives at one location. An endpoint where the result is absent
-   * has no way to learn which way the branch went, so it cannot know whether to
-   * run a choreography call hidden in either operand — and a choreography
-   * function runs at every endpoint (spec §function-projection). Core v0 therefore forbids
-   * such a call in either operand outright (spec §choreography-call-in-a-short-circuit-operand).
-   *
-   * Looking for a call written directly in the operand is enough: a local
-   * function cannot call a choreography one (spec §calling-choreography-from-local), so no call reachable
-   * from here can communicate unless it appears in the operand itself.
+   * Every operator requires scalar operands (spec §operators). An array type carries its
+   * element type in `base`, so a test on `base` alone would let `integer[]`
+   * through `+` and `boolean[]` through `&&` — hence the `Scalar` helpers.
    */
-  private requireShortCircuitOperandsCallFree(expr: BinaryExpression): void {
-    if (expr.operator !== "&&" && expr.operator !== "||") {
-      return;
-    }
-    for (const operand of [expr.left, expr.right]) {
-      const callee = this.findChoreographyCall(operand);
-      if (callee !== undefined) {
-        this.error(
-          `operand of '${expr.operator}' must not contain a call to choreography function ` +
-            `'${callee}'`,
-          expr.span,
-          ["operators", "choreography-call-in-a-short-circuit-operand"],
-        );
-      }
-    }
-  }
-
-  /** Name of a choreography function called anywhere inside `expr`, if any. */
-  private findChoreographyCall(expr: Expression): string | undefined {
-    if (expr.kind === "CallExpression") {
-      const decl = this.functions.get(expr.callee);
-      if (decl !== undefined && decl.at === undefined) {
-        return expr.callee;
-      }
-    }
-    for (const child of childExpressions(expr)) {
-      const found = this.findChoreographyCall(child);
-      if (found !== undefined) {
-        return found;
-      }
-    }
-    return undefined;
-  }
-
   private binaryResultType(
     operator: BinaryExpression["operator"],
     left: LocatedType,
@@ -1067,62 +1029,69 @@ class TypeChecker {
     ctx: ExecutionContext,
     span: Span,
   ): LocatedType {
-    const arith = ["+", "-", "*", "/", "%"] as const;
-    const rel = ["<", "<=", ">", ">="] as const;
-    const eq = ["===", "!=="] as const;
-    const log = ["&&", "||"] as const;
-
-    if ((arith as readonly string[]).includes(operator)) {
-      if (operator === "+" && left.base === "string" && right.base === "string") {
-        return this.locationAwareBinary(left, right, "string", ctx, span);
+    const operands = `${formatLocatedType(left)} and ${formatLocatedType(right)}`;
+    switch (operator) {
+      case "+":
+      case "-":
+      case "*":
+      case "/":
+      case "%": {
+        if (
+          operator === "+" &&
+          this.isScalarOf(left, "string") &&
+          this.isScalarOf(right, "string")
+        ) {
+          return this.locationAwareBinary(left, right, "string", ctx, span);
+        }
+        const base = this.requireSameNumericOperands(
+          operator, left, right, span, "invalid-arithmetic-or-logical-operand");
+        return this.locationAwareBinary(left, right, base, ctx, span);
       }
-      if (!this.isNumeric(left) || !this.isNumeric(right)) {
-        this.error(
-          `operator '${operator}' requires numeric operands`,
-          span,
-        );
-      }
-      const base: LocatedType["base"] =
-        left.base === "float" || right.base === "float" ? "float" : "integer";
-      return this.locationAwareBinary(left, right, base, ctx, span);
+      case "<":
+      case "<=":
+      case ">":
+      case ">=":
+        this.requireSameNumericOperands(
+          operator, left, right, span, "invalid-comparison-or-equality-operands");
+        return this.locationAwareBinary(left, right, "boolean", ctx, span);
+      case "===":
+      case "!==":
+        if (left.isArray || right.isArray) {
+          this.error("array equality is not supported", span,
+            ["invalid-array-equality"]);
+        }
+        // `void === void` passes the same-base-type test below, so it needs its
+        // own rejection: a void computation produces nothing to compare, and
+        // letting it through emits BlueScript that compares two statements
+        // (spec §located-types, §invalid-comparison-or-equality-operands).
+        if (left.base === "void" || right.base === "void") {
+          this.error(
+            `operator '${operator}' requires operands that produce a value; \`void\` does not`,
+            span,
+            ["located-types", "invalid-comparison-or-equality-operands"],
+          );
+        }
+        if (left.base !== right.base) {
+          this.error(
+            `operator '${operator}' requires operands of the same base type, got ${operands}`,
+            span,
+            ["operators", "invalid-comparison-or-equality-operands"],
+          );
+        }
+        return this.locationAwareBinary(left, right, "boolean", ctx, span);
+      case "&&":
+      case "||":
+        if (!this.isScalarOf(left, "boolean") || !this.isScalarOf(right, "boolean")) {
+          this.error(
+            `operator '${operator}' requires boolean operands, got ${operands}`,
+            span,
+            ["operators", "invalid-arithmetic-or-logical-operand"],
+          );
+        }
+        return this.locationAwareBinary(left, right, "boolean", ctx, span);
+      default:
+        return assertNever(operator, "binary operator");
     }
-    if ((rel as readonly string[]).includes(operator)) {
-      if (!this.isNumeric(left) || !this.isNumeric(right)) {
-        this.error(`operator '${operator}' requires numeric operands`, span);
-      }
-      return this.locationAwareBinary(left, right, "boolean", ctx, span);
-    }
-    if ((eq as readonly string[]).includes(operator)) {
-      if (left.isArray || right.isArray) {
-        this.error("array equality is not supported", span,
-          ["invalid-array-equality"]);
-      }
-      // `void === void` passes the same-base-type test below, so it needs its
-      // own rejection: a void computation produces nothing to compare, and
-      // letting it through emits BlueScript that compares two statements
-      // (spec §located-types, §invalid-comparison-or-equality-operands).
-      if (left.base === "void" || right.base === "void") {
-        this.error(
-          `operator '${operator}' requires operands that produce a value; \`void\` does not`,
-          span,
-          ["located-types", "invalid-comparison-or-equality-operands"],
-        );
-      }
-      if (left.base !== right.base) {
-        this.error(
-          `operator '${operator}' requires operands of the same base type`,
-          span,
-        );
-      }
-      return this.locationAwareBinary(left, right, "boolean", ctx, span);
-    }
-    if ((log as readonly string[]).includes(operator)) {
-      if (left.base !== "boolean" || right.base !== "boolean") {
-        this.error(`operator '${operator}' requires boolean operands`, span);
-      }
-      return this.locationAwareBinary(left, right, "boolean", ctx, span);
-    }
-    return left;
   }
 
   private checkUnary(
@@ -1130,11 +1099,9 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedUnaryExpression {
     const operand = this.checkExpression(expr.operand, ctx);
-    // Unary operators are scalar-only. Testing `base` alone would let a
-    // `boolean[]` through `!` and an `integer[]` through `-`, since an array
-    // type carries its element type in `base` (spec §operators, §invalid-unary-operand).
+    // Scalar-only, like the binary operators (spec §operators, §invalid-unary-operand).
     if (expr.operator === "!") {
-      if (operand.choreoType.isArray === true || operand.choreoType.base !== "boolean") {
+      if (!this.isScalarOf(operand.choreoType, "boolean")) {
         this.error(
           `operator '!' requires a boolean operand, got ${formatLocatedType(operand.choreoType)}`,
           expr.span,
@@ -1148,7 +1115,7 @@ class TypeChecker {
         operand,
       };
     }
-    if (operand.choreoType.isArray === true || !this.isNumeric(operand.choreoType)) {
+    if (!this.isNumericScalar(operand.choreoType)) {
       this.error(
         `unary '-' requires a numeric operand, got ${formatLocatedType(operand.choreoType)}`,
         expr.span,
@@ -1157,6 +1124,31 @@ class TypeChecker {
     }
     this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
     return { expr, choreoType: operand.choreoType, operand };
+  }
+
+  /**
+   * `e as T` (spec §numeric-conversion): a numeric scalar of either type becomes
+   * a `T`, `T` included. Only the base type changes; like a unary operator, the
+   * result stays where the operand is.
+   */
+  private checkConversion(
+    expr: ConversionExpression,
+    ctx: ExecutionContext,
+  ): TypedConversionExpression {
+    const operand = this.checkExpression(expr.operand, ctx);
+    if (!this.isNumericScalar(operand.choreoType)) {
+      this.error(
+        `'as ${expr.target}' requires an integer or float operand, got ${formatLocatedType(operand.choreoType)}`,
+        expr.span,
+        ["numeric-conversion", "invalid-numeric-conversion"],
+      );
+    }
+    this.requireExpressionAvailable(operand.choreoType.location, ctx, expr.span);
+    return {
+      expr,
+      choreoType: locatedType(expr.target, operand.choreoType.location),
+      operand,
+    };
   }
 
   private checkLiteral(
@@ -1189,11 +1181,12 @@ class TypeChecker {
     for (const element of elements) {
       this.requireValueExpression(element, element.expr.span);
     }
-    let elementBase = elements[0]!.choreoType.base;
-    for (let i = 1; i < elements.length; i++) {
-      const next = elements[i]!.choreoType.base;
-      const lub = this.lubArrayElementBase(elementBase, next, expr.span);
-      elementBase = lub;
+    // Every element must have the same base type: `integer` and `float` are
+    // unrelated, so they have no LUB (spec §array-literal-typing).
+    const elementBase = elements[0]!.choreoType.base;
+    if (elements.some((element) => element.choreoType.base !== elementBase)) {
+      this.error("array literal has incompatible mixed element types", expr.span,
+        ["array-typing"]);
     }
     return { expr, choreoType: locatedType(elementBase, location, true), elements };
   }
@@ -1219,20 +1212,6 @@ class TypeChecker {
       this.error("array element must be at the same location as the array literal", element.span);
     }
     return typed;
-  }
-
-  private lubArrayElementBase(
-    a: LocatedType["base"],
-    b: LocatedType["base"],
-    span: Span,
-  ): LocatedType["base"] {
-    if (a === b) {
-      return a;
-    }
-    if ((a === "integer" && b === "float") || (a === "float" && b === "integer")) {
-      return "float";
-    }
-    this.error("array literal has incompatible mixed element types", span);
   }
 
   private checkIdentifier(
@@ -1601,8 +1580,42 @@ class TypeChecker {
     }
   }
 
-  private isNumeric(type: LocatedType): boolean {
-    return type.base === "integer" || type.base === "float";
+  /**
+   * Operand rule shared by the arithmetic and relational operators (spec §operators):
+   * numeric scalars of the same type. `integer` and `float` are unrelated
+   * (spec §subtyping), so nothing is promoted. Returns that shared type.
+   */
+  private requireSameNumericOperands(
+    operator: BinaryExpression["operator"],
+    left: LocatedType,
+    right: LocatedType,
+    span: Span,
+    rule: SpecId,
+  ): LocatedType["base"] {
+    const operands = `${formatLocatedType(left)} and ${formatLocatedType(right)}`;
+    if (!this.isNumericScalar(left) || !this.isNumericScalar(right)) {
+      this.error(
+        `operator '${operator}' requires numeric operands, got ${operands}`,
+        span,
+        ["operators", rule],
+      );
+    }
+    if (left.base !== right.base) {
+      this.error(
+        `operator '${operator}' requires operands of the same numeric type, got ${operands}`,
+        span,
+        ["operators", rule],
+      );
+    }
+    return left.base;
+  }
+
+  private isNumericScalar(type: LocatedType): boolean {
+    return type.isArray !== true && isNumericType(type.base);
+  }
+
+  private isScalarOf(type: LocatedType, base: LocatedType["base"]): boolean {
+    return type.isArray !== true && type.base === base;
   }
 
   /** Resolve a type in a value position; `void` is not a value type (spec §void). */

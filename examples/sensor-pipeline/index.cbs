@@ -12,7 +12,7 @@ function readRaw1@sensor1(tick: integer@sensor1): float@sensor1 {
     // Stands in for a hardware read; the value drifts with the tick.
     let base = 21.5@sensor1;
     let drift = 0.25@sensor1;
-    return base + drift * tick;
+    return base + drift * (tick as float);
 }
 
 function bias1@sensor1(): float@sensor1 {
@@ -31,7 +31,7 @@ function calibrate1@sensor1(raw: float@sensor1): float@sensor1 {
 function readRaw2@sensor2(tick: integer@sensor2): float@sensor2 {
     let base = 19.0@sensor2;
     let drift = 0.4@sensor2;
-    return base + drift * tick;
+    return base + drift * (tick as float);
 }
 
 function bias2@sensor2(): float@sensor2 {
@@ -70,7 +70,7 @@ function windowMean@gateway(window: float[]@gateway): float@gateway {
         return 0.0@gateway;
     }
     let total = windowSum(window);
-    return total / n;
+    return total / (n as float);
 }
 
 function isHealthy@gateway(mean: float@gateway): boolean@gateway {

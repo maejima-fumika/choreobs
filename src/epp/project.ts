@@ -27,6 +27,7 @@ import type {
   TypedArrayLiteralExpression,
   TypedBinaryExpression,
   TypedUnaryExpression,
+  TypedConversionExpression,
   TypedCallExpression,
   TypedIndexExpression,
   TypedLengthExpression,
@@ -582,6 +583,15 @@ class Projector {
           span: expr.expr.span,
         };
       }
+      case "ConversionExpression": {
+        const conv = expr as TypedConversionExpression;
+        return {
+          kind: "ConversionExpression",
+          target: conv.expr.target,
+          operand: this.projectExpression(conv.operand),
+          span: expr.expr.span,
+        };
+      }
       case "CallExpression":
         return this.projectCall(expr as TypedCallExpression);
       case "IndexExpression": {
@@ -655,13 +665,8 @@ class Projector {
         return this.absentExpr(span);
       case "BinaryExpression": {
         const bin = expr as TypedBinaryExpression;
-        // `&&` and `||` evaluate their right operand conditionally, so their
-        // operands cannot be hoisted into `nothing(...)`, which evaluates all
-        // of its arguments. §choreography-call-in-a-short-circuit-operand keeps calls out of both operands precisely
-        // so that there is nothing left to preserve here.
-        if (bin.expr.operator === "&&" || bin.expr.operator === "||") {
-          return this.absentExpr(span);
-        }
+        // `&&` and `||` included: they do not short-circuit (spec §evaluation-order),
+        // so hoisting both operands runs exactly what the source runs (§logical-operator-projection).
         return this.nothingExpression(
           [this.projectDiscarded(bin.left), this.projectDiscarded(bin.right)],
           span,
@@ -671,6 +676,11 @@ class Projector {
         const un = expr as TypedUnaryExpression;
         return this.nothingExpression([this.projectDiscarded(un.operand)], span);
       }
+      // Like parentheses, a conversion contributes nothing of its own where its
+      // value is not wanted: only the operand's evaluation is kept
+      // (spec §numeric-conversion-projection).
+      case "ConversionExpression":
+        return this.projectDiscarded((expr as TypedConversionExpression).operand);
       case "ParenthesizedExpression": {
         const paren = expr as TypedParenthesizedExpression;
         return this.projectDiscarded(paren.expression);

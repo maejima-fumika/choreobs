@@ -35,7 +35,7 @@ let y: integer@bob <- x;
 
 This program declares `x` as `integer@alice`, sends its value from `alice` to
 `bob`, and stores the received value in `y`. Writing `let x = 10@alice;` would
-infer the same type from the initializer (spec [§7.15.1](#let-type-inference)).
+infer the same type from the initializer (spec [§7.16.1](#let-type-inference)).
 
 After EPP:
 
@@ -86,7 +86,7 @@ project/
 * Each name is held in the value namespace for the whole program (spec [§6.1](#namespaces)): no function, variable or parameter may take an endpoint's name, whether or not the source ever writes `@` with it.
 * Each name must be an identifier (spec [§4.3](#identifiers)) and must not be a reserved word (spec [§4.4](#keywords)). An endpoint name is written after `@` in the source (spec [§5.2](#types)) and is also pasted into the output file name (spec [§2.3](#output-files)): a name that is not an identifier would name an endpoint no program could refer to, and would still name a file — `../x` would place that file outside the output directory.
 * A name must not begin with `__`, which is reserved for the compiler (spec [§4.3](#identifiers), [§6.2](#function-names)), on the same terms as every other identifier the source writes.
-* The **reserved runtime names** of spec [§6.2](#function-names) — `nothing`, the communication API names, `__array` and `__push` — are *not* reserved here, apart from the `__` prefix above. An endpoint name reaches the generated code only as a string literal (spec [§13.9](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
+* The **reserved runtime names** of spec [§6.2](#function-names) — `nothing`, the communication API names, `__array`, `__push`, `__and` and `__or` — are *not* reserved here, apart from the `__` prefix above. An endpoint name reaches the generated code only as a string literal (spec [§13.11](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
 * The names must be distinct. A repeated name is an error: it would give two output files the same name, and make one endpoint both the sender and the receiver of the same communication.
 * `every` is a reserved word and must not appear in `endpoints`. This is a special case of the reserved-word rule above, called out separately because `every` names the location that is deliberately never listed (spec [§3.4](#every)).
 * Every individual location used in a `.cbs` source file must be listed in `endpoints`. The location `every` is never listed.
@@ -280,6 +280,7 @@ float
 boolean
 string
 void
+as
 ```
 
 The following words are reserved as well. The features they name are not
@@ -497,7 +498,7 @@ declaration carrying a location is a local function, and one carrying none is a
 choreography function. A function location must be an individual location
 (spec [§16.39](#every-on-a-function-declaration)).
 
-The return type annotation may be omitted. When omitted, the return type is inferred according to [Section 7.15](#type-inference).
+The return type annotation may be omitted. When omitted, the return type is inferred according to [Section 7.16](#type-inference).
 
 ```ebnf
 ParameterList ::= Parameter ("," Parameter)*
@@ -556,7 +557,7 @@ TypeAnnotation ::= ":" Type
 
 Uninitialized `let` declarations are not allowed in v0.
 
-For ordinary initialized `let` declarations using `=`, the type annotation may be omitted and inferred from the right-hand side according to [Section 7.15](#type-inference).
+For ordinary initialized `let` declarations using `=`, the type annotation may be omitted and inferred from the right-hand side according to [Section 7.16](#type-inference).
 
 For transfer declarations using `<-`, the type annotation is still required. Core v0 does not infer the destination type or destination location of a transfer declaration.
 
@@ -668,7 +669,7 @@ for (let i = 0@every; i < 10@every; i = i + 1@every) {
 }
 ```
 
-The type annotation in a `for` initializer `let` may be omitted and inferred from the initializer expression according to [Section 7.15](#type-inference).
+The type annotation in a `for` initializer `let` may be omitted and inferred from the initializer expression according to [Section 7.16](#type-inference).
 
 The following forms are not supported in v0:
 
@@ -723,8 +724,29 @@ EqualityExpression ::=
 
 ```ebnf
 RelationalExpression ::= 
-  AdditiveExpression (("<" | "<=" | ">" | ">=") AdditiveExpression)*
+  AdditiveExpression (RelationalTail | ConversionTail)*
 ```
+
+```ebnf
+RelationalTail ::= ("<" | "<=" | ">" | ">=") AdditiveExpression
+```
+
+```ebnf
+ConversionTail ::= 
+  "as" NumericType (("*" | "/" | "%") UnaryExpression)* (("+" | "-") MultiplicativeExpression)*
+```
+
+```ebnf
+NumericType ::= "integer" | "float"
+```
+
+`as` is a numeric conversion (spec [§7.12](#numeric-conversion)). As in TypeScript, it shares the
+level of the relational operators and associates to the left, so `a + b as float`
+is `(a + b) as float` and `x as float < y` is `(x as float) < y`. Also as in
+TypeScript, a conversion is the left operand of any `* / %` and then `+ -` that
+follow it: `x as float * 2.0 + 1.0` is `((x as float) * 2.0) + 1.0`. What follows
+`as` is a bare numeric base type: `x as float[]`, `x as float@bob` and
+`x as boolean` are syntax errors (spec [§16.49](#invalid-numeric-conversion)).
 
 ```ebnf
 AdditiveExpression ::= 
@@ -770,10 +792,10 @@ PushExpression ::= Identifier "." "push" "(" Expression ")"
 `.length` and `.push` are the two array member operations, not postfix
 operators: the receiver of each is an `Identifier`. `f().length`,
 `xs.length.length`, `(xs).push(v)` and `xs[0].push(v)` are therefore syntax
-errors, and so is any other member name (spec [§16.44](#invalid-array-operation-syntax)).
+errors, and so is any other member name (spec [§16.45](#invalid-array-operation-syntax)).
 
 `xs.length` yields the length; `xs.push(v)` appends and yields nothing, so its
-type is `void` (spec [§7.12](#array-typing)). Like a call to a `void` function, it can only
+type is `void` (spec [§7.13](#array-typing)). Like a call to a `void` function, it can only
 stand as an expression statement — every value position rejects it
 (spec [§7.2](#located-types), [§16.40](#invalid-use-of-void)).
 
@@ -891,8 +913,8 @@ to be inside it — and v0 never infers a location from context (spec [§8.1](#e
 
 Evaluation is eager and left to right.
 
-* The operands of a strict binary operator are evaluated left first, and both
-  are always evaluated.
+* The operands of a binary operator are evaluated left first, and both are
+  always evaluated. This includes `&&` and `||`.
 * The arguments of a call are evaluated left to right, and all of them before
   the call itself.
 * In `xs[i]`, `xs` is evaluated before `i`.
@@ -904,17 +926,25 @@ Evaluation is eager and left to right.
   receiver is always an identifier, so evaluating it has no effect of its own,
   but the order is defined this way for when it is generalized.
 * In `xs.push(e)`, the receiver is evaluated first, then the argument, then the
-  mutation. The expression itself yields nothing (spec [§7.12](#array-typing)).
+  mutation. The expression itself yields nothing (spec [§7.13](#array-typing)).
 * A `for` header evaluates its initializer once, then, on each iteration, the
   condition before the body and the body before the update.
 * The arguments of the compiler-generated `nothing(...)` (spec [§14.1](#nothing)) are
   evaluated left to right, and each exactly once.
 
-There are no short-circuiting exceptions in v0 beyond `&&` and `||`, which
-evaluate their right operand only when the left one does not already decide the
-result. Because a projected endpoint that does not hold the result cannot tell
-which way that went, neither operand of `&&` or `||` may contain a choreography
-function call (spec [§16.46](#choreography-call-in-a-short-circuit-operand)).
+There are no short-circuiting operators in v0. Unlike JavaScript and
+BlueScript, `&&` and `||` evaluate their right operand even when the left one
+already decides the result (spec [§7.11](#operators)). A guard such as
+
+```ts
+i < xs.length && xs[i] > 0@alice
+```
+
+therefore still evaluates `xs[i]` when `i` is out of range. A short circuit
+would decide from a value that lives at one location whether the right operand
+runs, and an endpoint that does not hold that value could not follow the
+decision; evaluating both operands everywhere is what lets every endpoint agree
+on which calls are made.
 
 Order matters here more than it does in a single-endpoint language: an
 expression may contain a call whose body communicates, so two endpoints that
@@ -936,7 +966,7 @@ ChoreoBS has two namespaces:
   be written as an identifier at all.
 
 There is one value namespace rather than three because the generated code has
-one. BlueScript keeps the source name (spec [§13.4](#codegen-function-names)), so a variable emitted
+one. BlueScript keeps the source name (spec [§13.6](#codegen-function-names)), so a variable emitted
 beside a function of the same name shadows it, and the call the program meant
 to make would reach the variable instead. This is the same reasoning that
 reserves the runtime names in spec [§6.2](#function-names), applied to the program's own names.
@@ -1002,13 +1032,13 @@ let aliceCount: integer@alice = alice2();
 
 #### Reserved Runtime Names <a id="reserved-runtime-names"></a>
 
-Generated BlueScript keeps the original ChoreoBS name (spec [§13.4](#codegen-function-names)), so a user
+Generated BlueScript keeps the original ChoreoBS name (spec [§13.6](#codegen-function-names)), so a user
 identifier that matches a name the generated code itself calls would capture
 that call. The following are therefore reserved in every one of the three
 positions:
 
 * `nothing` — the compiler-generated placeholder helper (spec [§14.1](#nothing));
-* every communication and clone API name (spec [§13.9](#communication-api)). These are
+* every communication and clone API name (spec [§13.11](#communication-api)). These are
   `sendInteger`, `receiveInteger` and `broadcastInteger`, and the corresponding
   names for `Float`, `Boolean`, `String`, `Null`, `IntegerArray`, `FloatArray`
   and `BooleanArray`; plus the three clone helpers, which exist for the array
@@ -1016,6 +1046,8 @@ positions:
   There is no `cloneInteger` and no scalar clone of any type, so none is
   reserved;
 * `__array` and `__push` — compiler-internal call sentinels;
+* `__and` and `__or` — the runtime helpers that `&&` and `||` are emitted as
+  (spec [§14.3](#and-or-helpers));
 * every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.8](#transfer-typing), [§12.9](#transfer-projection)), and reserving the prefix lets it do so without consulting the program.
 
 These are reserved for variables and parameters too, not only for functions: a
@@ -1162,6 +1194,11 @@ void
 
 `any` and `undefined` do not exist in v0.
 
+An integer literal such as `1` has type `integer`, and a float literal such as
+`1.0` has type `float` (spec [§4.5](#literals)). The two types are unrelated (spec [§7.5](#subtyping)), so a
+`float` literal is always written with a fractional part: `1@alice` is never a
+`float`, though `1@alice as float` is one (spec [§7.12](#numeric-conversion)).
+
 #### 7.1.1 Array Types <a id="array-types"></a>
 
 The mutable array extension adds the following array types:
@@ -1232,7 +1269,7 @@ T@L
 ```
 
 A **void computation** produces no value. v0 has two: a call to a function whose
-return type is `void`, and `xs.push(v)` (spec [§7.12](#array-typing)). Having no value, it has no location (spec [§7.3](#void)) — but it still
+return type is `void`, and `xs.push(v)` (spec [§7.13](#array-typing)). Having no value, it has no location (spec [§7.3](#void)) — but it still
 has to run *somewhere*, and where that is comes from the operation itself, not
 from a location on its type:
 
@@ -1326,14 +1363,17 @@ let x: integer@alice = null@alice;
 
 ### 7.5 Subtyping <a id="subtyping"></a>
 
-The base type subtyping relation is:
+The base type subtyping relation is reflexivity alone:
 
 ```text
-integer <: float
 T <: T
 ```
 
-There are no other base type subtyping relations.
+There are no other base type subtyping relations. In particular, `integer` and
+`float` are unrelated: neither is a subtype of the other, so an `integer` is
+never accepted where a `float` is expected, nor the other way round. There is no
+implicit conversion between them; a value is converted explicitly with `as`
+(spec [§7.12](#numeric-conversion)).
 
 ### 7.6 Location Matching and Residency <a id="location-matching-and-residency"></a>
 
@@ -1367,8 +1407,8 @@ integer@alice does not match an every context
 ```
 
 This rule applies uniformly to scalars and to mutable arrays, and it is the only
-location rule used by assignment ([§7.7](#assignment-typing)), function arguments ([§7.13](#function-call-typing)), and return
-values ([§7.14](#return-typing)). It also subsumes the local function discipline: inside
+location rule used by assignment ([§7.7](#assignment-typing)), function arguments ([§7.14](#function-call-typing)), and return
+values ([§7.15](#return-typing)). It also subsumes the local function discipline: inside
 `function f@P` the required location is `P`, so a value at `every` or at another
 individual location is rejected by the same rule. The additional restrictions
 specific to local function declarations are stated in [§8.2](#local-function-strict-location-rule).
@@ -1412,7 +1452,7 @@ T2 <: T1
 match(L2, L1)
 ```
 
-For mutable arrays, compatibility is checked by array invariance as defined in [Section 7.12](#array-typing). Therefore, `T1[]` and `T2[]` are compatible only when `T1` and `T2` are the same element type.
+For mutable arrays, compatibility is checked by array invariance as defined in [Section 7.13](#array-typing). Therefore, `T1[]` and `T2[]` are compatible only when `T1` and `T2` are the same element type.
 
 Example:
 
@@ -1470,38 +1510,52 @@ T2 <: T1
 ```
 
 that is, the source base type must be a subtype of the destination base type
-(spec [§7.5](#subtyping)). Locations play no part in this rule.
+(spec [§7.5](#subtyping)). Since subtyping is reflexivity alone, this means the two base
+types must be the same. Locations play no part in this rule.
 
 Every value type may be transferred: `integer`, `float`, `boolean`, `string`,
 `null`, and the array types. Each has its own entry in the communication API
-(spec [§13.9](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
+(spec [§13.11](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
 `null` transfer carries no data — it is a synchronisation signal — but it is an
 ordinary transfer in every other respect. `void` is not a value type at all and
 cannot appear on either side (spec [§7.3](#void), [§16.40](#invalid-use-of-void)).
 
-Allowed — `integer <: float`:
+Allowed — the same base type:
+
+```ts
+let y: integer@alice = 1@alice;
+let x: integer@bob <- y;
+```
+
+Disallowed — `integer` and `float` are unrelated, in either direction:
 
 ```ts
 let y: integer@alice = 1@alice;
 let x: float@bob <- y;
 ```
 
-Disallowed — `float` is not a subtype of `integer`:
-
 ```ts
 let y: float@alice = 1.5@alice;
 let x: integer@bob <- y;
 ```
 
-Disallowed — unrelated base types:
+Convert explicitly instead, on whichever side should do the work
+(spec [§7.12](#numeric-conversion)):
+
+```ts
+let y: integer@alice = 1@alice;
+let x: float@bob <- y as float;
+```
+
+Disallowed — any other pair of different base types:
 
 ```ts
 let y: float@alice = 1.5@alice;
 let x: string@bob <- y;
 ```
 
-Arrays remain invariant: for `T[]`, the element types must be exactly the same.
-There is no element type conversion.
+Arrays follow the same rule: for `T[]`, the element types must be exactly the
+same (spec [§7.13](#array-typing)).
 
 Disallowed:
 
@@ -1639,8 +1693,9 @@ The termination conditions of `while` and `for` follow the same rule as `if`.
 
 ### 7.11 Operators <a id="operators"></a>
 
-Every operator requires its operands to be scalars: no operator is defined over
-array types (spec [§7.12](#array-typing)). [§7.11](#operators) and [§7.12](#array-typing) together cover all of them.
+Every operator requires its operands to be scalars: no operator, and no numeric
+conversion (spec [§7.12](#numeric-conversion)), is defined over array types (spec [§7.13](#array-typing)).
+[§7.11](#operators), [§7.12](#numeric-conversion) and [§7.13](#array-typing) together cover all of them.
 
 #### Arithmetic Operators <a id="arithmetic-operators"></a>
 
@@ -1648,19 +1703,27 @@ array types (spec [§7.12](#array-typing)). [§7.11](#operators) and [§7.12](#a
 + - * / %
 ```
 
-These operators are available for `integer` and `float`.
+These operators are available for `integer` and `float`. `boolean`, `null`,
+`string` (apart from the concatenation below) and array operands are rejected
+(spec [§16.44](#invalid-arithmetic-or-logical-operand)).
 
-Because `integer <: float`, an `integer` may be used where a `float` is expected.
-
-BlueScript performs implicit conversion from `integer` to `float`; therefore, the ChoreoBS transpiler does not insert explicit conversion functions.
+Both operands must have the same numeric type. `integer` and `float` are
+unrelated (spec [§7.5](#subtyping)), so there is no promotion, and an `integer` operand
+mixed with a `float` one is rejected (spec [§16.44](#invalid-arithmetic-or-logical-operand)). Convert one of
+them explicitly instead (spec [§7.12](#numeric-conversion)).
 
 The inferred result base type is:
 
 ```text
 integer op integer => integer
-integer op float   => float
-float   op integer => float
 float   op float   => float
+```
+
+```ts
+1@alice + 2@alice                // valid: integer@alice
+1.5@alice * 2.0@alice            // valid: float@alice
+1@alice + 1.5@alice              // invalid
+(1@alice as float) + 1.5@alice   // valid: float@alice
 ```
 
 Both operands must be located at the same location (spec [§7.6](#location-matching-and-residency)); the result is
@@ -1686,11 +1749,13 @@ The inferred result type is `string` at the operand location.
 These operators are available for numeric values — `integer` and `float` only.
 `string`, `boolean`, `null` and array operands are rejected (spec [§16.43](#invalid-comparison-or-equality-operands)).
 
-They promote like the arithmetic operators do: an `integer` operand may be
-compared with a `float` one, because `integer <: float` (spec [§7.5](#subtyping)).
+Like the arithmetic operators, they require both operands to have the same
+numeric type: an `integer` is not compared with a `float` (spec [§7.5](#subtyping)).
 
 ```ts
-1@alice < 1.5@alice     // valid
+1@alice < 2@alice       // valid
+1.0@alice < 1.5@alice   // valid
+1@alice < 1.5@alice     // invalid
 ```
 
 Both operands must be located at the same location, and the result is a
@@ -1713,10 +1778,8 @@ let c = x < 10@alice;
 ```
 
 These operators are available for values of **exactly** the same base type.
-Unlike the arithmetic and relational operators, they do not promote:
-`integer === float` is rejected even though `integer <: float` (spec [§16.43](#invalid-comparison-or-equality-operands)).
-Equality is the one place where the two numeric types stay apart, so that
-`===` never has to decide what equality across representations means.
+Like the arithmetic and relational operators, they do not mix the two numeric
+types: `integer === float` is rejected (spec [§16.43](#invalid-comparison-or-equality-operands)).
 
 ```ts
 1@alice === 1.0@alice   // invalid
@@ -1741,17 +1804,29 @@ the same-base-type rule above (spec [§16.43](#invalid-comparison-or-equality-op
 ||
 ```
 
-These operators are available for `boolean`.
+These operators are available for `boolean` alone. Any other operand, a
+`boolean[]` among them, is rejected (spec [§16.44](#invalid-arithmetic-or-logical-operand)).
 
 Both operands must be located at the same location (spec [§7.6](#location-matching-and-residency)),
 and the result is a `boolean` there.
 
-Unlike every other operator, these two evaluate their right operand
-conditionally (spec [§5.17](#evaluation-order)). Neither operand may contain a call to a
-choreography function, directly or through a nested expression: such a call
-runs at every endpoint (spec [§12.11](#function-projection)), but only the endpoints holding the
-operand's value can tell whether the short circuit skipped it. See [§16.46](#choreography-call-in-a-short-circuit-operand), and
-[§17.6](#future-work) for what lifting the restriction would take.
+They do **not** short-circuit: both operands are always evaluated, left first,
+like those of every other binary operator (spec [§5.17](#evaluation-order)). Beyond the rules
+above, an operand may be any well-typed expression, including one that calls a
+choreography function:
+
+```cbs
+function ping(): boolean@alice {
+    let b: integer@bob = 1@bob;
+    let c: integer@alice <- b;
+    return true@alice;
+}
+
+let c: boolean@alice = false@alice;
+let d: boolean@alice = c && ping();   // ping() runs although c is false
+```
+
+Their projection is that of any other binary operator (spec [§12.7](#binary-and-unary-operation-projection)).
 
 #### Unary Operators <a id="unary-operators"></a>
 
@@ -1792,16 +1867,70 @@ let xs: boolean[]@alice = [true]@alice;
 let bad = !xs;            // invalid
 ```
 
-Unary operators bind tighter than every binary operator and are right
-associative (spec [§5.14](#expressions)), so `-a * b` is `(-a) * b` and `!!c` is `!(!c)`.
+Unary operators bind tighter than every binary operator and than `as`, and are
+right associative (spec [§5.14](#expressions)), so `-a * b` is `(-a) * b`, `-a as float` is
+`(-a) as float`, and `!!c` is `!(!c)`.
 
-### 7.12 Array Typing <a id="array-typing"></a>
+### 7.12 Numeric Conversion <a id="numeric-conversion"></a>
+
+```text
+e as integer
+e as float
+```
+
+A numeric conversion changes the base type of a numeric value. `integer` and
+`float` are unrelated (spec [§7.5](#subtyping)), so this is the only way to use a value of one
+where the other is expected.
+
+```text
+e : S@L          where S is integer or float
+(e as T) : T@L   where T is integer or float
+```
+
+* The operand must be an `integer` or `float` scalar. `boolean`, `string`,
+  `null`, `void` and array operands are rejected (spec [§16.49](#invalid-numeric-conversion)).
+* Only the base type changes. The result is located where the operand is, and
+  the target carries no location: moving a value between locations is what `<-`
+  is for (spec [§7.8](#transfer-typing)). As for a unary operator, the operand must be
+  usable in the current context (spec [§8.2](#local-function-strict-location-rule)).
+* `T` may be the operand's own type, in which case the conversion changes
+  nothing.
+* The conversion is carried out by BlueScript's `as` (spec [§13.5](#numeric-conversion-code-generation)), which also
+  decides how a `float` becomes an `integer`.
+* It is a conversion and not a TypeScript type assertion: no other type may
+  follow `as` (spec [§17.2](#typescript-javascript-features)).
+
+Examples:
+
+```ts
+let n: integer@alice = 3@alice;
+let x: float@alice = n as float;          // x : float@alice
+let y = 1.5@alice + (n as float);         // y : float@alice
+let m: integer@alice = x as integer;      // m : integer@alice
+let bad = 1.5@alice + n as float;         // invalid: (1.5@alice + n) as float
+```
+
+The parentheses in `y` are needed because `as` binds more loosely than `+`
+(spec [§5.14](#expressions)).
+
+A conversion runs where its operand is. Combined with a transfer, the order of
+the two decides which endpoint converts:
+
+```ts
+let n: integer@alice = 3@alice;
+let x: float@bob <- n as float;       // alice converts, then sends a float
+
+let k: integer@bob <- n;
+let y: float@bob = k as float;        // bob converts after receiving an integer
+```
+
+### 7.13 Array Typing <a id="array-typing"></a>
 
 #### Array Invariance <a id="array-invariance"></a>
 
 Array types are invariant. `T1[]` is compatible with `T2[]` only when `T1` and `T2` are the same element type.
 
-Therefore, `integer[]` is not a subtype of `float[]`, even though `integer <: float`.
+Therefore, `integer[]` is not compatible with `float[]`.
 
 Disallowed:
 
@@ -1822,10 +1951,7 @@ let xs: float[]@alice = [1, 2]@alice;
 
 ```ts
 let xs: float[]@alice = [1.0, 2.0]@alice;
-let ys: float[]@alice = [1, 2.5]@alice;
 ```
-
-`ys` is allowed because the literal's own element type is already `float`: `integer` and `float` elements have LUB `float`.
 
 The one initializer that does take its element type from the annotation is the empty array literal, which has no element type of its own.
 
@@ -1833,7 +1959,7 @@ The one initializer that does take its element type from the annotation is the e
 
 For an array literal `[e1, ..., en]@L`, each element must be located at `L`. Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types.
 
-The inferred element type of a non-empty array literal is computed from the element base types. `integer` and `float` elements have LUB `float`. Other mixed element types are invalid.
+The inferred element type of a non-empty array literal is the base type shared by all of its elements. Elements of different base types are invalid; this includes mixing `integer` and `float`, which are unrelated (spec [§7.5](#subtyping)).
 
 Examples:
 
@@ -1841,7 +1967,7 @@ Examples:
 let xs = [1, 2, 3]@alice;
 // xs : integer[]@alice
 
-let ys = [1, 2.5]@alice;
+let ys = [1.0, 2.5]@alice;
 // ys : float[]@alice
 
 let zs = [true, false]@alice;
@@ -1852,6 +1978,17 @@ Disallowed:
 
 ```ts
 let bad = [1, true]@alice;
+let mixed = [1, 2.5]@alice;
+```
+
+Write the elements at one type, converting where needed (spec [§7.12](#numeric-conversion)). Only an
+element that is itself a bare literal takes the array's location, so a literal
+inside a conversion needs its own:
+
+```ts
+let ys = [1.0, 2.5]@alice;
+let zs = [1@alice as float, 2.5]@alice;
+let bad = [1 as float, 2.5]@alice;       // invalid: `1` has no location
 ```
 
 An empty array literal cannot infer its element type. It is allowed only when checked against an explicit array type and when the array literal has an explicit location annotation.
@@ -2013,7 +2150,7 @@ let xs: integer[]@alice = [1]@alice;
 xs === xs;
 ```
 
-### 7.13 Function Call Typing <a id="function-call-typing"></a>
+### 7.14 Function Call Typing <a id="function-call-typing"></a>
 
 Function calls do not specify locations at the call site.
 
@@ -2105,7 +2242,7 @@ The following are disallowed:
 `.length` and `.push` are array operations, not calls (spec [§5.14](#expressions)), so this rule
 does not reach them: they may be used in any context, local or choreography.
 
-### 7.14 Return Typing <a id="return-typing"></a>
+### 7.15 Return Typing <a id="return-typing"></a>
 
 When a function has an explicit return type:
 
@@ -2113,7 +2250,11 @@ When a function has an explicit return type:
 return expr;
 ```
 
-is allowed if the type of `expr` is compatible with the function return type.
+is allowed if the type of `expr` is compatible with the function return type,
+by the same rule as assignment (spec [§7.7](#assignment-typing)): its base type must be a subtype of
+the return base type, and its location must match the return location. So a
+function declared to return `float@alice` cannot `return 1@alice;`; it can
+`return 1@alice as float;` (spec [§7.12](#numeric-conversion)).
 
 ```ts
 return;
@@ -2121,14 +2262,14 @@ return;
 
 is allowed only if the function return type is `void`.
 
-When a function omits its return type, the return type is inferred according to [Section 7.15](#type-inference).
+When a function omits its return type, the return type is inferred according to [Section 7.16](#type-inference).
 
 #### Return Coverage <a id="return-coverage"></a>
 
 A function whose return type is not `void` must return a value on every
 execution path. This holds whether the return type is written or inferred, and
 is checked by the same conservative syntactic analysis in both cases
-(spec [§7.15.6](#return-coverage-for-non-void-functions), [§16.41](#missing-return-in-a-non-void-function)).
+(spec [§7.16.6](#return-coverage-for-non-void-functions), [§16.41](#missing-return-in-a-non-void-function)).
 
 ```ts
 function bad@alice(c: boolean@alice): integer@alice {   // invalid (spec §missing-return-in-a-non-void-function)
@@ -2141,13 +2282,13 @@ function bad@alice(c: boolean@alice): integer@alice {   // invalid (spec §missi
 A `void` function needs no coverage: falling off the end is the same as
 `return;`.
 
-### 7.15 Type Inference <a id="type-inference"></a>
+### 7.16 Type Inference <a id="type-inference"></a>
 
 ChoreoBS Core v0 supports simple, local type inference. This feature does not perform general location inference. It only uses types and locations already determined by literals, identifiers, function signatures, and expression typing.
 
 The compiler should elaborate inferred constructs into a fully typed AST before Endpoint Projection.
 
-#### 7.15.1 Let Type Inference <a id="let-type-inference"></a>
+#### 7.16.1 Let Type Inference <a id="let-type-inference"></a>
 
 For an ordinary initialized `let` declaration:
 
@@ -2179,10 +2320,13 @@ let e = true@every;       // e : boolean@every
 A `let` declaration with a fully explicit type annotation is still checked using the normal assignment typing rule.
 
 ```ts
-let x: float@alice = 1@alice;
+let x: float@alice = 1.0@alice;
 ```
 
-This is valid because `integer <: float`.
+The annotation does not convert the initializer. `let x: float@alice = 1@alice;`
+is invalid, because `integer` is not a subtype of `float` (spec [§16.6](#type-mismatch)); the
+conversion has to be written: `let x: float@alice = 1@alice as float;`
+(spec [§7.12](#numeric-conversion)).
 
 #### Partial Annotations <a id="partial-annotations"></a>
 
@@ -2192,7 +2336,14 @@ annotation:
 
 ```ts
 let a: integer = 3@mcu;   // a : integer@mcu
-let b: float = 3@mcu;     // b : float@mcu   (base from the annotation)
+let b: float = 3.0@mcu;   // b : float@mcu
+```
+
+The annotated base type is still checked against the initializer by the
+assignment rule (spec [§7.7](#assignment-typing)), so it does not convert the initializer either:
+
+```ts
+let b: float = 3@mcu;     // invalid (spec §type-mismatch)
 ```
 
 A written location always wins, so a mismatch is still reported:
@@ -2201,12 +2352,12 @@ A written location always wins, so a mismatch is still reported:
 let c: integer@server = 3@mcu;   // invalid (spec §invalid-assignment-across-locations)
 ```
 
-This applies to a `for` initializer `let` as well (spec [§7.15.2](#for-initializer-let-type-inference)). It does **not**
+This applies to a `for` initializer `let` as well (spec [§7.16.2](#for-initializer-let-type-inference)). It does **not**
 apply anywhere there is no initializer to read the location from — function
 parameters and return types still require an explicit location (spec [§16.3](#location-annotation-omission)) —
-nor to a transfer `let` (spec [§7.15.3](#transfer-let-does-not-infer-destination-type)).
+nor to a transfer `let` (spec [§7.16.3](#transfer-let-does-not-infer-destination-type)).
 
-#### 7.15.2 For Initializer Let Type Inference <a id="for-initializer-let-type-inference"></a>
+#### 7.16.2 For Initializer Let Type Inference <a id="for-initializer-let-type-inference"></a>
 
 For a C-style `for` initializer:
 
@@ -2228,7 +2379,7 @@ then:
 i : T@L
 ```
 
-#### 7.15.3 Transfer Let Does Not Infer Destination Type <a id="transfer-let-does-not-infer-destination-type"></a>
+#### 7.16.3 Transfer Let Does Not Infer Destination Type <a id="transfer-let-does-not-infer-destination-type"></a>
 
 Transfer declarations keep the existing syntax:
 
@@ -2237,7 +2388,7 @@ let y: integer@bob <- x;
 ```
 
 The type annotation is required, including its location. Unlike an initialized
-`let` (spec [§7.15.1](#let-type-inference)), the location is **not** taken from the right-hand side:
+`let` (spec [§7.16.1](#let-type-inference)), the location is **not** taken from the right-hand side:
 the destination location is the whole point of a transfer, and inferring it from
 the source would make every transfer a no-op local copy.
 
@@ -2248,7 +2399,7 @@ let y <- x;
 let y: integer <- x;
 ```
 
-#### 7.15.4 Function Return Type Inference <a id="function-return-type-inference"></a>
+#### 7.16.4 Function Return Type Inference <a id="function-return-type-inference"></a>
 
 A function declaration may omit its return type:
 
@@ -2269,14 +2420,11 @@ For multiple return candidates, the compiler computes their least upper bound us
 For base types:
 
 ```text
-lub(integer, integer) = integer
-lub(integer, float)   = float
-lub(float, integer)   = float
-lub(float, float)     = float
-lub(T, T)             = T
+lub(T, T) = T
 ```
 
-All other base type combinations are invalid.
+All other base type combinations are invalid. In particular, `integer` and
+`float` have no LUB, since neither is a subtype of the other (spec [§7.5](#subtyping)).
 
 For array types, return type inference uses array invariance:
 
@@ -2299,22 +2447,25 @@ Example:
 ```ts
 function f@alice(c: boolean@alice) {
     if (c) {
-        return 1@alice;
+        return 1.5@alice;
     } else {
         return 2.5@alice;
     }
 }
 ```
 
-The return type is inferred as `float@alice`.
+The return type is inferred as `float@alice`. Had the first branch returned
+`1@alice`, the candidates would be `integer@alice` and `float@alice`, which have no
+LUB, and the function would be rejected (spec [§16.21](#incompatible-inferred-return-types)); returning
+`1@alice as float` there would be accepted (spec [§7.12](#numeric-conversion)).
 
-#### 7.15.5 Mixing `return;` and `return expr;` <a id="mixing-return-and-return-expr"></a>
+#### 7.16.5 Mixing `return;` and `return expr;` <a id="mixing-return-and-return-expr"></a>
 
 A function with an omitted return type must not mix bare `return;` and value-returning `return expr;`.
 
-#### 7.15.6 Return Coverage for Non-`void` Functions <a id="return-coverage-for-non-void-functions"></a>
+#### 7.16.6 Return Coverage for Non-`void` Functions <a id="return-coverage-for-non-void-functions"></a>
 
-If a function with an omitted return type contains any `return expr;`, then all execution paths must return a value. The same requirement applies to a function with a written non-`void` return type (spec [§7.14](#return-typing)).
+If a function with an omitted return type contains any `return expr;`, then all execution paths must return a value. The same requirement applies to a function with a written non-`void` return type (spec [§7.15](#return-typing)).
 
 Core v0 requires only a conservative syntactic return coverage analysis. At minimum, an implementation must accept:
 
@@ -2324,7 +2475,7 @@ Core v0 requires only a conservative syntactic return coverage analysis. At mini
 
 The compiler may reject programs whose totality is not proven by this conservative analysis.
 
-#### 7.15.7 Parameter Types Are Not Inferred <a id="parameter-types-are-not-inferred"></a>
+#### 7.16.7 Parameter Types Are Not Inferred <a id="parameter-types-are-not-inferred"></a>
 
 Function parameter types are not inferred in Core v0.
 
@@ -2344,7 +2495,7 @@ function add@alice(a: integer@alice, b: integer@alice) {
 }
 ```
 
-#### 7.15.8 Inference and Recursion <a id="inference-and-recursion"></a>
+#### 7.16.8 Inference and Recursion <a id="inference-and-recursion"></a>
 
 Local function recursion is allowed, but recursive local functions must have explicit return types in Core v0.
 
@@ -2362,7 +2513,7 @@ Therefore:
 
 Every type annotation and every literal must carry its own location annotation,
 except on an initialized `let`, where the location is taken from the initializer
-(spec [§7.15.1](#let-type-inference)).
+(spec [§7.16.1](#let-type-inference)).
 
 `void` is outside this rule rather than an exception to it: it has no value to
 place, so it takes no location annotation at all, and writing one is an error
@@ -2418,14 +2569,14 @@ selects the kind of function — a location declares a local function, no locati
 declares a choreography function (spec [§10.1](#function-kinds)) — so neither form is an omission.
 
 This rule governs location annotations only. It does not affect **type**
-inference ([§7.15](#type-inference)), which is a separate mechanism:
+inference ([§7.16](#type-inference)), which is a separate mechanism:
 
 ```ts
 let x = 1@alice;   // valid: `x : integer@alice` is inferred from the initializer
 ```
 
 and a function may still omit its return type entirely, in which case the return
-type — including its location — is inferred from the `return` statements ([§7.15.4](#function-return-type-inference)).
+type — including its location — is inferred from the `return` statements ([§7.16.4](#function-return-type-inference)).
 
 ```ts
 function f@alice(a: integer@alice) {   // valid: returns@alice integer@alice
@@ -2669,10 +2820,10 @@ dead-code elimination (spec [§17.7](#future-cleanup-optimizations)) and singles
 
 After EPP, expressions unrelated to the current endpoint may be transformed into `nothing(...)` or `null`.
 
-These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in [Section 13.10](#projected-ast-cleanup).
+These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in [Section 13.12](#projected-ast-cleanup).
 
 `xs.push(v);` is an expression statement like any other. Its expression is a
-void computation (spec [§7.2](#located-types), [§7.12](#array-typing)), so this is the only position it may
+void computation (spec [§7.2](#located-types), [§7.13](#array-typing)), so this is the only position it may
 stand in; using it as a subexpression or an initializer is a type error
 (spec [§16.40](#invalid-use-of-void)).
 
@@ -2748,7 +2899,7 @@ function f@alice(...) {
 
 ### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
-A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec [§12.11](#function-projection)). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec [§13.10](#projected-ast-cleanup)).
+A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec [§12.11](#function-projection)). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec [§13.12](#projected-ast-cleanup)).
 
 ```ts
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
@@ -3156,10 +3307,9 @@ A call's arguments are the one exception, since the call does want those
 values: they are projected with `project_P`, and each then decides for itself.
 
 ```text
-strict binary:        e1 op e2    =>  nothing(discard(e1), discard(e2))
-short-circuit:        e1 && e2    =>  absent
-                      e1 || e2    =>  absent
+binary:               e1 op e2    =>  nothing(discard(e1), discard(e2))
 unary:                op e        =>  nothing(discard(e))
+conversion:           e as T      =>  discard(e)
 parenthesized:        ( e )       =>  discard(e)
 index:                xs[i]       =>  nothing(discard(xs), discard(i))
 length:               xs.length   =>  nothing()
@@ -3189,31 +3339,29 @@ in for the absent value wherever one is needed. A call whose callee `P` does
 not generate — a local function at another endpoint — disappears, but its
 arguments do not: they are ordinary expressions that may contain choreography
 calls of their own. With no arguments that leaves `nothing()`, which cleanup
-removes (spec [§13.10](#projected-ast-cleanup)).
+removes (spec [§13.12](#projected-ast-cleanup)).
 
-`&&` and `||` are the one row that keeps nothing at all. `nothing(...)`
-evaluates all of its arguments, so hoisting a short-circuit operand into one
-would run code the original skipped. Discarding them whole is sound because
-[§16.46](#choreography-call-in-a-short-circuit-operand) keeps choreography calls
-out of both operands: there is nothing left for `P` to run.
+The binary row covers `&&` and `||` as well. They do not short-circuit
+(spec [§5.17](#evaluation-order)), so hoisting both operands into one `nothing(...)` runs
+exactly what the original runs.
 
 `.length` drops its receiver where `xs[i]` keeps its own, because the two are
 not the same kind of operand. The receiver of `.length` must be a variable
 (spec [§5.14](#expressions)), so reading it cannot call anything and there is nothing to
-preserve; that leaves `nothing()`, which cleanup removes (spec [§13.10](#projected-ast-cleanup)). The
+preserve; that leaves `nothing()`, which cleanup removes (spec [§13.12](#projected-ast-cleanup)). The
 receiver of `[]` is an arbitrary expression — `f()[i]` is well-formed — and may
 hold a choreography call, so it is reproduced like any other operand.
 
 `xs.push(v)` is `void`, so it never stands in a value position (spec
 [§7.2](#located-types), [§16.40](#invalid-use-of-void)); the only place it occurs
 is as an expression statement. Its result still travels with the array's
-location (spec [§7.12](#array-typing)), so at an endpoint that does not hold the
+location (spec [§7.13](#array-typing)), so at an endpoint that does not hold the
 array `project_P` falls through to the `push` row above — which is exactly the
 statement rule [§12.10](#assignment-projection) states. It drops its receiver for
 the same reason `.length` does.
 
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
-Core v0 (spec [§13.10](#projected-ast-cleanup), [§17.6](#future-work)).
+Core v0 (spec [§13.12](#projected-ast-cleanup), [§17.7](#future-cleanup-optimizations)).
 
 #### Why the Operands Are Enough <a id="why-the-operands-are-enough"></a>
 
@@ -3223,6 +3371,8 @@ anything else:
 
 * both operands of a binary operator are at one location, and so is the result
   (spec [§7.11](#operators));
+* the operand of a unary operator or of a numeric conversion is where the result
+  is (spec [§7.11](#operators), [§7.12](#numeric-conversion));
 * an index expression is at its array's location (spec [§16.37](#invalid-array-index-location));
 * a local function's parameters are at its own endpoint (spec [§16.25](#invalid-local-function-parameter-location)), and
   arguments must match (spec [§16.28](#invalid-function-argument-location));
@@ -3231,7 +3381,7 @@ anything else:
 So a `nothing(...)` built this way holds only `absent` leaves and calls `P`
 must make. Nothing resident is discarded, and cleanup's deliberately blunt rule
 — fold only when every argument is syntactically `null` — loses nothing
-(spec [§13.10](#projected-ast-cleanup)).
+(spec [§13.12](#projected-ast-cleanup)).
 
 A transfer is the one place a location boundary is crossed on purpose, so its
 source needs the rule stated separately; see [§12.9](#transfer-projection).
@@ -3321,7 +3471,7 @@ choose(c);
 ```
 
 When such a statement holds nothing `P` must run, it simplifies to `null` and
-disappears entirely (spec [§13.10](#projected-ast-cleanup)).
+disappears entirely (spec [§13.12](#projected-ast-cleanup)).
 
 #### Positions With No Room for a Statement <a id="positions-with-no-room-for-a-statement"></a>
 
@@ -3372,13 +3522,13 @@ runs against the matching send. Projecting the argument `get3()` to a bare
 * It is distinct from source-level `null`.
 * It is never emitted to final BlueScript output.
 * It is turned into `null` by absent finalization, a stage of its own that runs
-  after EPP and before cleanup (spec [§13.8](#absent-finalization)).
+  after EPP and before cleanup (spec [§13.10](#absent-finalization)).
 
 `absent` and the compiler-generated `nothing(...)` (spec [§14.1](#nothing)) are different
 artifacts and are kept apart. `absent` marks a value that does not exist here;
 `nothing(...)` preserves computations whose result is discarded. EPP produces
 both, finalization rewrites the first, and cleanup folds the second
-(spec [§13.10](#projected-ast-cleanup)).
+(spec [§13.12](#projected-ast-cleanup)).
 
 ### 12.5 Literal Projection <a id="literal-projection"></a>
 
@@ -3415,12 +3565,11 @@ else:
     absent
 ```
 
-### 12.7 Binary and Unary Operation Projection <a id="binary-and-unary-operation-projection"></a>
+### 12.7 Operator and Conversion Projection <a id="binary-and-unary-operation-projection"></a>
 
-#### Strict Operators <a id="strict-operators"></a>
-
-`+ - * / %`, `< <= > >=` and `=== !==` always evaluate both operands. Where the
-result resides at `P`, the operator is preserved:
+Every binary operator — `+ - * / %`, `< <= > >=`, `=== !==` and `&& ||` —
+always evaluates both operands (spec [§5.17](#evaluation-order)). Where the result resides at
+`P`, the operator is preserved:
 
 ```ts
 let a: integer@alice = 1@alice;
@@ -3445,7 +3594,7 @@ discard_P(op e)     = nothing(discard_P(e))
 ```
 
 EPP at `bob` — both operands are literals there, so the statement simplifies to
-`null` and disappears (spec [§13.10](#projected-ast-cleanup)):
+`null` and disappears (spec [§13.12](#projected-ast-cleanup)):
 
 ```ts
 // removed
@@ -3463,21 +3612,97 @@ EPP at `bob`:
 nothing(relay(null));
 ```
 
-#### Short-Circuit Operators <a id="short-circuit-operators"></a>
+#### Logical Operators <a id="logical-operator-projection"></a>
 
-`&&` and `||` do **not** follow the rule above. `nothing(...)` evaluates every
-argument, so
+`&&` and `||` follow the rule above with no exception. Since they do not
+short-circuit, hoisting both operands into `nothing(...)` where the result is
+absent runs exactly what the original runs. Written out, with the residing side
+in the spelling code generation gives it (spec [§13.4](#logical-operator-code-generation)):
 
 ```text
-e1 && e2  =>  nothing(discard(e1), discard(e2))
-e1 || e2  =>  nothing(discard(e1), discard(e2))
+project_P(e1 && e2 : boolean@L) =
+    if residesAt(L, P):  __and(project_P(e1), project_P(e2))
+    else:                nothing(discard_P(e1), discard_P(e2))
+
+project_P(e1 || e2 : boolean@L) =
+    if residesAt(L, P):  __or(project_P(e1), project_P(e2))
+    else:                nothing(discard_P(e1), discard_P(e2))
 ```
 
-would run a right operand the original short-circuited past. Their row in
-[§12.3](#expression-projection) discards them whole instead: `discard_P` of
-either operator is `absent`, operands and all. That loses nothing because
-[§16.46](#choreography-call-in-a-short-circuit-operand) forbids choreography calls in either operand — the only work that would
-have to survive.
+There is one rule for every context. In a local function body every value
+resides at the function's own endpoint (spec [§8.2](#local-function-strict-location-rule)), so the first
+branch is the only one taken there.
+
+An operand may call a choreography function (spec [§7.11](#operators)):
+
+```cbs
+function ping(): boolean@alice {
+    let b: integer@bob = 1@bob;
+    let c: integer@alice <- b;
+    return true@alice;
+}
+
+let c: boolean@alice = false@alice;
+let d: boolean@alice = c && ping();
+```
+
+EPP at `alice`:
+
+```ts
+let c: boolean = false;
+let d: boolean = __and(c, ping());
+```
+
+EPP at `bob` — the binding is absent, but `ping()` still runs, so `bob` takes
+part in the communication inside it:
+
+```ts
+nothing(null, ping());
+```
+
+#### Numeric Conversion Projection <a id="numeric-conversion-projection"></a>
+
+A conversion is kept, as BlueScript's `as`, where its result resides. Where it
+does not, nothing of the conversion is emitted — not even the `nothing(...)` a
+unary operator leaves. Like parentheses, a conversion contributes nothing of its
+own, so only the operand's evaluation remains (spec [§12.3](#expression-projection)).
+
+```text
+project_P(e as T : T@L) =
+    if residesAt(L, P):  project_P(e) as T
+    else:                discard_P(e)
+```
+
+The result is located where the operand is (spec [§7.12](#numeric-conversion)), so wherever the
+result resides the operand does too, and a conversion is never applied to the
+`null` that stands in for an absent value.
+
+```cbs
+function relay(v: integer@alice): integer@alice {
+    let w: integer@bob <- v;
+    let back: integer@alice <- w;
+    return back;
+}
+
+let n: integer@alice = 3@alice;
+let x: float@alice = n as float;
+let y: float@alice = relay(n) as float;
+```
+
+EPP at `alice`:
+
+```ts
+let n: integer = 3;
+let x: float = (n as float);
+let y: float = (relay(n) as float);
+```
+
+EPP at `bob` — `x` disappears altogether, and of `y` only the call remains,
+bare, where the unary `-relay(x)` above leaves `nothing(relay(null))`:
+
+```ts
+relay(null);
+```
 
 ### 12.8 Let Projection <a id="let-projection"></a>
 
@@ -3509,7 +3734,7 @@ endpoint, because the name has to stay declared for the rest of the header
 (spec [§12.14](#for-projection)).
 
 EPP at `bob` — the initializer is a literal, so the statement simplifies to
-`null` and disappears (spec [§13.10](#projected-ast-cleanup)):
+`null` and disappears (spec [§13.12](#projected-ast-cleanup)):
 
 ```ts
 // removed
@@ -3580,7 +3805,7 @@ altogether.
 
 Where `discard_P` of the source yields `null` — that is, where the source holds
 no call this endpoint has to make — the statement disappears in cleanup
-(spec [§13.10](#projected-ast-cleanup)), which is why the ordinary cases below
+(spec [§13.12](#projected-ast-cleanup)), which is why the ordinary cases below
 show no extra statement. A bare identifier or literal source is the common
 case: it discards to `absent`, and so to `null`.
 
@@ -3797,7 +4022,7 @@ nothing else as an assignment target or as the receiver of `.length` and
 `.push` (spec [§5.14](#expressions)) — so reading it cannot call anything, and there is no
 evaluation to preserve. Reproducing it would leave a `null` argument that
 carries no computation and that cleanup cannot fold away once a sibling
-argument holds one (spec [§13.10.2](#expression-simplification)).
+argument holds one (spec [§13.12.2](#expression-simplification)).
 
 ### 12.11 Function Projection <a id="function-projection"></a>
 
@@ -3854,8 +4079,8 @@ nothing(get3Mcu(), get4Mcu());
 ```
 
 With no arguments there is nothing left to evaluate, and `nothing()` is removed
-by cleanup (spec [§13.10](#projected-ast-cleanup)). A call names no location
-(spec [§7.13](#function-call-typing)), so this is an ordinary call to a
+by cleanup (spec [§13.12](#projected-ast-cleanup)). A call names no location
+(spec [§7.14](#function-call-typing)), so this is an ordinary call to a
 `localFunction` declared at `mcu`, projected at `server`:
 
 ```ts
@@ -3961,7 +4186,7 @@ exist at this endpoint at all, and a header slot holds an expression, not the
 *statement* that [§12.10](#assignment-projection) would produce. The clause therefore keeps just
 `discard_P` of the expressions it evaluated — the same `nothing(...)` [§12.10](#assignment-projection)
 builds, sitting in the slot as an expression. Once that simplifies to `null`,
-the slot is **omitted** entirely (spec [§13.10](#projected-ast-cleanup)). The compiler must not emit an
+the slot is **omitted** entirely (spec [§13.12](#projected-ast-cleanup)). The compiler must not emit an
 assignment to a name that is absent here, nor `null[null] = null` for an absent
 array.
 
@@ -4025,7 +4250,7 @@ let n: integer = xs.length;
 EPP at `bob` — the array is absent there, so none of these operations is
 performed. Each statement keeps only the evaluation of its subexpressions
 (spec [§12.3](#expression-projection), [§12.10](#assignment-projection)), and since all of them are literals here, everything
-simplifies to `null` and disappears (spec [§13.10](#projected-ast-cleanup)):
+simplifies to `null` and disappears (spec [§13.12](#projected-ast-cleanup)):
 
 ```ts
 // all removed
@@ -4150,7 +4375,40 @@ xs.push(v)
 These two are the whole of ChoreoBS's dot syntax. A program cannot access a
 field or call a method on anything else (spec [§17.2](#typescript-javascript-features)).
 
-### 13.4 Function Names <a id="codegen-function-names"></a>
+### 13.4 Logical Operator Code Generation <a id="logical-operator-code-generation"></a>
+
+The projected IR keeps `&&` and `||` as binary operations. Code generation
+spells them as calls to the runtime helpers `__and` and `__or`
+(spec [§14.3](#and-or-helpers)):
+
+```text
+e1 && e2  =>  __and(e1, e2)
+e1 || e2  =>  __or(e1, e2)
+```
+
+They cannot be emitted unchanged, as the arithmetic operators are, because
+BlueScript's `&&` and `||` short-circuit and ChoreoBS's do not
+(spec [§5.17](#evaluation-order)). A call evaluates both of its arguments, left to right, before
+the helper runs, which is exactly the evaluation ChoreoBS prescribes. The
+spelling is the same whatever the operands are, including in a local
+function.
+
+### 13.5 Numeric Conversion Code Generation <a id="numeric-conversion-code-generation"></a>
+
+A projected conversion is emitted as BlueScript's own `as`, in parentheses:
+
+```text
+e as T  =>  (e as T)
+```
+
+The parentheses keep the conversion together whatever operator surrounds it.
+A conversion the source already parenthesizes is not wrapped a second time:
+`total / (n as float)` is emitted as written.
+
+Only an endpoint that holds the value emits one (spec [§12.7](#binary-and-unary-operation-projection)); where the value
+is absent there is no `as` at all, so `null as T` is never emitted.
+
+### 13.6 Function Names <a id="codegen-function-names"></a>
 
 Generated function names are the same as the original ChoreoBS function names.
 Because there is no renaming, the names the generated code relies on are
@@ -4166,7 +4424,7 @@ EPP at `alice`:
 function add(...)
 ```
 
-### 13.5 Output File Naming <a id="output-file-naming"></a>
+### 13.7 Output File Naming <a id="output-file-naming"></a>
 
 Input:
 
@@ -4189,15 +4447,15 @@ index_alice.bs
 index_bob.bs
 ```
 
-### 13.6 Local Functions <a id="codegen-local-functions"></a>
+### 13.8 Local Functions <a id="codegen-local-functions"></a>
 
 A local function is emitted only for the corresponding endpoint.
 
-### 13.7 Choreography Functions <a id="codegen-choreography-functions"></a>
+### 13.9 Choreography Functions <a id="codegen-choreography-functions"></a>
 
 A choreography function is emitted for all endpoints.
 
-### 13.8 Absent Finalization <a id="absent-finalization"></a>
+### 13.10 Absent Finalization <a id="absent-finalization"></a>
 
 Absent finalization is a stage of its own, between endpoint projection and
 cleanup:
@@ -4241,9 +4499,9 @@ something to paper over with a `null`.
 
 After finalization the output contains no `absent`. The remaining `null;`
 statements and `nothing(...)` artifacts are removed where possible by the
-cleanup pass in [Section 13.10](#projected-ast-cleanup).
+cleanup pass in [Section 13.12](#projected-ast-cleanup).
 
-### 13.9 Communication API <a id="communication-api"></a>
+### 13.11 Communication API <a id="communication-api"></a>
 
 The generated BlueScript code uses type-specific communication APIs.
 
@@ -4306,15 +4564,15 @@ cloneFloatArray(value: float[]): float[];
 cloneBooleanArray(value: boolean[]): boolean[];
 ```
 
-### 13.10 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
+### 13.12 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
 
-After absent finalization (spec [§13.8](#absent-finalization)) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
+After absent finalization (spec [§13.10](#absent-finalization)) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
 
 The purpose of this pass is to remove or simplify compiler-generated artifacts such as unnecessary `null` statements and `nothing(...)` expressions.
 
 This cleanup pass must operate on the projected AST or projected IR. It must not be implemented as string-based post-processing over generated BlueScript code.
 
-#### 13.10.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
+#### 13.12.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
 
 Cleanup is one pass in post order: every subexpression is simplified before its
 parent is considered, and statements are handled after their expressions.
@@ -4336,9 +4594,9 @@ slot is visited, including ones that are easy to overlook: the index of an
 array element assignment target, and the initializer, condition and update of a
 `for` header.
 
-An `absent` reaching this pass is an internal error (spec [§13.8](#absent-finalization)).
+An `absent` reaching this pass is an internal error (spec [§13.10](#absent-finalization)).
 
-#### 13.10.2 Expression Simplification <a id="expression-simplification"></a>
+#### 13.12.2 Expression Simplification <a id="expression-simplification"></a>
 
 The only rule is:
 
@@ -4388,7 +4646,7 @@ nothing(nothing(null), null, null)
 => null
 ```
 
-#### 13.10.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
+#### 13.12.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
 
 Core v0 does not rewrite
 
@@ -4404,9 +4662,9 @@ nothing(a, b, c)
 
 The nesting mirrors the source expression's structure and evaluation
 boundaries, which keeps EPP a plain structural recursion and leaves room for
-runtime checks later. Flattening is listed under [§17.6](#future-work).
+runtime checks later. Flattening is listed under [§17.7](#future-cleanup-optimizations).
 
-#### 13.10.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
+#### 13.12.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
 
 Expression simplification must also be applied recursively inside ordinary function call arguments.
 
@@ -4424,7 +4682,7 @@ foo(null, null)
 
 The function call itself must not be removed by this cleanup rule.
 
-#### 13.10.5 Statement Cleanup <a id="statement-cleanup"></a>
+#### 13.12.5 Statement Cleanup <a id="statement-cleanup"></a>
 
 After expression simplification, the compiler removes expression statements
 whose expression is exactly `null`, and only those.
@@ -4454,7 +4712,7 @@ x = null;
 f(null);
 ```
 
-#### 13.10.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
+#### 13.12.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
 
 This cleanup pass is intentionally conservative.
 
@@ -4500,7 +4758,7 @@ them without revisiting [§12.3](#expression-projection):
 * general dead-code elimination;
 * removal of ordinary function calls.
 
-#### 13.10.7 Source-Level `null` <a id="source-level-null"></a>
+#### 13.12.7 Source-Level `null` <a id="source-level-null"></a>
 
 A `null` that came from a source-level `null` literal and a `null` produced by
 absent finalization are the same node by the time cleanup runs, and are treated
@@ -4541,12 +4799,12 @@ return null;
 The compiler must distinguish this artifact from an ordinary call, including
 from a user-defined function that happens to be named `nothing`. In the
 projected IR it is a node of its own; only that node is subject to the
-simplification rule in [§13.10](#projected-ast-cleanup).
+simplification rule in [§13.12](#projected-ast-cleanup).
 
 The BlueScript backend may choose a concrete implementation depending on what
 BlueScript supports. If rest parameters are unavailable, it may emit
 fixed-arity helpers instead. Whatever it emits, the artifacts that can be
-removed are removed first (spec [§13.10](#projected-ast-cleanup)).
+removed are removed first (spec [§13.12](#projected-ast-cleanup)).
 
 ### 14.2 Where It Appears <a id="nothing-where-it-appears"></a>
 
@@ -4556,6 +4814,26 @@ this endpoint does not perform — in a statement, in a call argument, in a
 
 It does *not* wrap a call that the endpoint does make: the projected callee
 already returns `null` there, so the call stands on its own (spec [§12.3](#expression-projection)).
+
+### 14.3 `__and` and `__or` <a id="and-or-helpers"></a>
+
+`__and(a, b)` and `__or(a, b)` are the runtime helpers that code generation
+emits for `&&` and `||` (spec [§13.4](#logical-operator-code-generation)). Each takes two `boolean` arguments and
+returns a `boolean`:
+
+```text
+__and(a, b) = a and b
+__or(a, b)  = a or b
+```
+
+Unlike `nothing(...)`, they are ordinary calls. Their arguments are evaluated
+left to right, both before the helper runs, as for any call
+(spec [§5.17](#evaluation-order)); the helper itself only combines the two values, and has no
+effect of its own. They produce a value that the program uses, so cleanup
+never touches them (spec [§13.12](#projected-ast-cleanup)).
+
+Like `nothing`, they are supplied by the BlueScript runtime rather than
+generated into each endpoint program.
 
 ## 15. Examples <a id="examples"></a>
 
@@ -4616,7 +4894,7 @@ Each branch declares a variable at `bob`, so `alice` keeps only the
 initializer's evaluation (spec [§12.8](#let-projection)). That is a single
 expression, and a single discarded expression takes no `nothing(...)` wrapper
 (spec [§12.3](#expression-projection)); the literal projects to `absent`, which
-finalization turns into `null` (spec [§13.8](#absent-finalization)).
+finalization turns into `null` (spec [§13.10](#absent-finalization)).
 
 EPP at `alice` after cleanup:
 
@@ -4902,7 +5180,7 @@ After cleanup:
 nothing(get3Mcu(), null);
 ```
 
-Unchanged — one argument is a call, so the rule of [§13.10.2](#expression-simplification) does not apply, and
+Unchanged — one argument is a call, so the rule of [§13.12.2](#expression-simplification) does not apply, and
 the nesting is not flattened either.
 
 ***
@@ -4920,21 +5198,23 @@ After cleanup:
 nothing();  =>  null;  =>  removed
 ```
 
-### 15.8 Return Type Inference with Numeric LUB <a id="example-return-type-inference"></a>
+### 15.8 Return Type Inference <a id="example-return-type-inference"></a>
 
 Input:
 
 ```ts
 function f@alice(c: boolean@alice) {
     if (c) {
-        return 1@alice;
+        return 1.0@alice;
     } else {
         return 2.5@alice;
     }
 }
 ```
 
-The inferred return type is `float@alice`.
+The inferred return type is `float@alice`. Writing `1@alice` in the first
+branch would make the function invalid instead: `integer` and `float` have no
+LUB (spec [§16.21](#incompatible-inferred-return-types)).
 
 ***
 
@@ -5005,7 +5285,7 @@ This is an error.
 ### 16.3 Location Annotation Omission <a id="location-annotation-omission"></a>
 
 A type annotation or a literal without a location annotation is an error, unless
-the location can be taken from an initializer (spec [§7.15.1](#let-type-inference)).
+the location can be taken from an initializer (spec [§7.16.1](#let-type-inference)).
 
 ```ts
 let x: integer = 1;          // the initializer has no location either
@@ -5022,7 +5302,7 @@ function f@alice(a: integer): integer@alice {   // no initializer to read
 A local function's own location does not supply a default. Parameter types,
 return types, and literals must all be annotated explicitly (spec [§8.1](#explicit-location-annotations)). An
 initialized `let` is the one exception, since it can read the location from its
-initializer (spec [§7.15.1](#let-type-inference)).
+initializer (spec [§7.16.1](#let-type-inference)).
 
 ```ts
 function add@alice(a: integer, b: integer): integer {
@@ -5048,6 +5328,21 @@ let x: integer@alice;
 
 ```ts
 let x: integer@alice = "hello"@alice;
+```
+
+`integer` and `float` are unrelated (spec [§7.5](#subtyping)), so neither is accepted for
+the other:
+
+```ts
+let x: float@alice = 1@alice;
+let y: integer@alice = 1.5@alice;
+```
+
+Convert explicitly instead (spec [§7.12](#numeric-conversion)):
+
+```ts
+let x: float@alice = 1@alice as float;
+let y: integer@alice = 1.5@alice as integer;
 ```
 
 ### 16.7 Invalid Assignment Across Locations <a id="invalid-assignment-across-locations"></a>
@@ -5082,14 +5377,27 @@ let d: boolean@alice <- c;
 For `a <- b` with `a : T1@p` and `b : T2@q`, the source base type must be a
 subtype of the destination base type: `T2 <: T1` (spec [§7.8](#transfer-typing)).
 
-Disallowed — `float` is not a subtype of `integer`:
+Disallowed — `integer` and `float` are unrelated, in either direction:
 
 ```ts
 let y: float@alice = 1.5@alice;
 let x: integer@bob <- y;
 ```
 
-Disallowed — unrelated base types:
+```ts
+let y: integer@alice = 1@alice;
+let x: float@bob <- y;
+```
+
+Convert explicitly instead (spec [§7.12](#numeric-conversion)): here `alice` converts, then sends a
+`float`:
+
+```ts
+let y: integer@alice = 1@alice;
+let x: float@bob <- y as float;
+```
+
+Disallowed — any other pair of different base types:
 
 ```ts
 let y: float@alice = 1.5@alice;
@@ -5264,6 +5572,30 @@ function bad@alice(c: boolean@alice) {
         return 1@alice;
     } else {
         return "one"@alice;
+    }
+}
+```
+
+`integer` and `float` have no LUB either (spec [§7.5](#subtyping)):
+
+```ts
+function bad@alice(c: boolean@alice) {
+    if (c) {
+        return 1@alice;
+    } else {
+        return 2.5@alice;
+    }
+}
+```
+
+Converting one of them makes the candidates agree (spec [§7.12](#numeric-conversion)):
+
+```ts
+function good@alice(c: boolean@alice) {
+    if (c) {
+        return 1@alice as float;
+    } else {
+        return 2.5@alice;
     }
 }
 ```
@@ -5517,7 +5849,7 @@ let xs: integer[]@alice = []@alice;
 
 ### 16.33 Array Type Invariance <a id="array-type-invariance"></a>
 
-Array types are invariant (spec [§7.12](#array-typing)).
+Array types are invariant (spec [§7.13](#array-typing)).
 
 Disallowed:
 
@@ -5526,7 +5858,7 @@ let xs: integer[]@alice = [1, 2]@alice;
 let ys: float[]@alice = xs;
 ```
 
-An array literal is typed on its own and then checked by the same rule, so an annotation does not widen its element type either.
+An array literal is typed on its own and then checked by the same rule, so an annotation does not change its element type either.
 
 Also disallowed:
 
@@ -5597,6 +5929,20 @@ let xs: integer[]@alice = []@alice;
 xs.push(1.5@alice);
 ```
 
+`integer` and `float` are unrelated (spec [§7.5](#subtyping)), so the reverse is rejected too:
+
+```ts
+let ys: float[]@alice = []@alice;
+ys.push(1@alice);
+```
+
+Convert the value first (spec [§7.12](#numeric-conversion)):
+
+```ts
+let ys: float[]@alice = []@alice;
+ys.push(1@alice as float);
+```
+
 ### 16.39 `@every` on a Function Declaration <a id="every-on-a-function-declaration"></a>
 
 A location on a function declaration names the one endpoint that runs the
@@ -5657,7 +6003,7 @@ let y: void <- g();         // transfer destination
 
 A `return` value is a value position like any other, so a `void` computation is
 rejected there too — even inside a `void` function, where `return;` is the form
-to write (spec [§5.12](#return-statement), [§7.14](#return-typing)):
+to write (spec [§5.12](#return-statement), [§7.15](#return-typing)):
 
 ```ts
 function g@alice(): void { return; }
@@ -5667,7 +6013,7 @@ function h@alice(): void {
 }
 ```
 
-`xs.push(v)` is the other void computation (spec [§7.2](#located-types), [§7.12](#array-typing)), and is
+`xs.push(v)` is the other void computation (spec [§7.2](#located-types), [§7.13](#array-typing)), and is
 rejected in the same positions for the same reason:
 
 ```ts
@@ -5685,7 +6031,7 @@ f(xs.push(1@alice));                     // not assignable to the parameter
 ### 16.41 Missing Return in a Non-`void` Function <a id="missing-return-in-a-non-void-function"></a>
 
 A function whose return type is not `void` must return a value on every path
-(spec [§7.14](#return-typing), [§7.15.6](#return-coverage-for-non-void-functions)). This applies to a written return type just as it does to
+(spec [§7.15](#return-typing), [§7.16.6](#return-coverage-for-non-void-functions)). This applies to a written return type just as it does to
 an inferred one (spec [§16.19](#cannot-infer-function-return-type)).
 
 ```ts
@@ -5708,7 +6054,7 @@ function ok@alice(c: boolean@alice): integer@alice {
 }
 ```
 
-The analysis is the conservative one of [§7.15.6](#return-coverage-for-non-void-functions), so a function whose totality
+The analysis is the conservative one of [§7.16.6](#return-coverage-for-non-void-functions), so a function whose totality
 rests on a loop condition is rejected even when it does always return:
 
 ```ts
@@ -5747,8 +6093,26 @@ let t: string@alice = -s;
 let b: boolean@alice = "a"@alice < "b"@alice;
 ```
 
-`===` and `!==` require operands of the same base type. They do not widen
-`integer` to `float` the way the arithmetic operators do:
+```ts
+let xs: integer[]@alice = [1]@alice;
+let c: boolean@alice = xs < xs;
+```
+
+They also require operands of the same numeric type, so `integer` and `float`
+are not compared with each other (spec [§7.5](#subtyping)):
+
+```ts
+let b: boolean@alice = 1@alice < 1.5@alice;
+```
+
+Convert one operand explicitly instead (spec [§7.12](#numeric-conversion)):
+
+```ts
+let b: boolean@alice = (1@alice as float) < 1.5@alice;
+```
+
+`===` and `!==` require operands of the same base type, which likewise rules
+out comparing an `integer` with a `float`:
 
 ```ts
 let b: boolean@alice = 1@alice === 1.0@alice;
@@ -5768,7 +6132,45 @@ let c: boolean@alice = xs.push(1@alice) === xs.push(2@alice);
 
 For array operands see [§16.36](#invalid-array-equality).
 
-### 16.44 Invalid Array Operation Syntax <a id="invalid-array-operation-syntax"></a>
+### 16.44 Invalid Arithmetic or Logical Operand <a id="invalid-arithmetic-or-logical-operand"></a>
+
+`+ - * / %` require numeric scalars, apart from `string + string`
+(spec [§7.11](#operators)). An array is rejected even when its elements are numeric:
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@alice = xs + xs;
+```
+
+```ts
+let s: string@alice = "a"@alice - "b"@alice;
+```
+
+Both operands must also have the same numeric type. `integer` and `float` are
+unrelated (spec [§7.5](#subtyping)), so neither is promoted to the other:
+
+```ts
+let x = 1@alice + 1.5@alice;
+```
+
+Convert one operand explicitly instead (spec [§7.12](#numeric-conversion)):
+
+```ts
+let x = (1@alice as float) + 1.5@alice;
+```
+
+`&&` and `||` require boolean scalars:
+
+```ts
+let bs: boolean[]@alice = [true]@alice;
+let b: boolean@alice = bs && bs;
+```
+
+```ts
+let c: boolean@alice = 1@alice && true@alice;
+```
+
+### 16.45 Invalid Array Operation Syntax <a id="invalid-array-operation-syntax"></a>
 
 These are **parse** errors, reported before type checking.
 
@@ -5796,9 +6198,9 @@ let n: integer@alice = xs.length;
 ```
 
 Using `xs.push(v)` where a value is expected is not a syntax error but a type
-error, because its result is `void` (spec [§7.12](#array-typing), [§16.40](#invalid-use-of-void)).
+error, because its result is `void` (spec [§7.13](#array-typing), [§16.40](#invalid-use-of-void)).
 
-### 16.45 Missing `for` Condition <a id="missing-for-condition"></a>
+### 16.46 Missing `for` Condition <a id="missing-for-condition"></a>
 
 The condition of a `for` loop is required (spec [§5.11](#for-statement)).
 
@@ -5808,47 +6210,6 @@ for (let i = 0@every; ; i = i + 1@every) {
 ```
 
 Use `while (true@every)` for an unbounded loop.
-
-### 16.46 Choreography Call in a Short-Circuit Operand <a id="choreography-call-in-a-short-circuit-operand"></a>
-
-Neither operand of `&&` or `||` may contain a call to a choreography function,
-directly or inside a nested expression.
-
-A choreography function runs at every endpoint (spec [§12.11](#function-projection)), but `&&` and `||`
-evaluate their right operand only conditionally (spec [§5.17](#evaluation-order)), and that decision
-is made from a value that lives at one location. An endpoint where the result is
-absent cannot tell which way it went, so it cannot know whether to make the
-call — and projecting the operands unconditionally would make it call every
-time (spec [§12.7](#binary-and-unary-operation-projection)).
-
-Disallowed:
-
-```cbs
-function ping(): boolean@alice {
-    let b: integer@bob = 1@bob;
-    let c: integer@alice <- b;
-    return true@alice;
-}
-
-let c: boolean@alice = false@alice;
-let d: boolean@alice = c && ping();
-```
-
-Allowed — a local function cannot call a choreography function (spec [§16.13](#calling-choreography-from-local)),
-so it cannot communicate:
-
-```cbs
-function yes@alice(): boolean@alice {
-    return true@alice;
-}
-
-let c: boolean@alice = false@alice;
-let d: boolean@alice = c && yes();
-```
-
-The restriction is deliberately blunt in Core v0: it also rejects cases that
-would be safe, such as an operation at `@every`, where every endpoint holds the
-condition and would short-circuit identically. See [§17.6](#future-work).
 
 ### 16.47 Invalid Endpoint Name <a id="invalid-endpoint-name"></a>
 
@@ -5946,6 +6307,36 @@ function f@alice(p: integer@alice): integer@alice {
 
 ***
 
+### 16.49 Invalid Numeric Conversion <a id="invalid-numeric-conversion"></a>
+
+The operand of `as` must be an `integer` or `float` scalar (spec [§7.12](#numeric-conversion)):
+
+```ts
+let b: float@alice = true@alice as float;
+```
+
+```ts
+let xs: integer[]@alice = [1, 2]@alice;
+let ys = xs as float;
+```
+
+The following are **parse** errors. What follows `as` must be a bare `integer`
+or `float` (spec [§5.14](#expressions)): there is no conversion to any other base type, no
+conversion of arrays, and no location on the target, since the result stays
+where the operand is:
+
+```ts
+let s = 1@alice as string;
+```
+
+```ts
+let ys = xs as float[];
+```
+
+```ts
+let x = 1@alice as float@bob;
+```
+
 ## 17. Non-goals and Future Extensions <a id="non-goals-and-future-extensions"></a>
 
 The following features are not part of ChoreoBS Core v0.
@@ -5968,6 +6359,7 @@ The following features are not part of ChoreoBS Core v0.
 * arrays beyond the mutable one-dimensional `integer[]` / `float[]` / `boolean[]` support defined in this specification;
 * property access as lvalue — `xs[i] = v` is the only assignable form, and `.length` is read-only;
 * property access and method calls in general: `.length` and `.push` are a closed set of array operations (spec [§5.14](#expressions)), not a facility for user types;
+* type assertions: `as` is only the numeric conversion between `integer` and `float` (spec [§7.12](#numeric-conversion));
 * classes;
 * interfaces;
 * generics;
@@ -6026,11 +6418,7 @@ Future versions may add:
 * state-machine based EPP;
 * non-blocking runtime support;
 * selection-based conditionals;
-* endpoint protocol verification;
-* a projection that allows choreography computation inside a short-circuit
-  operand (spec [§16.46](#choreography-call-in-a-short-circuit-operand)), by sharing the short-circuit condition across the
-  endpoints that need it, or by a projected IR form that preserves
-  short-circuit evaluation.
+* endpoint protocol verification.
 
 ### 17.7 Future Cleanup Optimizations <a id="future-cleanup-optimizations"></a>
 
@@ -6047,4 +6435,4 @@ The following optimizations are not required in v0:
 * removal of empty loops;
 * side-effect analysis for ordinary function calls;
 * effect analysis that would let cleanup drop a call it can prove inert;
-* flattening nested `nothing(...)` (spec [§13.10.3](#nested-nothing-is-not-flattened)).
+* flattening nested `nothing(...)` (spec [§13.12.3](#nested-nothing-is-not-flattened)).
