@@ -12,10 +12,11 @@ ChoreoBS に Gradual Locating を導入する仕様。
   受信側は payload を持たないので、payload から型を判別できないため
 - ロケーション変数をヒープ上のオブジェクト `__LocVar` にし、整数 ID とグローバルな制約ストアを廃止した（6 節）。
   不要になった変数は GC で回収される。ID を一致させる必要も無くなった
-- 動的操作（inject・cast・dyn リテラル・動的演算・配列操作・動的転送）を、全エンドポイントで生成される**組み込み関数の呼び出し**として扱うことにした（8 節）。
+- 動的操作（inject・cast・dyn リテラル・動的演算・dyn の値の変換・配列操作・動的転送）を、全エンドポイントで生成される**組み込み関数の呼び出し**として扱うことにした（8 節）。
   - choreography 関数の呼び出しと同じ規則で射影されるので、EPP に新しい射影規則は要らない。追加するのは `residesAt(dyn, P) = true` だけである
   - `__cast` も呼び出しなので、非常駐側で discard に落ちても残る
-- `integer <: float` を dyn でも保つ。変換は静的な変換ノード `widen`（出力は `as float`）で行う（3.4 節）
+- integer と float は無関係である（`spec.md` §subtyping。部分型は反射律だけ）。dyn でも同じで、境界での暗黙の変換は無い。
+  変換はソースに書く `as`（`spec.md` §numeric-conversion）だけで、dyn の値には組ごとの組み込み関数 `__dynIntegerToFloat` / `__dynFloatToInteger` を使う（3.4 節）
 - `dyn` をキーワードにした。生成コード中のロケーションは文字列リテラルで書く。
   ランタイムファイルは `__runtime_<endpoint>.bs` とした（2 節、7 節）
 - 型付け規則（一致関係 `~`、結合 `⊔`、変換 `coerce`）と、省略・推論の規則を明記した（3 節、4 節）
@@ -37,6 +38,7 @@ ChoreoBS に Gradual Locating を導入する仕様。
   - ただし、ローカル関数内ではロケーションを省略してはいけない。`@dyn` も使えない。
 - `@dyn` のロケーションを持つ変数・関数引数には、どのロケーションの値も代入できる。
   条件は、base type が部分型関係 `T2 <: T1`（`spec.md` §subtyping）を満たすことだけである。
+  部分型は反射律だけなので、これは base type が一致することを意味する。
 - `@dyn` のロケーションを持つ値は、base type が合う限り、どのロケーションが要求される箇所でも使用できる。
   - ただし、実行時検査（runtime check）が入る。
 - `@dyn` を使うと、静的ロケーション検査を実行時に遅らせられる。
@@ -51,7 +53,7 @@ ChoreoBS に Gradual Locating を導入する仕様。
     - `every` に bound された値: 全エンドポイントに、それぞれ独立した同じ内容の payload が存在する。
     - unbound な値: 全エンドポイントが同じ payload の複製を保持する。ただし論理的には `every` ではない。
   - payload の表現: payload は常に、その値の**静的 base type の実行時表現**を持つ。
-    integer の値を `float@dyn` に入れるときは、境界で変換する（3.4 節）。
+    値は同じ base type の間でしか流れず、変換 `as` は変換先の表現を作る（3.4 節）ので、この不変条件は自動的に保たれる。
 - 動的配置値を含む演算は、全エンドポイントに同じ形で配布され、実行時に演算主体が決まる（ロケーションディスパッチ）。
   - 動的操作は、EPP でも cleanup でも削除しない（8 節）。
 - base type は、すべて静的に型付けする。
@@ -132,6 +134,7 @@ base type の規則は `spec.md` のままとし、ロケーションの規則�
 | `if` / `while` / `for` の条件（choreography 文脈） | `boolean@L`、`L ~ every` | |
 | 二項演算 `e1 op e2` | `L1 ~ L2` | `T@(L1 ⊔ L2)` |
 | 単項演算 `op e` | | `T@L` |
+| numeric conversion `e as T`（`e : S@L`） | | `T@L` |
 | `xs[i]` | `Li ~ Lxs` | `T@(Lxs ⊔ Li)` |
 | `xs[i] = v` | `Lxs`・`Li`・`Lv` が互いに `~` | |
 | `xs.length` | | `integer@Lxs` |
@@ -139,12 +142,14 @@ base type の規則は `spec.md` のままとし、ロケーションの規則�
 | 配列リテラル `[e1, …, en]@L` | 各 `Lei` と `L` が互いに `~` | `T[]@L` |
 | 転送 `a <- b` | ロケーションの条件は無い（`spec.md` §transfer-typing） | |
 
+二項演算のオペランドは、`spec.md` §operators のとおり同じ base type 同士でなければならない。integer と float の混在は、dyn が関与しても静的エラーである。
+
 要素代入と push は、関与するロケーションの `⊔` が `dyn` なら動的操作になり、そうでなければ静的操作のままである（12 節）。
 たとえば `arrAlice[iAlice] = valDyn` も動的操作になる。
 
 ### 3.3 変換 `coerce`
 
-型が `S@L` の式 `e` を、型 `T@L'` が要求される位置へ置くときは、`coerce(e : S@L → T@L')` を挿入する（`S <: T`）。
+型が `S@L` の式 `e` を、型 `T@L'` が要求される位置へ置くときは、`coerce(e : S@L → T@L')` を挿入する（`S <: T`、つまり `S = T`）。
 これは論文の C-Id / C-Inj / C-Cast と同じ規則である。
 
 ```text
@@ -153,7 +158,8 @@ L  = q,   L' = dyn   =>  inj<q>(e)
 L  = dyn, L' = q     =>  cast<q>(e)
 ```
 
-`S = integer` かつ `T = float` の場合は、3.4 節の `widen` を合成する。
+`coerce` はロケーションだけを変え、base type は変えない。
+integer と float の間の変換は、ソースに書かれた `as` だけが行う（3.4 節）。
 
 `inj<q>` と `cast<q>` は、組み込み関数 `__inject` / `__cast` の呼び出しとして型付き AST に置く（8.2 節）。
 
@@ -170,49 +176,50 @@ L  = dyn, L' = q     =>  cast<q>(e)
 
 `⊔` が `dyn` になる二項演算・配列操作では、静的なオペランドを `inj<q>` で包む（`coerce(e → T@dyn)`）。
 
-### 3.4 integer から float への変換
+### 3.4 numeric conversion
 
-`integer <: float` は dyn でも保つ。payload は静的 base type の表現を持たなければならないので（1 節）、
-integer の値が float の位置に入るときは変換する。
-
-#### 変換ノード `widen`
-
-静的な値の変換には、変換ノード `widen` を使う。
+`e as T` は `spec.md` §numeric-conversion のとおりに型付けする。
 
 ```text
-widen(e) : float@L      ただし e : integer@L、L は具体ロケーション
+e : S@L,  S ∈ {integer, float}   ⇒   (e as T) : T@L,  T ∈ {integer, float}
 ```
 
-- 出力は BlueScript の `as float` である。
-- 射影は単項演算と同じく、結果の residency で決まる。
-  - 常駐側では `project(e) as float` になる。
-  - 非常駐側では discard される。discard は括弧と同じく `discard(widen(e)) = discard(e)` で、`nothing(...)` では包まない。
-    変換は値の表現を変えるだけで、評価すべきものを増やさないからである。
-- `widen` を使うのは float だけである。
-  要確認 2（16 節）で、any から静的型への暗黙の変換が効かないと分かった場合は、同じノードを `as T` に広げる。
+ロケーションの条件は無く、結果はオペランドと同じロケーションにある（3.2 節）。
+変換の形は、オペランドのロケーション `L` と、`S`・`T` の組で決まる。
 
-#### 流れごとの形
-
-| 流れ | 挿入する形 |
+| オペランド | 形 |
 |---|---|
-| `integer@q` → `float@dyn` | `inj<q>(widen(e))` |
-| `integer@dyn` → `float@q` | `widen(cast<q>(e))` |
-| `integer@dyn` → `float@dyn` | `__dynToFloat(e)`（組み込み関数。10.5 節） |
-| integer リテラル `c@dyn` → `float@dyn` | `__dynUnbound(widen(c))`（payload の `c` は `@every` として全エンドポイントで評価される。8.2 節） |
+| `L` が具体ロケーション | 静的な変換。`spec.md` §numeric-conversion-projection のとおり |
+| `L = dyn`、`S = integer`、`T = float` | `__dynIntegerToFloat(e)`（組み込み関数。10.5 節） |
+| `L = dyn`、`S = float`、`T = integer` | `__dynFloatToInteger(e)`（同上） |
+| `L = dyn`、`S = T` | 何も生成しない。`e` の射影そのものになる |
 
-#### `as float` は値が存在する側にだけ現れる
+- 静的な変換は、常駐側では `(project(e) as T)` になり、非常駐側では `discard(e)` だけが残る。`nothing(...)` では包まない。
+- dyn のオペランドの変換は動的操作なので、全エンドポイントで生成される組み込み関数の呼び出しになる（8.2 節）。
+  payload を持つエンドポイントだけが変換し、ロケーション変数は元の値と共有する。
+- 同型の変換は、静的なオペランドなら `spec.md` のとおり `as` をそのまま出力する。
+  dyn のオペランドでは payload の表現が変わらないので、呼び出しを省く。
 
-非常駐側では payload が `null` なので、`null as float` にしてはいけない。これは上の射影規則から自動的に守られる。
+#### 静的・動的の混在
 
-- `inj<q>(widen(e))` の引数 `widen(e)` は `float@q` なので、`q` 以外では discard されて null になる。結果は `__inject(null, "q")` である。
-- 捨てられる `widen(cast<q>(e))` は `discard(cast<q>(e))` になる。cast は呼び出しなので残り、結果は `__cast(e, "q")` である。
+変換は base type だけを変え、ロケーションは `coerce`（3.3 節）が変える。両者は独立に合成される。
 
-#### `__dynToFloat`
+| 流れ | 形 |
+|---|---|
+| `integer@q` を変換して `float@dyn` の位置へ | `inj<q>(e as float)` |
+| `integer@dyn` を変換して `float@q` の位置へ | `cast<q>(__dynIntegerToFloat(e))` |
+| `integer@dyn` を変換して `float@dyn` の位置へ | `__dynIntegerToFloat(e)` |
+| dyn リテラル `c`（`c@dyn`）を変換して `float@dyn` の位置へ | `__dynIntegerToFloat(__dynUnbound(c))` |
 
-`__dynToFloat` では、payload を持つエンドポイントだけが `payload as float` を計算する（10.5 節）。
-変換は同じ値の表現を変えるだけなので、ロケーション変数は元の値と共有する。
+リテラルにも特例は設けない。オペランドの `c@dyn` がまず `__dynUnbound(c)` になり（5.1 節）、それを変換する。
+配列リテラルと同じく、形が要素やオペランドの種類によらないことを優先する（5.2 節）。
 
-静的な値同士（`integer@q` → `float@q`）は、今までどおり BlueScript の暗黙の変換に任せる（`spec.md` §operators）。
+#### `as` は値が存在する側にだけ現れる
+
+非常駐側では payload が `null` なので、`null as float` にしてはいけない。これは射影の規則から自動的に守られる。
+
+- `inj<q>(e as float)` の引数 `e as float` は `float@q` なので、`q` 以外では discard されて null になる。結果は `__inject(null, "q")` である。
+- `__dynIntegerToFloat` / `__dynFloatToInteger` は、payload を持たないエンドポイントでは `as` を実行しない（10.5 節）。
 
 例:
 
@@ -220,26 +227,31 @@ widen(e) : float@L      ただし e : integer@L、L は具体ロケーション
 // ChoreoBS
 // let valAlice: integer@alice = 1@alice;
 // let iDyn: integer@dyn = 2@dyn;
-let f1: float@dyn = valAlice;     // 静的 → dyn
-let f2: float@alice = iDyn;       // dyn → 静的
-let f3: float@dyn = iDyn;         // dyn → dyn
-let f4: float@dyn = 3;            // リテラル（3 は 3@dyn になる）
+let f1: float@dyn = valAlice as float;     // 静的な変換 → dyn
+let f2: float@alice = iDyn as float;       // dyn の変換 → 静的
+let f3: float@dyn = iDyn as float;         // dyn の変換
+let f4: float@dyn = 3 as float;            // リテラル（3 は 3@dyn になる）
+let i1: integer@dyn = iDyn as integer;     // 同型: 何も生成しない
 
 // After EPP at alice
-let f1: __DynVal = __inject(valAlice as float, "alice");
-let f2: float = __cast(iDyn, "alice") as float;
-let f3: __DynVal = __dynToFloat(iDyn);
-let f4: __DynVal = __dynUnbound(3 as float);
+let f1: __DynVal = __inject((valAlice as float), "alice");
+let f2: float = __cast(__dynIntegerToFloat(iDyn), "alice");
+let f3: __DynVal = __dynIntegerToFloat(iDyn);
+let f4: __DynVal = __dynIntegerToFloat(__dynUnbound(3));
+let i1: __DynVal = iDyn;
 
 // After EPP at bob
 let f1: __DynVal = __inject(null, "alice");
-__cast(iDyn, "alice");
-let f3: __DynVal = __dynToFloat(iDyn);
-let f4: __DynVal = __dynUnbound(3 as float);
+__cast(__dynIntegerToFloat(iDyn), "alice");
+let f3: __DynVal = __dynIntegerToFloat(iDyn);
+let f4: __DynVal = __dynIntegerToFloat(__dynUnbound(3));
+let i1: __DynVal = iDyn;
 ```
 
+変換を書かずに `let f1: float@dyn = valAlice;` とすると、base type が一致しないので静的エラーである（`spec.md` §type-mismatch）。
+
 `===` / `!==` は、静的に「完全に同じ base type」を要求する（`spec.md` §operators）。
-payload の表現の不変条件があるので、`__dynEq` は常に同じ表現同士を比べることになる。
+payload の表現の不変条件（1 節）があるので、`__dynEq` は常に同じ表現同士を比べることになる。
 
 ### 3.5 転送
 
@@ -251,10 +263,12 @@ payload の表現の不変条件があるので、`__dynEq` は常に同じ表�
 - 転送代入 `a <- e;` は `a = …;` になる。
 
 ```text
-a : T@q    <- e : S@q'    静的転送（spec.md §transfer-semantics のまま）
-a : T@dyn  <- e           a ← __dynTransfer(tag, kind(T), "dyn", coerce(e → T@dyn))
-a : T@q    <- e : S@dyn   a ← __cast(__dynTransfer(tag, kind(T), "q", coerce(e → T@dyn)), "q")
+a : T@q    <- e : T@q'    静的転送（spec.md §transfer-semantics のまま）
+a : T@dyn  <- e : T@L     a ← __dynTransfer(tag, kind(T), "dyn", coerce(e → T@dyn))
+a : T@q    <- e : T@dyn   a ← __cast(__dynTransfer(tag, kind(T), "q", coerce(e → T@dyn)), "q")
 ```
+
+source と宛先の base type は同じ `T` である（`spec.md` §transfer-typing。部分型は反射律だけ）。
 
 `a ← …` は、宣言なら `let`、代入なら `=` による束縛を表す。
 
@@ -262,8 +276,8 @@ a : T@q    <- e : S@dyn   a ← __cast(__dynTransfer(tag, kind(T), "q", coerce(e
   `spec.md` §transfer-projection の規則（送信側と受信側の場合分けや、非送信側での source の discard）は使わない。
   どのエンドポイントも、同じ `__dynTransfer` を呼ぶからである。
 - `tag` は 11.1 節の規則で割り当てる。
-- source を先に `T@dyn` へ変換するので、payload はすでに宛先の base type の表現を持っている。
-  3行目の `__cast` の後ろには `widen` は不要である。
+- base type が同じなので、転送に伴う表現の変換は無い。payload は source の時点で宛先の base type の表現を持っている。
+  integer を float として送るには、source に `as float` を書く（11.2 節）。
 
 ### 3.6 ローカル関数
 
@@ -407,7 +421,12 @@ __dynUnbound(null);
 
 - `ei'` は `coerce(ei → T@dyn)` の射影である。
   - 注釈の無いリテラル要素は `c@dyn` になり、`__dynUnbound(c)` へ射影される。
-  - 要素型が float のとき、integer の要素は 3.4 節の形で変換される（`[1, 2.5]@dyn` の `1` は `__dynUnbound(1 as float)`）。
+  - 要素の base type はすべて同じでなければならない（`spec.md` §array-literal-typing）。`[1, 2.5]@dyn` は静的エラーである。
+  - `as` の中のリテラルは、裸のリテラル要素ではないので配列のロケーションを受け取らない（`spec.md` §array-literal-typing と同じ）。
+    省略として `@dyn` になり、`[1 as float, 2.5]@dyn` の `1 as float` は `__dynIntegerToFloat(__dynUnbound(1))` になる。
+    静的な配列 `[1 as float, 2.5]@alice` でも `1` は `1@dyn` になるので、この要素は `__cast(__dynIntegerToFloat(__dynUnbound(1)), "alice")` になる。
+    strict モード（4.2 節）では、`spec.md` のとおり省略のエラーである。
+    静的なままにしたいときは `1@alice as float` か `1.0` と書く。
 - 外側の引数は左から評価されるので、`e1` から `en` の順に評価される（`spec.md` §evaluation-order）。
 - `kind` は配列の種別（`"integerArray"` / `"floatArray"` / `"booleanArray"`）である。
 - `__dynArrayNew` は、型付きの空配列から unbound な動的配置値を作る（12.4 節）。
@@ -672,8 +691,9 @@ EPP では、callee が全エンドポイントで生成される choreography �
 | `__dynUnbound(c)` | `c : T@every` | `T@dyn` | dyn リテラル `c@dyn` |
 | `__inject(e, "q")` | `e : T@q` | `T@dyn` | `inj<q>(e)` |
 | `__cast(v, "q")` | `v : T@dyn` | `T@q` | `cast<q>(v)` |
-| `__dynToFloat(v)` | `v : integer@dyn` | `float@dyn` | 3.4 節 |
-| `__dynPlus(a, b)` ほか二項演算 | `a : T1@dyn`、`b : T2@dyn` | `T@dyn` | 10.1〜10.3 節 |
+| `__dynIntegerToFloat(v)` | `v : integer@dyn` | `float@dyn` | `v as float`（3.4 節） |
+| `__dynFloatToInteger(v)` | `v : float@dyn` | `integer@dyn` | `v as integer`（3.4 節） |
+| `__dynPlus(a, b)` ほか二項演算 | `a : T@dyn`、`b : T@dyn` | 演算子の結果型 `@dyn`（`spec.md` §operators） | 10.1〜10.3 節 |
 | `__dynNot(v)` / `__dynNeg(v)` | `v : T@dyn` | `T@dyn` | 10.4 節 |
 | `__dynArrayGet(xs, i)` | `xs : T[]@dyn`、`i : integer@dyn` | `T@dyn` | 12.1 節 |
 | `__dynArraySet(xs, i, v)` | `xs : T[]@dyn`、`i : integer@dyn`、`v : T@dyn` | `void` | 12.2 節 |
@@ -711,12 +731,14 @@ cast が非常駐側でも残らなければならない理由を、例で示す
 3. もし消えると、bob だけが valDyn のクラスを alice に bound しないことになる。
    制約が全エンドポイントで一致しなくなり、以降のロケーションディスパッチが食い違う。
 
-### 8.3 変換ノード
+### 8.3 numeric conversion
 
-`widen` は組み込み関数ではなく、静的な変換ノードである。3.4 節の規則で射影する。
+`as` の射影は、オペランドのロケーションで分かれる（3.4 節）。
 
-- 常駐側では `project(e) as float` になる。
-- discard は括弧と同じで、`discard(widen(e)) = discard(e)` である。
+- 静的なオペランドの変換は、`spec.md` §numeric-conversion-projection のまま射影する。
+  常駐側では `(project(e) as T)`、非常駐側では `discard(e)` である。本書で規則を足す必要は無い。
+- dyn のオペランドの変換は、8.2 節の組み込み関数の呼び出しとして型付き AST に置く。したがって、他の動的操作と同じく全エンドポイントに残る。
+- dyn のオペランドの同型変換は、型付き AST に何も置かない。
 
 ***
 
@@ -745,8 +767,6 @@ export function __cast(v: __DynVal, loc: string): any {
 }
 ```
 
-integer から float への変換を伴う場合は、3.4 節のとおりである。
-
 ***
 
 ## 10. Operators
@@ -756,6 +776,9 @@ integer から float への変換を伴う場合は、3.4 節のとおりであ�
 対象: `+`, `-`, `*`, `/`, `%` → `__dynPlus`, `__dynSub`, `__dynMul`, `__dynDiv`, `__dynMod`
 
 `string + string` も `__dynPlus` で扱う。
+
+オペランドは、`spec.md` §operators のとおり同じ base type 同士である（integer と float の混在は静的エラー）。
+したがって `__dynPlus` などが受け取る2つの payload は、常に同じ表現を持つ。
 
 EPP:
 
@@ -845,18 +868,54 @@ export function __dynNot(v: __DynVal): __DynVal {
 
 `__dynNeg` も同様である。
 
-### 10.5 integer から float への変換
+### 10.5 Numeric Conversion
+
+対象: dyn のオペランドの `as float` / `as integer` → `__dynIntegerToFloat`, `__dynFloatToInteger`（3.4 節）
+
+同型の変換（`integer@dyn` の `as integer` など）は何も生成しない。
+
+EPP:
 
 ```ts
-export function __dynToFloat(v: __DynVal): __DynVal {
+// ChoreoBS
+// let n: integer@dyn = 3@dyn;
+// let x: float@dyn = 1.5@dyn;
+let a: float@dyn = n as float;
+let b: integer@dyn = x as integer;
+let c: integer@dyn = n as integer;
+
+// After EPP at alice / bob（共通）
+let a: __DynVal = __dynIntegerToFloat(n);
+let b: __DynVal = __dynFloatToInteger(x);
+let c: __DynVal = n;
+```
+
+ランタイム関数:
+
+```ts
+export function __dynIntegerToFloat(v: __DynVal): __DynVal {
   const loc = __find(v.loc);
   if (__holdsPayload(loc)) {
-    return new __DynVal(v.payload as float, v.loc);
+    return new __DynVal((v.payload as integer) as float, v.loc);
+  } else {
+    return new __DynVal(null, v.loc);
+  }
+}
+
+export function __dynFloatToInteger(v: __DynVal): __DynVal {
+  const loc = __find(v.loc);
+  if (__holdsPayload(loc)) {
+    return new __DynVal((v.payload as float) as integer, v.loc);
   } else {
     return new __DynVal(null, v.loc);
   }
 }
 ```
+
+- payload は `any` なので、まず変換元の静的型へ戻し、それから BlueScript の `as` で変換する。
+  `any` に対する `as` が変換として働くかどうかに依存しないためである（要確認 2、16 節）。
+- 結果は、元の値のロケーション変数を共有する。変換は値の表現を変えるだけで、ロケーションは変えない（`spec.md` §numeric-conversion）。
+- payload を持たないエンドポイントでは `as` を実行しないので、`null as float` にはならない。
 
 ***
 
@@ -871,7 +930,7 @@ export function __dynToFloat(v: __DynVal): __DynVal {
 - `kind` は宛先の base type の種別である。
   - 値は `spec.md` §communication-api の8種類（`"integer"` / `"float"` / `"boolean"` / `"string"` / `"null"` / `"integerArray"` / `"floatArray"` / `"booleanArray"`）のいずれか。
   - 静的版が宛先の型で API を選ぶのと同じである。
-  - source は 3.5 節で宛先の base type へ変換済みなので、送信側と受信側は同じ API を選ぶ。
+  - source と宛先の base type は同じなので（3.5 節）、送信側と受信側は同じ API を選ぶ。
 
 ### 11.1 タグ
 
@@ -926,17 +985,18 @@ let x: __DynVal = __dynTransfer("__top_8", "integer", "dyn", __dynPlus(f(), g())
 
 `f` と `g` は、どのエンドポイントでも `function f(): __DynVal { return __dynUnbound(3); }` になる。
 
-integer から float へ転送する例（上の例の続きなので、タグは `__top_9`）:
+integer を float として転送する例（上の例の続きなので、タグは `__top_9`）。
+`let fb: float@bob <- valDyn1;` は base type が一致しないので静的エラーで、source に変換を書く（3.4 節）:
 
 ```ts
 // ChoreoBS
-let fb: float@bob <- valDyn1;
+let fb: float@bob <- valDyn1 as float;
 
 // After EPP at alice
-__cast(__dynTransfer("__top_9", "float", "bob", __dynToFloat(valDyn1)), "bob");
+__cast(__dynTransfer("__top_9", "float", "bob", __dynIntegerToFloat(valDyn1)), "bob");
 
 // After EPP at bob
-let fb: float = __cast(__dynTransfer("__top_9", "float", "bob", __dynToFloat(valDyn1)), "bob");
+let fb: float = __cast(__dynTransfer("__top_9", "float", "bob", __dynIntegerToFloat(valDyn1)), "bob");
 ```
 
 ### 11.3 ランタイム関数
@@ -1389,16 +1449,17 @@ BlueScript の挙動に依存していて、まだ確認していない点。
 実装前に、小さな確認用の `.bs` を BlueScript 上で動かして決める。
 
 1. **`any` に対する操作が、静的版と同じ結果になるか。**
-   - 対象: `[]`・`.length`・`.push`・算術（`integer / integer`、`%`、`integer + float`、文字列の `+`）・比較（`===`）。
+   - 対象: `[]`・`.length`・`.push`・算術（`integer / integer`、`%`、文字列の `+`）・比較（`===`）。
    - 本書のランタイムは、これらが使える前提で書いている。
-   - 特に、**integer と float が混ざる算術の結果が float になること**。
-     dyn の二項演算では、integer 側のオペランドを変換しない（3.3 節の `coerce` の適用位置に二項演算は含まない）。
-     そのため、payload の表現の不変条件（1 節）はこの挙動に依存している。
+   - 二項演算の2つのオペランドは常に同じ base type なので（10.1 節）、integer と float が混ざる算術は起こらない。
+     特に確かめるのは、`integer / integer` が `any` 同士でも整数の除算になることである。
    - 使えない、または結果が違う場合は、該当する動的演算・配列操作にも `kind` を渡す。
      関数の中で `const a: integer[] = arr.payload;` のように型付きの変数へ戻してから操作する。
-2. **`any` から静的型への暗黙の変換。**
+2. **`any` から静的型への変換。**
    - 例: `let x: integer = __cast(...)`、条件位置の `__cast(...)`、`return __cast(...)`。
-   - 変換されない場合は、3.4 節の変換ノード `widen` を `as T` に広げ、静的な位置で使う `__cast` の結果に付ける。
+   - 暗黙に変換されない場合は、静的な位置で使う `__cast` の結果に、BlueScript の `as T`（`T` は宛先の base type）を付けて出力する。
+   - 10.5 節のランタイム関数は、`(v.payload as integer) as float` のように、`any` から変換元の静的型への `as` を使う。
+     これが実行時の型検査として通り、値をそのまま取り出せることを確かめる。
 3. **`__LocVar` の書き方。**
    - クラスのフィールドに自クラス型を持てるか（`parent: __LocVar`）。
    - コンストラクタで `this` をフィールドに入れられるか。
@@ -1420,7 +1481,8 @@ spec.md の節は、リポジトリの規約（`scripts/spec/README.md`）に従
 | §locations | `Location ::= ConcreteLocation \| dyn` | 2 節 |
 | §keywords | `dyn` を予約語に加える | 2 節 |
 | §array-literals | 注釈の無い配列リテラルは `@dyn`。要素と配列のロケーション違いは `~` で判定する | 5.2 節 |
-| §subtyping、§operators | 部分型は dyn でも保つ。int→float は変換ノード `widen`（`as float`）。payload の表現の不変条件 | 1 節、3.4 節 |
+| §subtyping、§operators | 部分型は反射律だけで、dyn でも同じ。dyn の二項演算も同じ base type 同士。payload の表現の不変条件 | 1 節、3.2 節、10.1 節 |
+| §numeric-conversion、§numeric-conversion-projection | dyn のオペランドの変換は組み込み関数 `__dynIntegerToFloat` / `__dynFloatToInteger`。同型の変換は何も生成しない。静的なオペランドは `spec.md` のまま | 3.4 節、8.3 節、10.5 節 |
 | §location-matching-and-residency | `~` と `⊔` を追加する。`residesAt(dyn, P) = true` | 2.1 節、3.1 節 |
 | §assignment-typing 〜 §return-typing | `match` を `~` に置き換える。結果ロケーションは `⊔` で決める。`coerce` の挿入位置 | 3.2 節、3.3 節 |
 | §let-type-inference、§function-return-type-inference | 戻り値型の部分注釈。ロケーションの lub が取れなければ dyn | 4.3 節 |
@@ -1430,7 +1492,7 @@ spec.md の節は、リポジトリの規約（`scripts/spec/README.md`）に従
 | §transfer-typing | 動的転送は `let` / 代入と `__dynTransfer` の呼び出しに書き換える | 3.5 節 |
 | §communication-tags | 静的転送と `__dynTransfer` の `tag` 引数を、同じカウンタでソース順に採番する | 11.1 節 |
 | §type-projection | `T@dyn → __DynVal` | 8.1 節 |
-| §expression-projection | 組み込み関数は、全エンドポイントで生成される callee として扱う（discard の表の行も、不変条件の例外も追加しない）。`widen` の discard は括弧と同じ | 8.2 節、8.3 節 |
+| §expression-projection | 組み込み関数は、全エンドポイントで生成される callee として扱う（discard の表の行も、不変条件の例外も追加しない） | 8.2 節 |
 | §type-mapping | `T@dyn → __DynVal` | 8.1 節 |
 | §communication-api | `kind` による分岐 | 11.3 節 |
 | §projected-ast-cleanup | 組み込み関数の呼び出しは、通常の呼び出しとして残る | 8.2 節 |
