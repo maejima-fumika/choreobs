@@ -165,6 +165,25 @@ nothing(__cast(d, "alice"));`,
     );
   });
 
+  it("§array-literal-typing an empty literal built with the element type it is checked against", () => {
+    expectEndpoints(
+      `
+let fs: float[]@alice = [1.0]@alice;
+fs = [];
+let ys: boolean[]@dyn <- [];
+`,
+      `import { __DynVal, __cast, __dynArrayNew, __dynTransfer } from "./__runtime_alice";
+
+let fs: float[] = [1.0];
+fs = __cast(__dynArrayNew("floatArray"), "alice");
+let ys: __DynVal = __dynTransfer("__top_0", "booleanArray", "dyn", __dynArrayNew("booleanArray"));`,
+      `import { __DynVal, __cast, __dynArrayNew, __dynTransfer } from "./__runtime_bob";
+
+__cast(__dynArrayNew("floatArray"), "alice");
+let ys: __DynVal = __dynTransfer("__top_0", "booleanArray", "dyn", __dynArrayNew("booleanArray"));`,
+    );
+  });
+
   it("§binary-and-unary-operation-projection binary operators", () => {
     expectEndpoints(
       `

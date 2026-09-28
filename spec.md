@@ -105,7 +105,7 @@ omitted location is `dyn` (spec [§8.3](#strict-mode)).
 * Each name is held in the value namespace for the whole program (spec [§6.1](#namespaces)): no function, variable or parameter may take an endpoint's name, whether or not the source ever writes `@` with it.
 * Each name must be an identifier (spec [§4.3](#identifiers)) and must not be a reserved word (spec [§4.4](#keywords)). An endpoint name is written after `@` in the source (spec [§5.2](#types)) and is also pasted into the output file name (spec [§2.3](#output-files)): a name that is not an identifier would name an endpoint no program could refer to, and would still name a file — `../x` would place that file outside the output directory.
 * A name must not begin with `__`, which is reserved for the compiler (spec [§4.3](#identifiers), [§6.2](#function-names)), on the same terms as every other identifier the source writes.
-* The **reserved runtime names** of spec [§6.2](#function-names) — `nothing`, the communication API names, `__array`, `__push`, `__and` and `__or` — are *not* reserved here, apart from the `__` prefix above. An endpoint name reaches the generated code only as a string literal (spec [§13.12](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
+* The **reserved runtime names** of spec [§6.2](#function-names) — `nothing`, the communication API and clone helper names, `__array`, `__push`, `__and` and `__or` — are *not* reserved here, apart from the `__` prefix above. An endpoint name reaches the generated code only as a string literal (spec [§13.13](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
 * The names must be distinct. A repeated name is an error: it would give two output files the same name, and make one endpoint both the sender and the receiver of the same communication.
 * `every` and `dyn` are reserved words and must not appear in `endpoints` (spec [§16.2](#using-every-as-an-endpoint)). This is a special case of the reserved-word rule above, called out separately because `every` and `dyn` name the two locations that are deliberately never listed (spec [§3.4](#every), [§3.5](#dyn)).
 * Every individual location used in a `.cbs` source file must be listed in `endpoints`. The locations `every` and `dyn` are never listed.
@@ -168,9 +168,9 @@ __runtime_bob.bs
 * A runtime file is written for **every** endpoint as soon as any endpoint
   program uses the runtime: a `dyn` value lives at all of them.
 * The files differ only in the constant `__here`, which names their endpoint
-  (spec [§14.8](#location-functions)).
+  (spec [§14.8](#location-functions)), and in the comment at the top of the file, which names it too.
 * A program without `dyn` gets no runtime file, and its endpoint programs import
-  nothing (spec [§13.8](#runtime-import)). Its output is exactly what it would be without
+  nothing (spec [§13.9](#runtime-import)). Its output is exactly what it would be without
   gradual locating.
 * `nothing`, `__and`, `__or`, the communication API and the clone helpers are
   not in the runtime file. They are supplied from outside for every program,
@@ -278,10 +278,13 @@ component is gradual. Base type compatibility, array invariance and operator
 applicability are checked at compile time exactly as for any value
 (spec [§7.5](#subtyping), [§7.14](#operators), [§7.16](#array-typing)).
 
-A `dyn` value may be placed wherever a location is required, and a value at any
-location may be placed where `dyn` is required, as long as the base types agree
-(spec [§7.7](#location-consistency-and-join)). Each such place is a run-time location check (spec [§7.8](#coercion)): a static
-location check deferred to run time.
+In a choreography context, a `dyn` value may be placed wherever a location is
+required, and a value at any location may be placed where `dyn` is required, as
+long as the base types agree (spec [§7.7](#location-consistency-and-join)). Each such place is a coercion (spec [§7.8](#coercion)).
+Placing a `dyn` value at a concrete location is a run-time location check — a
+static location check deferred to run time — while placing a static value at
+`dyn` only records where it is. A local function holds no `dyn` at all
+(spec [§8.4](#local-function-strict-location-rule)).
 
 #### Location Variables and Binding <a id="dyn-binding"></a>
 
@@ -554,8 +557,9 @@ Type ::= NonLocatedType LocationAnnotation?
 ```
 
 A type written without its `LocationAnnotation` takes its location from an
-initializer where there is one (spec [§7.19.1](#let-type-inference)), and is otherwise `dyn`, or an error
-in strict mode and in a local function (spec [§8.2](#omitted-locations)).
+initializer where there is one (spec [§7.19.1](#let-type-inference)) or, as the return type of a
+choreography function, from its `return` statements (spec [§7.19.4](#function-return-type-inference)). It is otherwise
+`dyn`, or an error in strict mode and in a local function (spec [§8.2](#omitted-locations)).
 
 ```ebnf
 NonLocatedType ::= BaseType
@@ -700,6 +704,8 @@ let z: integer@bob <- x;
 let w: integer <- x;        // w : integer@dyn
 ```
 
+In strict mode `w` is an error (spec [§8.3](#strict-mode)).
+
 Disallowed:
 
 ```ts
@@ -788,7 +794,9 @@ An assignment in a `for` header takes the same targets an assignment statement
 does (spec [§5.7](#assignment-statement)), so an array element may be assigned there too:
 
 ```ts
-for (let i = 0@alice; i < 3@alice; xs[i] = 0@alice) {
+let xs: integer[]@every = [1, 2, 3]@every;
+for (let i = xs.length; i > 0@every; xs[i] = 0@every) {
+    i = i - 1@every;
 }
 ```
 
@@ -1049,7 +1057,7 @@ literal (spec [§16.33](#array-literal-elements-across-locations)):
 
 ```ts
 [a, d]@alice            // valid if d : integer@dyn — d is cast to alice
-[a@alice, b@bob]@dyn    // invalid: alice and bob in one literal
+[1@alice, 2@bob]@dyn    // invalid: alice and bob in one literal
 ```
 
 ***
@@ -1118,7 +1126,7 @@ ChoreoBS has two namespaces:
   be written as an identifier at all.
 
 There is one value namespace rather than three because the generated code has
-one. BlueScript keeps the source name (spec [§13.6](#codegen-function-names)), so a variable emitted
+one. BlueScript keeps the source name (spec [§13.7](#codegen-function-names)), so a variable emitted
 beside a function of the same name shadows it, and the call the program meant
 to make would reach the variable instead. This is the same reasoning that
 reserves the runtime names in spec [§6.2](#function-names), applied to the program's own names.
@@ -1184,13 +1192,13 @@ let aliceCount: integer@alice = alice2();
 
 #### Reserved Runtime Names <a id="reserved-runtime-names"></a>
 
-Generated BlueScript keeps the original ChoreoBS name (spec [§13.6](#codegen-function-names)), so a user
+Generated BlueScript keeps the original ChoreoBS name (spec [§13.7](#codegen-function-names)), so a user
 identifier that matches a name the generated code itself calls would capture
 that call. The following are therefore reserved in every one of the three
 positions:
 
 * `nothing` — the compiler-generated placeholder helper (spec [§14.1](#nothing));
-* every communication and clone API name (spec [§13.12](#communication-api)). These are
+* every communication and clone API name (spec [§13.13](#communication-api)). These are
   `sendInteger`, `receiveInteger` and `broadcastInteger`, and the corresponding
   names for `Float`, `Boolean`, `String`, `Null`, `IntegerArray`, `FloatArray`
   and `BooleanArray`; plus the three clone helpers, which exist for the array
@@ -1480,13 +1488,13 @@ return type, never as a variable type, a parameter type, a transfer destination,
 or an array element type (spec [§16.44](#invalid-use-of-void)).
 
 ```ts
-function f@alice(): void {
+function f(): void {
     return;
 }
 ```
 
-After EPP — a `void` return type is kept at every endpoint, because there is no
-value that could be absent at one of them (spec [§12.3](#type-projection)):
+After EPP, at every endpoint — a `void` return type is kept everywhere, because
+there is no value that could be absent at one of them (spec [§12.3](#type-projection)):
 
 ```ts
 function f(): void {
@@ -1548,7 +1556,8 @@ let f2: float@dyn = valAlice as float;   // valid
 
 ### 7.6 Location Matching and Residency <a id="location-matching-and-residency"></a>
 
-Two distinct relations on concrete locations are used in this specification. They
+Two distinct relations on locations are used in this specification: matching,
+on concrete locations, and residency, on every location, `dyn` included. They
 must not be confused. A third, location consistency, extends matching to `dyn`
 (spec [§7.7](#location-consistency-and-join)).
 
@@ -1694,9 +1703,9 @@ where `q` is a concrete location.
   variable bound to `q`, so an array keeps its identity.
 * `cast<q>` makes a dynamically located value statically located. It binds the
   value's location variable to `q`, or checks that it is already bound there —
-  a location error otherwise (spec [§7.9](#dynamic-operations)) — and then yields the payload. It
-  binds an unbound value as well as checking a bound one. An endpoint that does
-  not own the value at `q` gets `null`, even if it holds a copy of the payload.
+  a location error otherwise (spec [§7.9](#dynamic-operations)) — and then yields the payload. An
+  endpoint that does not own the value at `q` gets `null`, even if it holds a
+  copy of the payload.
 
 A coercion changes only the location. It never changes the base type: `integer`
 and `float` meet only through an explicit `as` (spec [§7.15](#numeric-conversion)).
@@ -1712,7 +1721,8 @@ Coercions are inserted at:
   type — at `dyn` when the operation is dynamic;
 * each element of an array literal, towards the element type at the array's
   location;
-* the source of a transfer (spec [§11.5](#dynamic-transfer)).
+* the source of a dynamic transfer, towards `T@dyn`, and its result, towards a
+  concrete destination (spec [§11.5](#dynamic-transfer)).
 
 Where the join of a binary operation or an array operation is `dyn`, each static
 operand is injected, `coerce(e → T@dyn)`.
@@ -1754,8 +1764,10 @@ The compiler represents `inj<q>` and `cast<q>` as calls of the runtime functions
 
 An operation is **dynamic** when a `dyn` location takes part in it:
 
-* an operator or a numeric conversion whose operand is at `dyn`, or whose join
-  is `dyn` (spec [§7.7](#location-consistency-and-join));
+* an operator whose operand is at `dyn`, or whose join is `dyn`
+  (spec [§7.7](#location-consistency-and-join));
+* a numeric conversion of a `dyn` operand to the other numeric type. One to the
+  operand's own type changes nothing, and is dropped (spec [§7.15](#numeric-conversion));
 * an index access, element assignment, `.length` or push whose join is `dyn`;
 * a `dyn` literal or array literal (spec [§8.6](#dyn-literals), [§5.16](#array-literals));
 * an inject or a cast (spec [§7.8](#coercion));
@@ -1843,7 +1855,7 @@ The same applies to mutable arrays, by the same rule:
 ```ts
 let xs: float[]@every = [1.1, 2.2]@every;
 let ys: float[]@alice = xs;      // invalid
-let ys: float[]@alice <- xs;     // valid: local copy
+let ys2: float[]@alice <- xs;    // valid: local copy
 ```
 
 With `dyn` on either side, the locations are consistent, and the assignment is
@@ -1894,7 +1906,7 @@ types must be the same. Locations play no part in this rule.
 
 Every value type may be transferred: `integer`, `float`, `boolean`, `string`,
 `null`, and the array types. Each has its own entry in the communication API
-(spec [§13.12](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
+(spec [§13.13](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
 `null` transfer carries no data — it is a synchronisation signal — but it is an
 ordinary transfer in every other respect. `void` is not a value type at all and
 cannot appear on either side (spec [§7.3](#void), [§16.44](#invalid-use-of-void)).
@@ -1949,7 +1961,7 @@ so `integer` is not transferred as `float` there either:
 ```ts
 let valDyn1: integer@dyn = 4@dyn;
 let fb: float@bob <- valDyn1;            // invalid
-let fb: float@bob <- valDyn1 as float;   // valid
+let fb2: float@bob <- valDyn1 as float;  // valid
 ```
 
 #### Location Rule <a id="location-rule"></a>
@@ -2031,7 +2043,8 @@ This is a local copy at `alice`.
 
 ### 7.12 If Condition Typing <a id="if-condition-typing"></a>
 
-An `if` condition must be a `boolean` located at the current context's location.
+An `if` condition must be a `boolean` whose location is consistent (`~`) with the
+current context's location.
 
 Let the current context be `C`.
 
@@ -2363,8 +2376,8 @@ types `S` and `T`:
 | `L = dyn`, `S = float`, `T = integer` | `__dynFloatToInteger(e)` |
 | `L = dyn`, `S = T` | nothing: `e` itself |
 
-A conversion of a `dyn` operand is a dynamic operation, performed at every
-endpoint (spec [§7.9](#dynamic-operations)). Only the endpoints that hold the payload convert it; the
+A conversion of a `dyn` operand to the other numeric type is a dynamic
+operation, performed at every endpoint (spec [§7.9](#dynamic-operations)). Only the endpoints that hold the payload convert it; the
 result shares the operand's location variable. A same-type conversion of a `dyn`
 operand changes nothing, since the payload is already in its type's
 representation, so it is dropped altogether.
@@ -2419,7 +2432,7 @@ let xs: float[]@alice = [1, 2]@alice;
 let xs: float[]@alice = [1.0, 2.0]@alice;
 ```
 
-The one initializer that does take its element type from the annotation is the empty array literal, which has no element type of its own.
+The one expression that does take its element type from the type it is checked against is the empty array literal, which has no element type of its own (see Array Literal Typing below).
 
 #### Array Literal Typing <a id="array-literal-typing"></a>
 
@@ -2460,7 +2473,24 @@ let ws = [1 as float, 2.5]@alice;         // `1` is 1@dyn: __cast(__dynIntegerTo
 To keep such an element static, write its location, as in `zs`, or write `1.0`.
 In strict mode `ws` is an error (spec [§8.3](#strict-mode)).
 
-An empty array literal cannot infer its element type. It is allowed only when checked against an explicit array type, which supplies the element type. The literal keeps its own location — `dyn` when it has no annotation — and is checked against the declared location like any initializer.
+An empty array literal cannot infer its element type. It is allowed only where it
+is checked against an explicit array type, which supplies the element type:
+
+* the initializer of a `let`, or of a `for` initializer `let`, annotated with an
+  array type;
+* the right-hand side of an assignment to an array variable;
+* an argument, towards its parameter's type;
+* the value of a `return` in a function whose return type is written, if only as
+  its base type (spec [§7.19.4](#function-return-type-inference));
+* the source of a transfer, towards the destination's type.
+
+Where no array type is expected of it — the initializer of an unannotated `let`,
+a `return` in a function whose return type is omitted altogether, an expression
+statement, the receiver of an index — nothing supplies its element type, and it
+is an error (spec [§16.34](#cannot-infer-empty-array-element-type)). Parentheses around the literal make no difference.
+
+The literal keeps its own location — `dyn` when it has no annotation — and is
+checked against the expected location like any other value.
 
 Allowed:
 
@@ -2468,13 +2498,37 @@ Allowed:
 let xs: integer[]@alice = []@alice;
 let ys: integer[]@alice = [];        // [] is integer[]@dyn, cast to alice
 let zs: float[]@dyn = [];            // built as an empty float array (spec §dyn-lowering)
+
+let fs: float[]@alice = [1.5]@alice;
+fs = []@alice;
+fs = [];                             // __cast(__dynArrayNew("floatArray"), "alice")
+
+function count@alice(bs: boolean[]@alice): integer@alice {
+    return bs.length;
+}
+let n: integer@alice = count([]@alice);
+
+function none(): float[] {           // returns float[]@alice
+    return []@alice;
+}
+
+let gs: float[]@bob <- []@alice;
 ```
+
+In strict mode `ys`, `zs` and the second assignment to `fs` are errors, since
+their `[]` has no location (spec [§8.3](#strict-mode)).
 
 Disallowed:
 
 ```ts
 let xs = []@alice;
 let ys: integer[]@alice = []@bob;
+
+function f@alice() {
+    return []@alice;
+}
+[]@alice;
+let x: integer@alice = []@alice[0@alice];
 ```
 
 #### Index Access <a id="index-access"></a>
@@ -2569,8 +2623,9 @@ xs.push(1@alice);            // valid
 let n = xs.push(1@alice);    // invalid (spec §invalid-use-of-void)
 ```
 
-Internally the result still travels with the array's location — `L ⊔ M` — which
-is what decides the endpoints that perform the append (spec [§12.16](#array-projection)). A
+Internally the result still travels with the join of the array's and the
+value's locations, `L ⊔ M`, which is what decides the endpoints that perform the
+append (spec [§12.16](#array-projection)). A
 dynamic push is performed at every endpoint and dispatched at run time.
 
 In this rule, `T` must be `integer`, `float`, or `boolean`.
@@ -2972,8 +3027,8 @@ function boo(flag: boolean@every) {    // returns integer@dyn
 }
 ```
 
-A local function holds no `dyn` (spec [§8.4](#local-function-strict-location-rule)), so there two different locations
-among the returns are always an error.
+A local function holds no `dyn` (spec [§8.4](#local-function-strict-location-rule)), so in a local function two different
+locations among the returns are always an error.
 
 Example:
 
@@ -3033,7 +3088,7 @@ The compiler may reject programs whose totality is not proven by this conservati
 
 Function parameter types are not inferred in ChoreoBS v1. A parameter must
 always write its base type; only its location may be left out, in a choreography
-function, where it is then `dyn` (spec [§8.2](#omitted-locations)).
+function, where it is then `dyn` (spec [§8.2](#omitted-locations)), or an error in strict mode (spec [§8.3](#strict-mode)).
 
 Disallowed:
 
@@ -3162,8 +3217,6 @@ determine it, it is `dyn`:
 
 * a literal without a location annotation (spec [§5.15](#located-literals));
 * a parameter type without a location, in a choreography function;
-* a variable whose initializer determines no location — which is the case exactly
-  when the initializer is itself at `dyn`;
 * the destination of a transfer `let` written without a location
   (spec [§7.19.3](#transfer-let-does-not-infer-destination-type));
 * an array literal without an annotation, whose elements are not consulted
@@ -3171,13 +3224,17 @@ determine it, it is `dyn`:
 * a return type whose location the `return` statements do not determine
   (spec [§7.19.4](#function-return-type-inference)).
 
+A variable whose initializer is at `dyn` is at `dyn` as well, but by inference
+(spec [§7.19.1](#let-type-inference)), not by omission: the location is determined, and the variable is
+`dyn` in strict mode too.
+
 A function declaration's location is not the location of a value.
 `function f(...)` without one is a choreography function (spec [§10.1](#function-kinds)), never a
 `dyn` one.
 
 Some things cannot be omitted, in either mode:
 
-* any location inside a local function (spec [§8.4](#local-function-strict-location-rule));
+* any location inside a local function that nothing infers (spec [§8.4](#local-function-strict-location-rule));
 * the initializer of a `let`: an uninitialized `let` remains an error
   (spec [§16.6](#uninitialized-let)). Initialize a variable that every branch assigns with a
   `dyn` value, such as `let raw: float@dyn = 0.0@dyn;`; the initial value is
@@ -3224,7 +3281,7 @@ declares `a` at `dyn`, whatever its initializer.
 
 With `"implicitDyn": false` in `choreobs.json` (spec [§2.2](#choreobs-json)), an omitted location
 that simple inference does not determine is an error instead of `dyn`. Only a
-location written as `@dyn` is dynamic.
+location written as `@dyn`, or inferred from one, is dynamic.
 
 ```json
 {
@@ -3278,7 +3335,7 @@ Rules:
 - Values located at another individual location are not allowed inside local function bodies.
 - A transfer inside a local function has the function's own location on both sides, so it is always a local copy (spec [§11.4](#local-copy)). This follows from the rules above rather than being a separate restriction: the source must be an expression at `P`, and the destination must be a variable at `P`.
 - `dyn` is not allowed anywhere in a local function: not in a parameter type, the return type, a variable type, a literal or an array literal, nor as the location of any value evaluated in the body (spec [§16.5](#dyn-in-a-local-function)). Since `dyn ~ P` holds (spec [§7.7](#location-consistency-and-join)), the rules above would otherwise accept it.
-- No location may be omitted in a local function, in either mode (spec [§16.4](#location-omission-in-a-local-function)). This includes a return type written without its location, `function f@P(): integer`.
+- No location may be left to `dyn` in a local function, in either mode (spec [§16.4](#location-omission-in-a-local-function)): each one is written or inferred. An initialized `let` takes its location from its initializer (spec [§7.19.1](#let-type-inference)), a return type omitted altogether is inferred from the `return` statements (spec [§7.19.4](#function-return-type-inference)), and an unlocated literal element of an annotated array literal takes the literal's location (spec [§5.16](#array-literals)). A return type written without its location, `function f@P(): integer`, is an error: only a choreography function may leave the location of a written return type to its `return` statements (spec [§7.19.4](#function-return-type-inference)).
 
 `dyn` is excluded because a local function runs at one endpoint only. A dynamic
 operation in its body would be performed at that endpoint alone, and the
@@ -3533,7 +3590,7 @@ is never removed: it creates a location variable at every endpoint
 
 After EPP, expressions unrelated to the current endpoint may be transformed into `nothing(...)` or `null`.
 
-These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in [Section 13.13](#projected-ast-cleanup).
+These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in [Section 13.14](#projected-ast-cleanup).
 
 `xs.push(v);` is an expression statement like any other. Its expression is a
 void computation (spec [§7.2](#located-types), [§7.16](#array-typing)), so this is the only position it may
@@ -3580,7 +3637,7 @@ function f(...) {
 - May call choreography functions and local functions (spec [§10.2](#calling-local-from-choreography)).
 - Allows return type inference.
 - Recursion, direct or mutual, is not supported in v1 (spec [§10.4](#recursion)).
-- Its parameters and return type may be at `dyn`, written or omitted (spec [§8.2](#omitted-locations)).
+- Its parameters and return type may be at `dyn`: written, or, outside strict mode, through an omission that nothing infers (spec [§8.2](#omitted-locations), [§8.3](#strict-mode)).
 
 A location on a function declaration names the one endpoint that runs the
 function, so it always declares a local function and must be an individual
@@ -3616,7 +3673,7 @@ function f@alice(...) {
 
 ### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
-A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec [§12.12](#function-projection)). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec [§13.13](#projected-ast-cleanup)).
+A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec [§12.12](#function-projection)). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec [§13.14](#projected-ast-cleanup)).
 
 ```ts
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
@@ -3941,7 +3998,7 @@ transfer declaration or the `=` of a transfer assignment.
 * `kind(T)` is the payload kind of the destination base type, one of the eight
   names of the communication API: `"integer"`, `"float"`, `"boolean"`,
   `"string"`, `"null"`, `"integerArray"`, `"floatArray"` and `"booleanArray"`
-  (spec [§13.12](#communication-api)). A receiver has no payload to look at, so the kind cannot be
+  (spec [§13.13](#communication-api)). A receiver has no payload to look at, so the kind cannot be
   read off the value: the compiler passes it, just as it picks the API by the
   destination type for a static transfer. The source has the same base type
   (spec [§7.11](#transfer-typing)), so the sender and the receivers choose the same API.
@@ -4135,7 +4192,7 @@ whatever its elements are:
 * `ei'` is `coerce(ei → T@dyn)`. An unlocated literal element is `c@dyn` and
   becomes `__dynUnbound(c)`; a static element is injected.
 * `kind` is the kind of the array type: `"integerArray"`, `"floatArray"` or
-  `"booleanArray"`. An empty literal takes its element type from the annotation
+  `"booleanArray"`. An empty literal takes its element type from the array type
   it is checked against (spec [§7.16](#array-typing)). The runtime type of the array is always
   fixed here, by `__dynArrayNew`, so it never depends on how `any` would treat an
   array literal's elements.
@@ -4252,13 +4309,14 @@ residency is beside the point — the source of a transfer at every endpoint
 that is not its sender ([§12.10](#transfer-projection)).
 
 A statement that discards a single expression keeps that expression's
-projection as it stands. `nothing(...)` appears only where two or more
-expressions have to be held in one slot (spec [§12.11](#assignment-projection)),
-or where a form has no operands left to hold — `xs.length`, and a call to an
-absent function with no arguments.
+projection as it stands, which may itself be one of the `nothing(...)` forms
+above. A statement adds a `nothing(...)` of its own only where two or more
+expressions have to be held in one slot (spec [§12.11](#assignment-projection)). A form with no
+operands left to hold — `xs.length`, `[]`, and a call to an absent function with
+no arguments — leaves `nothing()`.
 
 A call whose callee `P` does generate is kept as a call, not wrapped: the
-projected callee returns `null` at `P` (spec [§12.3](#type-projection)), so the call already stands
+projected callee returns `null` at `P` (spec [§12.3](#type-projection), [§13.12](#absent-finalization)), so the call already stands
 in for the absent value wherever one is needed. A call of a runtime function
 (spec [§12.2](#dyn-lowering)) is always of this kind, since every endpoint generates the callee.
 Where its result is at an individual location that `P` is not — `__cast(v, "alice")`
@@ -4266,7 +4324,7 @@ at `bob` — the runtime itself returns `null` (spec [§14.9](#inject-and-cast))
 not generate — a local function at another endpoint — disappears, but its
 arguments do not: they are ordinary expressions that may contain choreography
 calls of their own. With no arguments that leaves `nothing()`, which cleanup
-removes (spec [§13.13](#projected-ast-cleanup)).
+removes (spec [§13.14](#projected-ast-cleanup)).
 
 The binary row covers `&&` and `||` as well. They do not short-circuit
 (spec [§5.17](#evaluation-order)), so hoisting both operands into one `nothing(...)` runs
@@ -4275,7 +4333,7 @@ exactly what the original runs.
 `.length` drops its receiver where `xs[i]` keeps its own, because the two are
 not the same kind of operand. The receiver of `.length` must be a variable
 (spec [§5.14](#expressions)), so reading it cannot call anything and there is nothing to
-preserve; that leaves `nothing()`, which cleanup removes (spec [§13.13](#projected-ast-cleanup)). The
+preserve; that leaves `nothing()`, which cleanup removes (spec [§13.14](#projected-ast-cleanup)). The
 receiver of `[]` is an arbitrary expression — `f()[i]` is well-formed — and may
 hold a choreography call, so it is reproduced like any other operand.
 
@@ -4288,7 +4346,7 @@ statement rule [§12.11](#assignment-projection) states. It drops its receiver f
 the same reason `.length` does.
 
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
-v1 (spec [§13.13](#projected-ast-cleanup), [§17.7](#future-cleanup-optimizations)).
+v1 (spec [§13.14](#projected-ast-cleanup), [§17.7](#future-cleanup-optimizations)).
 
 #### Why the Operands Are Enough <a id="why-the-operands-are-enough"></a>
 
@@ -4311,7 +4369,7 @@ so the rules below hold throughout:
 So a `nothing(...)` built this way holds only `absent` leaves and calls `P`
 must make. Nothing resident is discarded, and cleanup's deliberately blunt rule
 — fold only when every argument is syntactically `null` — loses nothing
-(spec [§13.13](#projected-ast-cleanup)).
+(spec [§13.14](#projected-ast-cleanup)).
 
 A transfer is the one place a location boundary is crossed on purpose, so its
 source needs the rule stated separately; see [§12.10](#transfer-projection).
@@ -4327,7 +4385,7 @@ location variables, and every endpoint has to add the same constraints in the sa
 order (spec [§3.5](#dyn)). Were `bob` to drop `__cast(valDyn, "alice")` because its result
 is at `alice`, `bob` would not bind `valDyn`'s class to `alice`, and the endpoints'
 location dispatch would diverge from there on. So `nothing(__cast(valDyn, "alice"))`
-and even a bare `__dynUnbound(3);` stay (spec [§13.13.6](#what-this-cleanup-pass-must-not-remove)).
+and even a bare `__dynUnbound(3);` stay (spec [§13.14.6](#what-this-cleanup-pass-must-not-remove)).
 
 ```ts
 function relay(a: integer@alice): integer@alice {
@@ -4408,7 +4466,7 @@ choose(c);
 ```
 
 When such a statement holds nothing `P` must run, it simplifies to `null` and
-disappears entirely (spec [§13.13](#projected-ast-cleanup)).
+disappears entirely (spec [§13.14](#projected-ast-cleanup)).
 
 #### Positions With No Room for a Statement <a id="positions-with-no-room-for-a-statement"></a>
 
@@ -4459,13 +4517,13 @@ runs against the matching send. Projecting the argument `get3()` to a bare
 * It is distinct from source-level `null`.
 * It is never emitted to final BlueScript output.
 * It is turned into `null` by absent finalization, a stage of its own that runs
-  after EPP and before cleanup (spec [§13.11](#absent-finalization)).
+  after EPP and before cleanup (spec [§13.12](#absent-finalization)).
 
 `absent` and the compiler-generated `nothing(...)` (spec [§14.1](#nothing)) are different
 artifacts and are kept apart. `absent` marks a value that does not exist here;
 `nothing(...)` preserves computations whose result is discarded. EPP produces
 both, finalization rewrites the first, and cleanup folds the second
-(spec [§13.13](#projected-ast-cleanup)).
+(spec [§13.14](#projected-ast-cleanup)).
 
 ### 12.6 Literal Projection <a id="literal-projection"></a>
 
@@ -4551,8 +4609,8 @@ discard_P(e1 op e2) = nothing(discard_P(e1), discard_P(e2))
 discard_P(op e)     = nothing(discard_P(e))
 ```
 
-EPP at `bob` — both operands are literals there, so the statement simplifies to
-`null` and disappears (spec [§13.13](#projected-ast-cleanup)):
+EPP at `bob` — both operands are variables absent there, so the statement simplifies to
+`null` and disappears (spec [§13.14](#projected-ast-cleanup)):
 
 ```ts
 // removed
@@ -4666,10 +4724,6 @@ let c: boolean = false;
 let d: boolean = __and(c, ping());
 ```
 
-With a `dyn` operand, `&&` and `||` are the runtime calls `__dynAnd` and `__dynOr`
-(spec [§12.2](#dyn-lowering)) rather than `__and` and `__or`. They take both operands' values as
-arguments, so they do not short-circuit either.
-
 EPP at `bob` — the binding is absent, but `ping()` still runs, so `bob` takes
 part in the communication inside it:
 
@@ -4677,14 +4731,19 @@ part in the communication inside it:
 nothing(null, ping());
 ```
 
+With a `dyn` operand, `&&` and `||` are the runtime calls `__dynAnd` and `__dynOr`
+(spec [§12.2](#dyn-lowering)) rather than `__and` and `__or`. They take both operands' values as
+arguments, so they do not short-circuit either.
+
 #### Numeric Conversion Projection <a id="numeric-conversion-projection"></a>
 
 A static conversion is kept, as BlueScript's `as`, where its result resides.
 Where it does not, nothing of the conversion is emitted — not even the
 `nothing(...)` a unary operator leaves. Like parentheses, a conversion
 contributes nothing of its own, so only the operand's evaluation remains
-(spec [§12.4](#expression-projection)). A conversion of a `dyn` operand is a runtime call instead
-(spec [§7.15](#numeric-conversion)), projected alike at every endpoint.
+(spec [§12.4](#expression-projection)). A conversion of a `dyn` operand to the other numeric type
+is a runtime call instead, projected alike at every endpoint, and one to its own
+type is dropped (spec [§7.15](#numeric-conversion)).
 
 ```text
 project_P(e as T : T@L) =
@@ -4810,7 +4869,7 @@ endpoint, because the name has to stay declared for the rest of the header
 (spec [§12.15](#for-projection)).
 
 EPP at `bob` — the initializer is a literal, so the statement simplifies to
-`null` and disappears (spec [§13.13](#projected-ast-cleanup)):
+`null` and disappears (spec [§13.14](#projected-ast-cleanup)):
 
 ```ts
 // removed
@@ -4914,7 +4973,7 @@ altogether.
 
 Where `discard_P` of the source yields `null` — that is, where the source holds
 no call this endpoint has to make — the statement disappears in cleanup
-(spec [§13.13](#projected-ast-cleanup)), which is why the ordinary cases below
+(spec [§13.14](#projected-ast-cleanup)), which is why the ordinary cases below
 show no extra statement. A bare identifier or literal source is the common
 case: it discards to `absent`, and so to `null`.
 
@@ -5125,6 +5184,14 @@ and elsewhere only the argument's evaluation is left behind (spec [§12.16](#arr
 project_P(xs.push(v);) = nothing(discard_P(v));
 ```
 
+The receiver is dropped in both rules for the same reason, and in `xs.length`
+for that reason too (spec [§12.4](#expression-projection)). `xs` is a variable — the grammar admits
+nothing else as an assignment target or as the receiver of `.length` and
+`.push` (spec [§5.14](#expressions)) — so reading it cannot call anything, and there is no
+evaluation to preserve. Reproducing it would leave a `null` argument that
+carries no computation and that cleanup cannot fold away once a sibling
+argument holds one (spec [§13.14.2](#expression-simplification)).
+
 An element assignment or a push whose join is `dyn` is not an assignment at all by
 the time EPP sees it, but the `void` runtime call `__dynArraySet(xs, i, v)` or
 `__dynArrayPush(xs, v)` (spec [§12.2](#dyn-lowering)), which every endpoint makes
@@ -5161,14 +5228,6 @@ valDyn = __dynUnbound(4);
 valDyn = __inject(null, "alice");
 __cast(__dynUnbound(5), "alice");
 ```
-
-The receiver is dropped in both rules for the same reason, and in `xs.length`
-for that reason too (spec [§12.4](#expression-projection)). `xs` is a variable — the grammar admits
-nothing else as an assignment target or as the receiver of `.length` and
-`.push` (spec [§5.14](#expressions)) — so reading it cannot call anything, and there is no
-evaluation to preserve. Reproducing it would leave a `null` argument that
-carries no computation and that cleanup cannot fold away once a sibling
-argument holds one (spec [§13.13.2](#expression-simplification)).
 
 ### 12.12 Function Projection <a id="function-projection"></a>
 
@@ -5225,7 +5284,7 @@ nothing(get3Mcu(), get4Mcu());
 ```
 
 With no arguments there is nothing left to evaluate, and `nothing()` is removed
-by cleanup (spec [§13.13](#projected-ast-cleanup)). A call names no location
+by cleanup (spec [§13.14](#projected-ast-cleanup)). A call names no location
 (spec [§7.17](#function-call-typing)), so this is an ordinary call to a
 `localFunction` declared at `mcu`, projected at `server`:
 
@@ -5427,7 +5486,7 @@ exist at this endpoint at all, and a header slot holds an expression, not the
 *statement* that [§12.11](#assignment-projection) would produce. The clause therefore keeps just
 `discard_P` of the expressions it evaluated — the same `nothing(...)` [§12.11](#assignment-projection)
 builds, sitting in the slot as an expression. Once that simplifies to `null`,
-the slot is **omitted** entirely (spec [§13.13](#projected-ast-cleanup)). The compiler must not emit an
+the slot is **omitted** entirely (spec [§13.14](#projected-ast-cleanup)). The compiler must not emit an
 assignment to a name that is absent here, nor `null[null] = null` for an absent
 array.
 
@@ -5515,7 +5574,7 @@ let n: integer = xs.length;
 EPP at `bob` — the array is absent there, so none of these operations is
 performed. Each statement keeps only the evaluation of its subexpressions
 (spec [§12.4](#expression-projection), [§12.11](#assignment-projection)), and since all of them are literals here, everything
-simplifies to `null` and disappears (spec [§13.13](#projected-ast-cleanup)):
+simplifies to `null` and disappears (spec [§13.14](#projected-ast-cleanup)):
 
 ```ts
 // all removed
@@ -5770,7 +5829,7 @@ ChoreoBS T[]@dyn   -> BlueScript __DynVal
 ```
 
 `__DynVal` is the class of the dynamic-location runtime (spec [§14.7](#dyn-val)), imported from
-the runtime file (spec [§13.8](#runtime-import)).
+the runtime file (spec [§13.9](#runtime-import)).
 
 ### 13.2 Location Annotation Removal <a id="location-annotation-removal"></a>
 
@@ -5788,8 +5847,9 @@ let x: integer = 1;
 
 A location does reach the output as data, in the arguments of runtime calls: the
 string literals `"alice"`, `"every"` and `"dyn"`, written as in the communication
-API (spec [§13.12](#communication-api)). An endpoint name is never `every` or `dyn`, and never begins
-with `__` (spec [§2.2](#choreobs-json)), so these strings cannot collide.
+API (spec [§13.13](#communication-api)). An endpoint name is an identifier other than `every` and `dyn`
+(spec [§2.2](#choreobs-json)), so it is never one of those two strings, nor the empty string that
+marks an unbound location variable (spec [§14.5](#location-variables)): these strings cannot collide.
 
 ### 13.3 Array Operation Code Generation <a id="array-operation-code-generation"></a>
 
@@ -5816,7 +5876,7 @@ e1 && e2  =>  __and(e1, e2)
 e1 || e2  =>  __or(e1, e2)
 ```
 
-They cannot be emitted unchanged, as the arithmetic operators are, because
+They cannot be emitted unchanged, as the binary arithmetic operators are, because
 BlueScript's `&&` and `||` short-circuit and ChoreoBS's do not
 (spec [§5.17](#evaluation-order)). A call evaluates both of its arguments, left to right, before
 the helper runs, which is exactly the evaluation ChoreoBS prescribes. The
@@ -5838,10 +5898,26 @@ A conversion the source already parenthesizes is not wrapped a second time:
 
 Only an endpoint that holds the value emits one (spec [§12.8](#binary-and-unary-operation-projection)); where the value
 is absent there is no `as` at all, so `null as T` is never emitted. A conversion
-of a `dyn` operand is a runtime call, whose own `as` runs only where the payload
-is held (spec [§14.11](#dyn-numeric-conversion)).
+of a `dyn` operand to the other numeric type is a runtime call, whose own `as`
+runs only where the payload is held (spec [§14.11](#dyn-numeric-conversion)).
 
-### 13.6 Function Names <a id="codegen-function-names"></a>
+### 13.6 Unary Minus Code Generation <a id="unary-minus-code-generation"></a>
+
+A projected unary minus is emitted in parentheses:
+
+```text
+-e  =>  (-e)
+```
+
+Written bare, `- -x` would come out as `--x`, which BlueScript reads as a
+decrement. The parentheses are added whatever surrounds the operator, even where
+the source already has them: `(-x)` is emitted as `((-x))`. `!` is emitted as
+written, since `!!c` means the same in BlueScript.
+
+A unary operator on a `dyn` operand is the runtime call `__dynNeg` or `__dynNot`
+instead (spec [§12.2](#dyn-lowering)).
+
+### 13.7 Function Names <a id="codegen-function-names"></a>
 
 Generated function names are the same as the original ChoreoBS function names.
 Because there is no renaming, the names the generated code relies on are
@@ -5857,10 +5933,10 @@ EPP at `alice`:
 function add(...)
 ```
 
-The runtime's names all begin with `__`, so no user function can share one
-(spec [§6.2](#function-names)).
+The dynamic-location runtime's names (spec [§14.4](#dyn-runtime)) all begin with `__`, so no user
+function can share one (spec [§6.2](#function-names)).
 
-### 13.7 Output File Naming <a id="output-file-naming"></a>
+### 13.8 Output File Naming <a id="output-file-naming"></a>
 
 Input:
 
@@ -5893,7 +5969,7 @@ __runtime_alice.bs
 __runtime_bob.bs
 ```
 
-### 13.8 Runtime Import <a id="runtime-import"></a>
+### 13.9 Runtime Import <a id="runtime-import"></a>
 
 An endpoint program that uses the dynamic-location runtime imports what it uses
 from its endpoint's runtime file, in one `import` at the top, followed by a blank
@@ -5916,15 +5992,15 @@ import { __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime
 
 The examples in this specification leave the `import` line out.
 
-### 13.9 Local Functions <a id="codegen-local-functions"></a>
+### 13.10 Local Functions <a id="codegen-local-functions"></a>
 
 A local function is emitted only for the corresponding endpoint.
 
-### 13.10 Choreography Functions <a id="codegen-choreography-functions"></a>
+### 13.11 Choreography Functions <a id="codegen-choreography-functions"></a>
 
 A choreography function is emitted for all endpoints.
 
-### 13.11 Absent Finalization <a id="absent-finalization"></a>
+### 13.12 Absent Finalization <a id="absent-finalization"></a>
 
 Absent finalization is a stage of its own, between endpoint projection and
 cleanup:
@@ -5970,9 +6046,9 @@ something to paper over with a `null`.
 
 After finalization the output contains no `absent`. The remaining `null;`
 statements and `nothing(...)` artifacts are removed where possible by the
-cleanup pass in [Section 13.13](#projected-ast-cleanup).
+cleanup pass in [Section 13.14](#projected-ast-cleanup).
 
-### 13.12 Communication API <a id="communication-api"></a>
+### 13.13 Communication API <a id="communication-api"></a>
 
 The generated BlueScript code uses type-specific communication APIs.
 
@@ -6042,15 +6118,15 @@ cloneFloatArray(value: float[]): float[];
 cloneBooleanArray(value: boolean[]): boolean[];
 ```
 
-### 13.13 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
+### 13.14 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
 
-After absent finalization (spec [§13.11](#absent-finalization)) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
+After absent finalization (spec [§13.12](#absent-finalization)) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
 
 The purpose of this pass is to remove or simplify compiler-generated artifacts such as unnecessary `null` statements and `nothing(...)` expressions.
 
 This cleanup pass must operate on the projected AST or projected IR. It must not be implemented as string-based post-processing over generated BlueScript code.
 
-#### 13.13.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
+#### 13.14.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
 
 Cleanup is one pass in post order: every subexpression is simplified before its
 parent is considered, and statements are handled after their expressions.
@@ -6072,9 +6148,9 @@ slot is visited, including ones that are easy to overlook: the index of an
 array element assignment target, and the initializer, condition and update of a
 `for` header.
 
-An `absent` reaching this pass is an internal error (spec [§13.11](#absent-finalization)).
+An `absent` reaching this pass is an internal error (spec [§13.12](#absent-finalization)).
 
-#### 13.13.2 Expression Simplification <a id="expression-simplification"></a>
+#### 13.14.2 Expression Simplification <a id="expression-simplification"></a>
 
 The only rule is:
 
@@ -6086,7 +6162,8 @@ nothing()                => null
 It applies only when, after recursively simplifying all arguments, every
 argument of `nothing(...)` is exactly `null`. The zero-argument case is included:
 it arises when a call to a local function with no parameters is projected to an
-endpoint that does not generate that function (spec [§12.12](#function-projection)).
+endpoint that does not generate that function (spec [§12.12](#function-projection)), and where `xs.length`
+or `[]` is discarded (spec [§12.4](#expression-projection)).
 
 Examples:
 
@@ -6124,7 +6201,7 @@ nothing(nothing(null), null, null)
 => null
 ```
 
-#### 13.13.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
+#### 13.14.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
 
 ChoreoBS v1 does not rewrite
 
@@ -6143,7 +6220,7 @@ boundaries, which keeps EPP a plain structural recursion. Run-time location
 checks live in runtime calls (spec [§12.2](#dyn-lowering)), which are never inside a `nothing(...)`
 that cleanup could fold. Flattening is listed under [§17.7](#future-cleanup-optimizations).
 
-#### 13.13.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
+#### 13.14.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
 
 Expression simplification must also be applied recursively inside ordinary function call arguments.
 
@@ -6161,7 +6238,7 @@ foo(null, null)
 
 The function call itself must not be removed by this cleanup rule.
 
-#### 13.13.5 Statement Cleanup <a id="statement-cleanup"></a>
+#### 13.14.5 Statement Cleanup <a id="statement-cleanup"></a>
 
 After expression simplification, the compiler removes expression statements
 whose expression is exactly `null`, and only those.
@@ -6191,7 +6268,7 @@ x = null;
 f(null);
 ```
 
-#### 13.13.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
+#### 13.14.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
 
 This cleanup pass is intentionally conservative.
 
@@ -6234,7 +6311,7 @@ creates, unifies or binds location variables, which every endpoint must do alike
 __dynUnbound(3);
 __cast(__dynUnbound(3), "alice");
 nothing(__cast(d, "alice"));
-__dynTransfer("__top_2", "integer", "bob", valDyn1);
+__cast(__dynTransfer("__top_2", "integer", "bob", valDyn1), "bob");
 ```
 
 It must not remove assignments, loops, conditionals, or function declarations merely because they contain `null` values.
@@ -6248,7 +6325,7 @@ them without revisiting [§12.4](#expression-projection):
 * general dead-code elimination;
 * removal of ordinary function calls.
 
-#### 13.13.7 Source-Level `null` <a id="source-level-null"></a>
+#### 13.14.7 Source-Level `null` <a id="source-level-null"></a>
 
 A `null` that came from a source-level `null` literal and a `null` produced by
 absent finalization are the same node by the time cleanup runs, and are treated
@@ -6263,7 +6340,7 @@ The generated code relies on two groups of functions:
 
 * supplied from outside, for every program, with or without `dyn`: `nothing`
   ([§14.1](#nothing)), `__and` and `__or` ([§14.3](#and-or-helpers)), and the communication API and clone
-  helpers (spec [§13.12](#communication-api));
+  helpers (spec [§13.13](#communication-api));
 * generated by the compiler, for a program that uses `dyn` only: the
   dynamic-location runtime ([§14.4](#dyn-runtime)–[§14.13](#dyn-array-operations)).
 
@@ -6297,12 +6374,12 @@ return null;
 The compiler must distinguish this artifact from an ordinary call, including
 from a user-defined function that happens to be named `nothing`. In the
 projected IR it is a node of its own; only that node is subject to the
-simplification rule in [§13.13](#projected-ast-cleanup).
+simplification rule in [§13.14](#projected-ast-cleanup).
 
 The BlueScript backend may choose a concrete implementation depending on what
 BlueScript supports. If rest parameters are unavailable, it may emit
 fixed-arity helpers instead. Whatever it emits, the artifacts that can be
-removed are removed first (spec [§13.13](#projected-ast-cleanup)).
+removed are removed first (spec [§13.14](#projected-ast-cleanup)).
 
 ### 14.2 Where It Appears <a id="nothing-where-it-appears"></a>
 
@@ -6310,8 +6387,10 @@ removed are removed first (spec [§13.13](#projected-ast-cleanup)).
 this endpoint does not perform — in a statement, in a call argument, in a
 `return` value, or in a `for` header slot.
 
-It does *not* wrap a call that the endpoint does make: the projected callee
-already returns `null` there, so the call stands on its own (spec [§12.4](#expression-projection)).
+It is never added for a call that the endpoint does make: the projected callee
+already returns `null` there, so the call stands on its own (spec [§12.4](#expression-projection)). Such a
+call appears inside `nothing(...)` only as an operand of an operation this
+endpoint does not perform, as in `nothing(relay(null))` for `-relay(x)`.
 
 ### 14.3 `__and` and `__or` <a id="and-or-helpers"></a>
 
@@ -6328,7 +6407,7 @@ Unlike `nothing(...)`, they are ordinary calls. Their arguments are evaluated
 left to right, both before the helper runs, as for any call
 (spec [§5.17](#evaluation-order)); the helper itself only combines the two values, and has no
 effect of its own. They produce a value that the program uses, so cleanup
-never touches them (spec [§13.13](#projected-ast-cleanup)).
+never touches them (spec [§13.14](#projected-ast-cleanup)).
 
 Like `nothing`, they are supplied by the BlueScript runtime rather than
 generated into each endpoint program.
@@ -6343,12 +6422,12 @@ the dynamic operations (spec [§7.9](#dynamic-operations)). The compiler writes 
 * Every endpoint's copy is the same, apart from the constant `__here`
   ([§14.8](#location-functions)) and the comment naming the endpoint at the top of the file.
 * Every function and constant the generated code uses is exported, and imported
-  by name (spec [§13.8](#runtime-import)).
+  by name (spec [§13.9](#runtime-import)).
 * Every name in it begins with `__`, the internal helpers included (`__root`,
   `__copyPayload`, `__sendAny`, …), so that nothing depends on how BlueScript
   scopes a module's names (spec [§6.2](#function-names)).
 * It calls the communication API and the clone helpers, which are supplied from
-  outside like everywhere else (spec [§13.12](#communication-api)).
+  outside like everywhere else (spec [§13.13](#communication-api)).
 
 The following sections give its content, in the order it appears in the file.
 The runtime assumes some BlueScript behaviour that has not yet been verified;
@@ -6628,8 +6707,10 @@ generated for it (spec [§12.2](#dyn-lowering)).
 
 ### 14.12 Dynamic Transfer Runtime <a id="dyn-transfer-runtime"></a>
 
-A dynamic transfer (spec [§11.5](#dynamic-transfer)) is performed by `__dynTransfer`, with three
-helpers that choose the communication API from the kind the compiler passes:
+A dynamic transfer (spec [§11.5](#dynamic-transfer)) is performed by `__dynTransfer`, with four
+helpers that dispatch on the kind the compiler passes: `__copyPayload` chooses the
+clone helper, and `__sendAny`, `__receiveAny` and `__broadcastAny` choose the
+communication API (the last is described after the code):
 
 ```ts
 function __copyPayload(kind: string, v: any): any {
@@ -6688,7 +6769,7 @@ function __receiveAny(from: string, tag: string, kind: string): any {
 
 `__broadcastAny(tag, kind, v)` dispatches to `broadcastInteger(tag, v)` and the
 other broadcast functions in the same way. Every kind is named: as in the
-communication API itself (spec [§13.12](#communication-api)), there is no default.
+communication API itself (spec [§13.13](#communication-api)), there is no default.
 
 ```ts
 export function __dynTransfer(tag: string, kind: string, to: string, v: __DynVal): __DynVal {
@@ -6865,11 +6946,10 @@ EPP at `alice` before cleanup:
 let localOk: boolean = true;
 broadcastBoolean("__top_0", localOk);
 let ok: boolean = localOk;
-
 if (ok) {
-    null;
+  null;
 } else {
-    null;
+  null;
 }
 ```
 
@@ -6877,7 +6957,7 @@ Each branch declares a variable at `bob`, so `alice` keeps only the
 initializer's evaluation (spec [§12.9](#let-projection)). That is a single
 expression, and a single discarded expression takes no `nothing(...)` wrapper
 (spec [§12.4](#expression-projection)); the literal projects to `absent`, which
-finalization turns into `null` (spec [§13.11](#absent-finalization)).
+finalization turns into `null` (spec [§13.12](#absent-finalization)).
 
 EPP at `alice` after cleanup:
 
@@ -6885,7 +6965,6 @@ EPP at `alice` after cleanup:
 let localOk: boolean = true;
 broadcastBoolean("__top_0", localOk);
 let ok: boolean = localOk;
-
 if (ok) {
 } else {
 }
@@ -6895,11 +6974,10 @@ EPP at `bob`:
 
 ```ts
 let ok: boolean = receiveBoolean("alice", "__top_0");
-
 if (ok) {
-    let msg: string = "ok";
+  let msg: string = "ok";
 } else {
-    let msg: string = "ng";
+  let msg: string = "ng";
 }
 ```
 
@@ -6923,9 +7001,8 @@ EPP at `alice`:
 
 ```ts
 function add(a: integer, b: integer): integer {
-    return a + b;
+  return a + b;
 }
-
 let x: integer = add(1, 2);
 ```
 
@@ -6958,13 +7035,12 @@ EPP at `alice`:
 
 ```ts
 function choose(c: boolean): integer {
-    if (c) {
-        return 1;
-    } else {
-        return 0;
-    }
+  if (c) {
+    return 1;
+  } else {
+    return 0;
+  }
 }
-
 let c: boolean = true;
 let x: integer = choose(c);
 ```
@@ -6973,13 +7049,12 @@ EPP at `bob`:
 
 ```ts
 function choose(c: boolean): null {
-    if (c) {
-        return null;
-    } else {
-        return null;
-    }
+  if (c) {
+    return null;
+  } else {
+    return null;
+  }
 }
-
 let c: boolean = true;
 choose(c);
 ```
@@ -7012,12 +7087,10 @@ EPP at `alice`:
 
 ```ts
 let cont: boolean = true;
-
 while (cont) {
-    let x: integer = 1;
-    sendInteger("bob", "__top_0", x);
-
-    cont = receiveBoolean("bob", "__top_1");
+  let x: integer = 1;
+  sendInteger("bob", "__top_0", x);
+  cont = receiveBoolean("bob", "__top_1");
 }
 ```
 
@@ -7025,13 +7098,11 @@ EPP at `bob`:
 
 ```ts
 let cont: boolean = true;
-
 while (cont) {
-    let y: integer = receiveInteger("alice", "__top_0");
-
-    let nextLocal: boolean = false;
-    broadcastBoolean("__top_1", nextLocal);
-    cont = nextLocal;
+  let y: integer = receiveInteger("alice", "__top_0");
+  let nextLocal: boolean = false;
+  broadcastBoolean("__top_1", nextLocal);
+  cont = nextLocal;
 }
 ```
 
@@ -7056,8 +7127,8 @@ EPP at `alice`:
 
 ```ts
 for (let i: integer = 0; i < 3; i = i + 1) {
-    let x: integer = i;
-    sendInteger("bob", "__top_0", x);
+  let x: integer = i;
+  sendInteger("bob", "__top_0", x);
 }
 ```
 
@@ -7065,7 +7136,7 @@ EPP at `bob`:
 
 ```ts
 for (let i: integer = 0; i < 3; i = i + 1) {
-    let y: integer = receiveInteger("alice", "__top_0");
+  let y: integer = receiveInteger("alice", "__top_0");
 }
 ```
 
@@ -7149,7 +7220,7 @@ foo(null, null);
 
 Ordinary function calls are not removed by the v1 cleanup pass, and neither are
 runtime calls: `nothing(__cast(valDyn, "alice"));` stays as it is
-(spec [§13.13.6](#what-this-cleanup-pass-must-not-remove)).
+(spec [§13.14.6](#what-this-cleanup-pass-must-not-remove)).
 
 ***
 
@@ -7165,8 +7236,8 @@ After cleanup:
 nothing(get3Mcu(), null);
 ```
 
-Unchanged — one argument is a call, so the rule of [§13.13.2](#expression-simplification) does not apply, and
-the nesting is not flattened either.
+Unchanged — one argument is a call, so the rule of [§13.14.2](#expression-simplification) does not apply, and
+its `null` argument is not dropped either.
 
 ***
 
@@ -7271,15 +7342,15 @@ function foo(a: __DynVal): void {
 }
 
 function boo(flag: boolean): __DynVal {
-    if (flag) {
-        return __inject(3, "alice");
-    } else {
-        return __inject(4, "every");
-    }
+  if (flag) {
+    return __inject(3, "alice");
+  } else {
+    return __inject(4, "every");
+  }
 }
 
 function bar(): integer {
-    return 3;
+  return 3;
 }
 __dynUnbound(3);
 let a: __DynVal = __dynUnbound(32);
@@ -7293,15 +7364,15 @@ function foo(a: __DynVal): void {
 }
 
 function boo(flag: boolean): __DynVal {
-    if (flag) {
-        return __inject(null, "alice");
-    } else {
-        return __inject(4, "every");
-    }
+  if (flag) {
+    return __inject(null, "alice");
+  } else {
+    return __inject(4, "every");
+  }
 }
 
 function bar(): null {
-    return null;
+  return null;
 }
 __dynUnbound(3);
 let a: __DynVal = __dynUnbound(32);
@@ -7338,11 +7409,11 @@ EPP at `alice`:
 
 ```ts
 function f(): __DynVal {
-    return __dynUnbound(3);
+  return __dynUnbound(3);
 }
 
 function g(): __DynVal {
-    return __dynUnbound(4);
+  return __dynUnbound(4);
 }
 let valDyn1: __DynVal = __dynUnbound(4);
 let valDyn2: __DynVal = __dynUnbound(5);
@@ -7363,11 +7434,11 @@ EPP at `bob`:
 
 ```ts
 function f(): __DynVal {
-    return __dynUnbound(3);
+  return __dynUnbound(3);
 }
 
 function g(): __DynVal {
-    return __dynUnbound(4);
+  return __dynUnbound(4);
 }
 let valDyn1: __DynVal = __dynUnbound(4);
 let valDyn2: __DynVal = __dynUnbound(5);
@@ -7442,9 +7513,12 @@ function f@alice(a: integer): integer@alice {   // no initializer to read
 ### 16.4 Location Omission in a Local Function <a id="location-omission-in-a-local-function"></a>
 
 A local function's own location does not supply a default. Parameter types,
-return types, and literals must all be annotated explicitly (spec [§8.1](#explicit-location-annotations)). An
-initialized `let` is the one exception, since it can read the location from its
-initializer (spec [§7.19.1](#let-type-inference)).
+written return types, and literals must all be annotated explicitly
+(spec [§8.1](#explicit-location-annotations)). The exceptions are the ones inference covers: an initialized `let`
+reads its location from its initializer (spec [§7.19.1](#let-type-inference)), a return type omitted
+altogether is inferred from the `return` statements (spec [§7.19.4](#function-return-type-inference)), and an
+unlocated literal element of an annotated array literal takes the literal's
+location (spec [§5.16](#array-literals)).
 
 ```ts
 function add@alice(a: integer, b: integer): integer {
@@ -8014,7 +8088,7 @@ Disallowed, in strict mode:
 let xs: integer[]@alice = [1, 2, 3];
 ```
 
-Disallowed for the same reason, although every element is located:
+Disallowed in strict mode for the same reason, although every element is located:
 
 ```ts
 let a: integer@alice = 1@alice;
@@ -8046,18 +8120,34 @@ let ys = [1@alice, 2@bob];
 
 ### 16.34 Cannot Infer Empty Array Element Type <a id="cannot-infer-empty-array-element-type"></a>
 
-An empty array literal cannot infer its element type.
+An empty array literal cannot infer its element type. It is allowed only where
+it is checked against an explicit array type, which supplies the element type
+(spec [§7.16](#array-typing)); anywhere else it is an error.
 
 Disallowed:
 
 ```ts
 let xs = []@alice;
+
+function f@alice() {        // the return type is omitted altogether
+    return []@alice;
+}
+
+[]@alice;
+let x: integer@alice = []@alice[0@alice];
 ```
 
 Allowed:
 
 ```ts
 let xs: integer[]@alice = []@alice;
+
+function g@alice(): float[]@alice {
+    return []@alice;
+}
+
+let fs: float[]@alice = [1.5]@alice;
+fs = []@alice;
 ```
 
 ### 16.35 Array Type Invariance <a id="array-type-invariance"></a>
@@ -8135,8 +8225,9 @@ let x: integer@alice = xs[i];
 ### 16.40 Element Assignment Across Locations <a id="element-assignment-across-locations"></a>
 
 The array, the index and the value of an element assignment must be pairwise
-consistent (spec [§7.7](#location-consistency-and-join)): at most one concrete location among them. Each pair can
-be consistent through `dyn` while the three are not.
+consistent (spec [§7.7](#location-consistency-and-join)): at most one concrete location among them. With the
+array at `dyn`, the index and the value are each consistent with it, but not
+with each other.
 
 Disallowed:
 
@@ -8268,6 +8359,8 @@ function h@alice(): void {
 rejected in the same positions for the same reason:
 
 ```ts
+function f@alice(a: integer@alice): void { return; }
+
 let xs: integer[]@alice = []@alice;
 
 xs.push(1@alice);                        // valid — an expression statement
@@ -8715,7 +8808,7 @@ The following optimizations are not required in v1:
 * removal of empty loops;
 * side-effect analysis for ordinary function calls;
 * effect analysis that would let cleanup drop a call it can prove inert;
-* flattening nested `nothing(...)` (spec [§13.13.3](#nested-nothing-is-not-flattened)).
+* flattening nested `nothing(...)` (spec [§13.14.3](#nested-nothing-is-not-flattened)).
 
 ### 17.8 Unverified BlueScript Assumptions <a id="unverified-bluescript-assumptions"></a>
 
@@ -8735,7 +8828,9 @@ where it does not hold.
    as in `const a: integer[] = arr.payload;`.
 2. **Converting from `any` to a static type.** The generated code uses the
    `any` result of `__cast` where a static type is expected — in
-   `let x: integer = __cast(...)`, as a condition, and in `return __cast(...)`.
+   `let x: integer = __cast(...)`, on the right of an assignment, as a
+   condition, as a call argument, as an array literal element, and in
+   `return __cast(...)`.
    If `any` is not converted implicitly there, the compiler would emit
    BlueScript's `as T` on the result, `T` being the destination base type. The
    numeric conversion functions use `(v.payload as integer) as float` and the

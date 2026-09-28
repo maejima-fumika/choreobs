@@ -331,6 +331,17 @@ let cloneFloatArray: integer@alice = 1@alice;
     );
   });
 
+  it("leaves the names of scalar clones, which do not exist, to the program (spec §reserved-runtime-names)", () => {
+    const { typed, errors } = checkSource(`
+let cloneInteger: integer@alice = 1@alice;
+let cloneString: string@alice = "s"@alice;
+function cloneNull@alice(): void {
+  return;
+}
+`);
+    assert.notEqual(typed, null, JSON.stringify(errors));
+  });
+
   it("rejects a parameter named after a runtime support function (spec §function-names, §codegen-function-names)", () => {
     const { typed, errors } = checkSource(`
 function f@alice(broadcastNull: integer@alice): void {
@@ -1825,6 +1836,35 @@ let xs: float[]@alice = []@alice;
 `);
       assert.equal(errors.length, 0, JSON.stringify(errors));
       assert.ok(typed);
+    });
+
+    it("gives an empty array literal the element type of any array type it is checked against (spec §array-literal-typing)", () => {
+      for (const source of [
+        `let fs: float[]@alice = [1.0]@alice;\nfs = []@alice;`,
+        `let bs: boolean[]@every = [true]@every;\nfor (let i = 0@every; i < 1@every; bs = []@every) { i = i + 1@every; }`,
+        `function f@alice(xs: float[]@alice): void { return; }\nf([]@alice);`,
+        `function f@alice(): float[]@alice { return []@alice; }`,
+        `function f(): boolean[] { return []@alice; }\nlet bs: boolean[]@alice = f();`,
+        `let ys: float[]@bob <- []@alice;`,
+        `let ys: float[]@bob = [1.0]@bob;\nys <- []@alice;`,
+        `let fs: float[]@alice = ([]@alice);`,
+      ]) {
+        const { typed, errors } = checkSource(source);
+        assert.ok(typed, `${source}\n${JSON.stringify(errors)}`);
+      }
+    });
+
+    it("rejects an empty array literal that no array type is expected of (spec §cannot-infer-empty-array-element-type)", () => {
+      for (const source of [
+        `function f@alice() { return []@alice; }`,
+        `[]@alice;`,
+        `let x: integer@alice = []@alice[0@alice];`,
+        `let xs = ([]@alice);`,
+      ]) {
+        const { typed, errors } = checkSource(source);
+        assert.equal(typed, null, source);
+        assertCites(errors, "cannot-infer-empty-array-element-type");
+      }
     });
 
     it("accepts an array local copy from @every", () => {

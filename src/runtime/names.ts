@@ -83,8 +83,10 @@ export const RESERVED_RUNTIME_NAMES: ReadonlySet<string> = new Set<string>([
     sendFunction(comm),
     receiveFunction(comm),
     broadcastFunction(comm),
-    cloneFunction(comm),
   ]),
+  // Only arrays are ever cloned (spec §communication-api): there is no
+  // `cloneInteger`, so that name is left to the program (spec §reserved-runtime-names).
+  ...ALL_COMM_KINDS.filter((comm) => comm.endsWith("Array")).map(cloneFunction),
 ]);
 
 export function isReservedRuntimeName(name: string): boolean {

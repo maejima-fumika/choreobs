@@ -145,11 +145,43 @@ function functionLocationOf(decl: FunctionDeclaration): Location {
 }
 
 /**
- * `[]@L` — the one expression with no element type of its own, which is why an
- * annotation may supply it (spec §array-literal-typing, §cannot-infer-empty-array-element-type).
+ * `[]@L` — the one expression with no element type of its own, which is why the
+ * array type it is checked against supplies it (spec §array-literal-typing,
+ * §cannot-infer-empty-array-element-type). Parentheses do not hide it.
  */
 function isEmptyArrayLiteral(expr: TypedExpression["expr"]): boolean {
+  if (expr.kind === "ParenthesizedExpression") {
+    return isEmptyArrayLiteral(expr.expression);
+  }
   return expr.kind === "ArrayLiteralExpression" && expr.elements.length === 0;
+}
+
+/**
+ * `value` checked against `expected`: an empty array literal takes its element
+ * type from an expected array type (spec §array-literal-typing), and anything
+ * else is left as it is. The literal keeps its own location, which is checked
+ * like any other.
+ *
+ * The element type is what the literal will hold: a `dyn` one is built by
+ * `__dynArrayNew(kind)`, whose kind comes from here (spec §dyn-lowering).
+ */
+function withExpectedElementType(
+  value: TypedExpression,
+  expected: LocatedType,
+): TypedExpression {
+  if (expected.isArray !== true || !isEmptyArrayLiteral(value.expr)) {
+    return value;
+  }
+  const choreoType = locatedType(expected.base, value.choreoType.location, true);
+  if (value.expr.kind === "ParenthesizedExpression") {
+    const paren = value as TypedParenthesizedExpression;
+    return {
+      ...paren,
+      choreoType,
+      expression: withExpectedElementType(paren.expression, expected),
+    };
+  }
+  return { ...value, choreoType };
 }
 
 /**
@@ -716,9 +748,8 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): { readonly choreoType: LocatedType; readonly initializer: TypedExpression } {
     const initializer = this.checkExpression(binding.initializer, ctx);
-    if (binding.type === undefined && isEmptyArrayLiteral(binding.initializer)) {
-      this.error("cannot infer empty array element type", binding.span,
-        ["cannot-infer-empty-array-element-type"]);
+    if (binding.type === undefined) {
+      this.rejectEmptyArrayLiteral(binding.initializer, binding.span);
     }
     const resolved =
       binding.type !== undefined
@@ -744,6 +775,17 @@ class TypeChecker {
   ): LocatedType {
     this.requireValueExpression(initializer, span);
     return initializer.choreoType;
+  }
+
+  /**
+   * Rejects `[]` where no array type is expected of it, so that nothing would
+   * supply its element type (spec §array-literal-typing, §cannot-infer-empty-array-element-type).
+   */
+  private rejectEmptyArrayLiteral(expr: Expression, span: Span): void {
+    if (isEmptyArrayLiteral(expr)) {
+      this.error("cannot infer empty array element type", span,
+        ["cannot-infer-empty-array-element-type"]);
+    }
   }
 
   /** Rejects a void computation where a value is required (spec §located-types). */
@@ -783,21 +825,9 @@ class TypeChecker {
     // checked against the annotation below (spec §array-invariance):
     // `let xs: float[]@alice = [1, 2]@alice;` is a type error, because the
     // literal is `integer[]`.
-    //
-    // The empty literal takes the annotation's element type, so that it is
-    // typed as what it will hold: a `dyn` one is built by
-    // `__dynArrayNew(kind)`, whose kind comes from here (spec §array-literal-typing, §dyn-lowering).
-    // Its location is still its own and is checked like any other.
-    if (choreoType.isArray === true && isEmptyArrayLiteral(initializer.expr)) {
-      const typed: TypedExpression = {
-        ...initializer,
-        choreoType: locatedType(choreoType.base, initializer.choreoType.location, true),
-      };
-      this.validateAssignmentLike(choreoType, typed.choreoType, span);
-      return { choreoType, initializer: typed };
-    }
-    this.validateAssignmentLike(choreoType, initializer.choreoType, span);
-    return { choreoType, initializer };
+    const typed = withExpectedElementType(initializer, choreoType);
+    this.validateAssignmentLike(choreoType, typed.choreoType, span);
+    return { choreoType, initializer: typed };
   }
 
   private checkLetReceive(
@@ -820,7 +850,9 @@ class TypeChecker {
       stmt.type.span,
       "variable type",
     );
-    const source = this.checkExpression(stmt.source, ctx);
+    // The destination's type is written, so it supplies the element type of
+    // a `[]` source (spec §array-literal-typing).
+    const source = withExpectedElementType(this.checkExpression(stmt.source, ctx), choreoType);
     const transferMode = this.validateTransfer(choreoType, source.choreoType, stmt.span);
     this.defineLocal(stmt.name, choreoType, stmt.span);
     // The tag is assigned after checking, by `assignCommTags` (spec §communication-tags).
@@ -832,24 +864,28 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedAssignmentStatement {
     const value = this.checkExpression(stmt.value, ctx);
-    return { stmt, target: this.checkAssignmentTarget(stmt.target, value, ctx, stmt.span), value };
+    return { stmt, ...this.checkAssignmentTarget(stmt.target, value, ctx, stmt.span) };
   }
 
   /**
    * Checks an assignment target against the value being stored (spec §assignment-statement,
    * §assignment-typing, §array-typing). Shared by assignment statements and `for` header clauses,
    * which take the same target shapes (spec §for-statement).
+   *
+   * Returns the value as checked against the target: a `[]` stored in an
+   * array variable takes its element type from it (spec §array-literal-typing).
    */
   private checkAssignmentTarget(
     target: AssignmentTarget,
     value: TypedExpression,
     ctx: ExecutionContext,
     span: Span,
-  ): TypedAssignmentTarget {
+  ): { readonly target: TypedAssignmentTarget; readonly value: TypedExpression } {
     if (target.kind === "IdentifierAssignmentTarget") {
       const targetType = this.lookupVariable(target.name, span);
-      this.validateAssignmentLike(targetType, value.choreoType, span);
-      return { target, targetType };
+      const stored = withExpectedElementType(value, targetType);
+      this.validateAssignmentLike(targetType, stored.choreoType, span);
+      return { target: { target, targetType }, value: stored };
     }
     const arrayType = this.lookupVariable(target.name, span);
     if (!arrayType.isArray) {
@@ -880,7 +916,7 @@ class TypeChecker {
         ["array-typing", "element-assignment-across-locations"],
       );
     }
-    return { target, arrayType, index, elementType };
+    return { target: { target, arrayType, index, elementType }, value };
   }
 
   private checkComm(
@@ -888,7 +924,7 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedTransferStatement {
     const targetType = this.lookupVariable(stmt.name, stmt.span);
-    const source = this.checkExpression(stmt.source, ctx);
+    const source = withExpectedElementType(this.checkExpression(stmt.source, ctx), targetType);
     const transferMode = this.validateTransfer(targetType, source.choreoType, stmt.span);
     return { stmt, targetType, source, transferMode };
   }
@@ -959,8 +995,7 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedForAssignmentInit {
     const value = this.checkExpression(init.value, ctx);
-    const target = this.checkAssignmentTarget(init.target, value, ctx, init.span);
-    return { init, target, value };
+    return { init, ...this.checkAssignmentTarget(init.target, value, ctx, init.span) };
   }
 
   private checkForUpdate(
@@ -1003,6 +1038,12 @@ class TypeChecker {
       out.push({ kind: "void", span: stmt.span });
       return { stmt };
     }
+    // With the return type omitted altogether, nothing supplies a `[]`'s
+    // element type. A partial annotation writes the base, and the real pass
+    // checks against it (spec §partial-return-annotations).
+    if (this.currentFunction?.returnType === undefined) {
+      this.rejectEmptyArrayLiteral(stmt.value, stmt.span);
+    }
     const value = this.typeReturnValueExpression(stmt.value, ctx);
     out.push({ kind: "value", type: value.choreoType, span: stmt.span });
     return { stmt, value };
@@ -1036,9 +1077,9 @@ class TypeChecker {
         ["return-typing"],
       );
     }
-    const value = this.typeReturnValueExpression(
-      stmt.value,
-      ctx
+    const value = withExpectedElementType(
+      this.typeReturnValueExpression(stmt.value, ctx),
+      returnType,
     );
     this.validateReturnLike(returnType, value.choreoType, stmt.span);
     return { stmt, value };
@@ -1051,6 +1092,7 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedExpressionStatement {
     const expression = this.checkExpression(stmt.expression, ctx);
+    this.rejectEmptyArrayLiteral(stmt.expression, stmt.span);
     return { stmt, expression };
   }
 
@@ -1293,7 +1335,7 @@ class TypeChecker {
       return { expr, choreoType: locatedType("integer", location, true), elements };
     }
     // Each element is `~` the array; they must also be `~` one another
-    // (spec §location-consistency-and-join, §array-literals): `[a@alice, b@bob]@dyn` is rejected.
+    // (spec §location-consistency-and-join, §array-literals): `[1@alice, 2@bob]@dyn` is rejected.
     if (
       !concreteLocationsAgree([
         location,
@@ -1391,9 +1433,10 @@ class TypeChecker {
     }
     const args: TypedExpression[] = [];
     for (let i = 0; i < expr.args.length; i++) {
-      const arg = this.checkExpression(expr.args[i]!, ctx);
       const param = params[i];
+      let arg = this.checkExpression(expr.args[i]!, ctx);
       if (param !== undefined) {
+        arg = withExpectedElementType(arg, param);
         this.validateCallArgument(param, arg.choreoType, expr.args[i]!.span);
       }
       args.push(arg);
@@ -1412,9 +1455,9 @@ class TypeChecker {
    *
    * The result is `void`: appending produces nothing to bind, so every value
    * position rejects it exactly as it rejects a call to a `void` function
-   * (spec §located-types, §invalid-use-of-void). The location carried on that `void` is the array's,
-   * which is never written or shown (spec §void) but tells endpoint projection
-   * where the append happens (spec §array-projection).
+   * (spec §located-types, §invalid-use-of-void). The location carried on that `void` is the join
+   * of the array's and the value's, which is never written or shown (spec §void)
+   * but tells endpoint projection where the append happens (spec §array-projection).
    */
   private checkPush(
     expr: PushExpression,
@@ -1480,6 +1523,7 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedIndexExpression {
     const target = this.checkExpression(expr.target, ctx);
+    this.rejectEmptyArrayLiteral(expr.target, expr.span);
     const index = this.checkExpression(expr.index, ctx);
     if (!target.choreoType.isArray) {
       this.error("index target must have array type", expr.span);
