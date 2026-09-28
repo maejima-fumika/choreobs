@@ -168,7 +168,7 @@ class TypeChecker {
   /** Used to check `@L` against the declared set; the set itself is validated
    * by `validateEndpoints` before the checker runs (spec §choreobs-json). */
   private readonly endpoints: Set<string>;
-  /** Whether an omission that nothing infers is `dyn` (spec-dyn.md, sections 4.1–4.2). */
+  /** Whether an omission that nothing infers is `dyn` (spec §omitted-locations, §strict-mode). */
   private readonly implicitDyn: boolean;
   private currentFunction: FunctionDeclaration | undefined;
   /** Resolved return type for the function currently being type-checked. */
@@ -249,7 +249,7 @@ class TypeChecker {
           this.error(
             `function '${item.name}': 'dyn' is not a function location. A declared location makes a function local and must be individual.`,
             item.span,
-            ["function-kinds"],
+            ["function-kinds", "dyn-on-a-function-declaration"],
           );
         }
         this.validateLocation(item.at, item.span, CHOREOGRAPHY_CONTEXT);
@@ -381,7 +381,7 @@ class TypeChecker {
     const onIncompatible = this.incompatibleReturnLocations(decl);
     let returnType: LocatedType;
     if (decl.returnType !== undefined) {
-      // A partial annotation (spec-dyn.md, section 4.3): the base is written,
+      // A partial annotation (spec §partial-return-annotations): the base is written,
       // the location comes from what the body returns.
       const location = inferReturnLocation(
         candidates,
@@ -416,7 +416,7 @@ class TypeChecker {
 
   /**
    * `function f(): integer { … }` — a return type written without its location
-   * (spec-dyn.md, section 4.3). Its location is inferred like an omitted return
+   * (spec §partial-return-annotations). Its location is inferred like an omitted return
    * type's, in either mode. A local function may not omit a location at all
    * (spec §local-function-strict-location-rule), so there it is left to the
    * ordinary resolution, which reports it.
@@ -433,7 +433,7 @@ class TypeChecker {
 
   /**
    * What an omitted location that nothing infers stands for in `ctx`
-   * (spec-dyn.md, sections 4.1–4.2): `dyn` in a choreography context unless
+   * (spec §omitted-locations, §strict-mode): `dyn` in a choreography context unless
    * strict mode is on. A local function never omits a location
    * (spec §local-function-strict-location-rule), so there it stays an error.
    */
@@ -443,7 +443,7 @@ class TypeChecker {
 
   /**
    * Returns at two different concrete locations give `dyn` exactly where an
-   * omission would (spec-dyn.md, sections 4.2–4.3), and are an error elsewhere.
+   * omission would (spec §strict-mode, §function-return-type-inference), and are an error elsewhere.
    */
   private incompatibleReturnLocations(
     decl: FunctionDeclaration,
@@ -786,7 +786,7 @@ class TypeChecker {
     //
     // The empty literal takes the annotation's element type, so that it is
     // typed as what it will hold: a `dyn` one is built by
-    // `__dynArrayNew(kind)`, whose kind comes from here (spec-dyn.md, section 5.2).
+    // `__dynArrayNew(kind)`, whose kind comes from here (spec §array-literal-typing, §dyn-lowering).
     // Its location is still its own and is checked like any other.
     if (choreoType.isArray === true && isEmptyArrayLiteral(initializer.expr)) {
       const typed: TypedExpression = {
@@ -804,7 +804,7 @@ class TypeChecker {
     stmt: LetTransferStatement,
     ctx: ExecutionContext,
   ): TypedLetTransferStatement {
-    // An omitted destination is `dyn` (spec-dyn.md, section 4.1); it is never
+    // An omitted destination is `dyn` (spec §omitted-locations); it is never
     // taken from the source (spec §transfer-let-does-not-infer-destination-type).
     const choreoType = this.resolveType(stmt.type, ctx, undefined, [
       "transfer-let-does-not-infer-destination-type",
@@ -866,7 +866,7 @@ class TypeChecker {
         ["invalid-array-index-location"]);
     }
     // Pairwise `~` is not enough to say they are all compatible:
-    // `arrDyn[iAlice] = valBob` passes both checks above (spec-dyn.md, section 3.2).
+    // `arrDyn[iAlice] = valBob` passes both checks above (spec §location-consistency-and-join).
     if (
       !concreteLocationsAgree([
         arrayType.location,
@@ -877,7 +877,7 @@ class TypeChecker {
       this.error(
         "the array, index and value of an element assignment must not be at different locations",
         span,
-        ["array-typing"],
+        ["array-typing", "element-assignment-across-locations"],
       );
     }
     return { target, arrayType, index, elementType };
@@ -1063,7 +1063,7 @@ class TypeChecker {
       this.error("condition must have type boolean", expr.span);
     }
     if (ctx.kind === "choreography") {
-      // A `dyn` condition is cast to `every` (spec-dyn.md, section 15).
+      // A `dyn` condition is cast to `every` (spec §if-condition-typing).
       if (!locationsCompatible(typed.choreoType.location, contextAsLocation(ctx))) {
         this.error(
           "condition must be boolean@every in a choreography context",
@@ -1275,7 +1275,7 @@ class TypeChecker {
     ctx: ExecutionContext,
   ): TypedArrayLiteralExpression {
     // An unannotated array literal is `dyn`; its elements are never looked at
-    // for a location (spec-dyn.md, section 5.2).
+    // for a location (spec §array-literals).
     const location = expr.location?.location ?? this.omittedLocation(ctx);
     if (location === undefined) {
       this.error(
@@ -1293,7 +1293,7 @@ class TypeChecker {
       return { expr, choreoType: locatedType("integer", location, true), elements };
     }
     // Each element is `~` the array; they must also be `~` one another
-    // (spec-dyn.md, sections 3.2 and 5.2): `[a@alice, b@bob]@dyn` is rejected.
+    // (spec §location-consistency-and-join, §array-literals): `[a@alice, b@bob]@dyn` is rejected.
     if (
       !concreteLocationsAgree([
         location,
@@ -1303,7 +1303,7 @@ class TypeChecker {
       this.error(
         "array literal elements must not be at different locations",
         expr.span,
-        ["array-literals"],
+        ["array-literals", "array-literal-elements-across-locations"],
       );
     }
     for (const element of elements) {
@@ -1429,7 +1429,7 @@ class TypeChecker {
     );
     this.validateAssignmentLike(elementType, value.choreoType, expr.span);
     // When either side is `dyn`, the append is a dynamic operation performed at
-    // every endpoint (spec-dyn.md, section 12.3); the location says so.
+    // every endpoint (spec §dyn-array-projection); the location says so.
     return {
       expr,
       choreoType: locatedType(
@@ -1457,7 +1457,7 @@ class TypeChecker {
 
   /**
    * Both array operations take an array (spec §array-typing). Neither is defined on
-   * a scalar — `string` included, since v0 has no string operations at all
+   * a scalar — `string` included, since v1 has no string operations at all
    * (spec §typescript-javascript-features).
    */
   private requireArrayReceiver(
@@ -1627,7 +1627,7 @@ class TypeChecker {
     const dstLoc = target.location;
 
     // Checked first: `dyn -> dyn` is also equal, and a local copy would get no
-    // tag, where a dynamic transfer always has one (spec-dyn.md, section 11.1).
+    // tag, where a dynamic transfer always has one (spec §communication-tags).
     if (isDyn(srcLoc) || isDyn(dstLoc)) {
       return "dynamic";
     }
@@ -1682,7 +1682,7 @@ class TypeChecker {
       }
       return left;
     }
-    // `L1 ~ L2`, located at `L1 ⊔ L2` (spec-dyn.md, section 3.2).
+    // `L1 ~ L2`, located at `L1 ⊔ L2` (spec §location-consistency-and-join).
     if (locationsCompatible(left, right)) {
       return joinLocations(left, right);
     }
@@ -1788,7 +1788,7 @@ class TypeChecker {
   /**
    * A parameter's type. `buildParameterEnv` and `functionSymbol` both resolve
    * it, and must agree — an omitted location is `dyn` in a choreography
-   * function (spec-dyn.md, section 4.1).
+   * function (spec §omitted-locations).
    */
   private resolveParameterType(
     decl: FunctionDeclaration,
@@ -1799,7 +1799,7 @@ class TypeChecker {
 
   /**
    * Resolve a function return type, where `void` is allowed (spec §void).
-   * `inferredLocation` completes a partial annotation (spec-dyn.md, section 4.3).
+   * `inferredLocation` completes a partial annotation (spec §partial-return-annotations).
    */
   private resolveReturnType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
@@ -1857,7 +1857,7 @@ class TypeChecker {
 
   /**
    * A written location must name a declared endpoint, and `dyn` has no place
-   * in a local function (spec-dyn.md, section 3.6): its body runs at one
+   * in a local function (spec §local-function-strict-location-rule): its body runs at one
    * endpoint only, so nothing there could be decided at run time in step with
    * the others.
    */
@@ -1870,7 +1870,7 @@ class TypeChecker {
           this.error(
             `'dyn' cannot be used in a local function: every location in a function at ${ctx.endpoint} must be ${ctx.endpoint}`,
             span,
-            ["local-function-strict-location-rule"],
+            ["local-function-strict-location-rule", "dyn-in-a-local-function"],
           );
         }
         return;

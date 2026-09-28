@@ -65,7 +65,7 @@ describe("return inference utilities (spec §function-return-type-inference)", (
       assert.equal(lubLocation(every, alice).ok, false);
     });
 
-    it("is ⊔ with dyn: dyn absorbs any location (spec-dyn.md, section 3.1)", () => {
+    it("is ⊔ with dyn: dyn absorbs any location (spec §location-consistency-and-join)", () => {
       const dyn = { kind: "dyn" as const };
       for (const other of [alice, every, dyn]) {
         const r = lubLocation(other, dyn);
@@ -76,7 +76,7 @@ describe("return inference utilities (spec §function-return-type-inference)", (
       }
     });
 
-    it("gives dyn for two concrete locations only when asked to (spec-dyn.md, section 4.3)", () => {
+    it("gives dyn for two concrete locations only when asked to (spec §function-return-type-inference)", () => {
       const r = lubLocation(every, alice, "dyn");
       assert.equal(r.ok, true);
       if (r.ok) {

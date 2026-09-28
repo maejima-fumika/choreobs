@@ -25,13 +25,13 @@ export function validateEndpoints(
   endpoints: readonly string[],
 ): EndpointsProblem | undefined {
   // `every` and `dyn` are locations of their own, not endpoint names
-  // (spec §every; spec-dyn.md, section 2). Both are keywords, so the identifier
+  // (spec §every, §dyn). Both are keywords, so the identifier
   // check below would reject them too, but only with a message about syntax.
   for (const reserved of ["every", "dyn"]) {
     if (endpoints.includes(reserved)) {
       return {
         message: `'${reserved}' must not appear in endpoints`,
-        spec: ["choreobs-json"],
+        spec: ["choreobs-json", "using-every-as-an-endpoint"],
       };
     }
   }

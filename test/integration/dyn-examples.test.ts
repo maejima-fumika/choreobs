@@ -4,9 +4,9 @@ import { compile, bs, expectSuccess } from "../support/compile.js";
 import { aliceBobCarol } from "../support/config.js";
 
 /**
- * The examples of spec-dyn.md, compiled end to end. Each expectation is the
- * section's "After EPP" block in the emitter's own layout: blocks are
- * multi-line, and the runtime import the spec leaves out is included.
+ * The gradual-locating examples of spec.md, compiled end to end. Each
+ * expectation is the example's EPP output in the emitter's own layout, with the
+ * runtime import the spec leaves out (spec §runtime-import).
  */
 function expectEndpoints(source: string, alice: string, bob: string): void {
   const result = compile(source);
@@ -15,8 +15,8 @@ function expectEndpoints(source: string, alice: string, bob: string): void {
   assert.equal(bs(result, "bob"), bob);
 }
 
-describe("spec-dyn.md examples — generated .bs output", () => {
-  it("section 3.4: numeric conversion, static and dynamic", () => {
+describe("spec.md gradual-locating examples — generated .bs output", () => {
+  it("§numeric-conversion-projection numeric conversion, static and dynamic", () => {
     expectEndpoints(
       `
 let valAlice: integer@alice = 1@alice;
@@ -47,7 +47,7 @@ let i1: __DynVal = iDyn;`,
     );
   });
 
-  it("section 4.5: omitted locations become dyn", () => {
+  it("§example-omitted-locations omitted locations become dyn", () => {
     expectEndpoints(
       `
 3;
@@ -103,7 +103,7 @@ let b: __DynVal = __dynTransfer("__top_0", "integer", "dyn", __inject(null, "ali
     );
   });
 
-  it("section 5.1: scalar dyn literals", () => {
+  it("§literal-projection scalar dyn literals", () => {
     expectEndpoints(
       `
 3@dyn;
@@ -129,7 +129,7 @@ __dynUnbound(null);`,
     );
   });
 
-  it("section 5.2: array literals", () => {
+  it("§dyn-array-projection array literals", () => {
     expectEndpoints(
       `
 let a: integer@alice = 1@alice;
@@ -165,7 +165,7 @@ nothing(__cast(d, "alice"));`,
     );
   });
 
-  it("section 10.1: binary operators", () => {
+  it("§binary-and-unary-operation-projection binary operators", () => {
     expectEndpoints(
       `
 let valDyn: integer@dyn = 3@dyn;
@@ -195,7 +195,7 @@ __dynPlus(valDyn, __inject(valEvery, "every"));`,
     );
   });
 
-  it("section 10.4: unary operators", () => {
+  it("§binary-and-unary-operation-projection unary operators", () => {
     expectEndpoints(
       `
 let a: boolean@dyn = false@dyn;
@@ -218,7 +218,7 @@ n = __dynNeg(n);`,
     );
   });
 
-  it("section 10.5: numeric conversion of dyn operands", () => {
+  it("§numeric-conversion-projection numeric conversion of dyn operands", () => {
     expectEndpoints(
       `
 let n: integer@dyn = 3@dyn;
@@ -244,7 +244,7 @@ let c: __DynVal = n;`,
     );
   });
 
-  it("section 11.2: transfers", () => {
+  it("§example-dynamic-transfer transfers", () => {
     expectEndpoints(
       `
 let valDyn1: integer@dyn = 4@dyn;
@@ -309,7 +309,7 @@ let fb: float = __cast(__dynTransfer("__top_9", "float", "bob", __dynIntegerToFl
     );
   });
 
-  it("section 12.1: array get", () => {
+  it("§dyn-array-projection array get", () => {
     expectEndpoints(
       `
 let arrDyn: integer[]@dyn = [1, 3, 4]@dyn;
@@ -341,7 +341,7 @@ __dynArrayGet(arrDyn, __inject(null, "alice"));`,
     );
   });
 
-  it("section 12.2: array set", () => {
+  it("§dyn-array-projection array set", () => {
     expectEndpoints(
       `
 let arrDyn: integer[]@dyn = [1, 3, 4]@dyn;
@@ -390,7 +390,7 @@ __dynArraySet(__inject(null, "alice"), __inject(null, "alice"), valDyn);`,
     );
   });
 
-  it("section 12.3: push and length", () => {
+  it("§dyn-array-projection push and length", () => {
     expectEndpoints(
       `
 let arrDyn: integer[]@dyn = [1, 3, 4]@dyn;
@@ -427,7 +427,7 @@ __dynArrayLength(arrDyn);`,
     );
   });
 
-  it("section 13.1: arguments", () => {
+  it("§epp-choreography-function arguments", () => {
     expectEndpoints(
       `
 let valDyn: integer@dyn = 5@dyn;
@@ -474,7 +474,7 @@ nothing(__cast(valDyn, "alice"));`,
     );
   });
 
-  it("section 13.2: return", () => {
+  it("§epp-choreography-function return", () => {
     expectEndpoints(
       `
 function boo(flag: boolean@every) {
@@ -514,7 +514,7 @@ function toAlice(a: __DynVal): null {
     );
   });
 
-  it("section 14.1: variable declarations", () => {
+  it("§let-projection variable declarations", () => {
     expectEndpoints(
       `
 let valDyn1: integer@dyn = 3@dyn;
@@ -536,7 +536,7 @@ __cast(__dynUnbound(3), "alice");`,
     );
   });
 
-  it("section 14.2: assignment", () => {
+  it("§assignment-projection assignment", () => {
     expectEndpoints(
       `
 let valDyn: integer@dyn = 3@dyn;
@@ -563,7 +563,7 @@ __cast(__dynUnbound(5), "alice");`,
     );
   });
 
-  it("section 15: conditions", () => {
+  it("§for-projection conditions", () => {
     expectEndpoints(
       `
 let boolDyn: boolean@dyn = true@dyn;
@@ -593,8 +593,8 @@ for (let i: __DynVal = __dynUnbound(0); __cast(__dynLt(i, __dynUnbound(10)), "ev
   });
 });
 
-describe("dynamic operations beyond the spec-dyn.md examples", () => {
-  it("puts a dynamic element assignment in a for header as a bare call (section 12.2)", () => {
+describe("dynamic operations beyond the spec.md examples", () => {
+  it("puts a dynamic element assignment in a for header as a bare call (spec §dyn-array-projection)", () => {
     const result = compile(`
 let xs: integer[]@dyn = [0, 0]@dyn;
 for (let i: integer@every = 0@every; i < 2@every; xs[i] = 1@every) {
@@ -607,7 +607,7 @@ for (let i: integer@every = 0@every; i < 2@every; xs[i] = 1@every) {
     );
   });
 
-  it("performs a static transfer's dynamic operations at every endpoint, once (section 8.2)", () => {
+  it("performs a static transfer's dynamic operations at every endpoint, once (spec §dyn-lowering)", () => {
     const result = compile(
       `
 function g@alice(a: integer@alice): integer@alice { return a; }

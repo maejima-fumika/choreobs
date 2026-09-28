@@ -4,7 +4,7 @@ export type ArithmeticOperator = "+" | "-" | "*" | "/" | "%";
 /** Ordered comparison on numeric values (spec §operators). */
 export type RelationalOperator = "<" | "<=" | ">" | ">=";
 
-/** Strict equality (spec §operators-and-punctuation — `==` / `!=` are not in v0). */
+/** Strict equality (spec §operators-and-punctuation — `==` / `!=` are not in v1). */
 export type EqualityOperator = "===" | "!==";
 
 export type LogicalOperator = "&&" | "||";

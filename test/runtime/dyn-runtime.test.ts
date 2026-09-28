@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { compile, expectSuccess, assertNoChoreoResidue } from "../support/compile.js";
 import { dynRuntimeSource } from "../../src/runtime/source.js";
 import { DYN_RUNTIME_EXPORTS } from "../../src/runtime/dyn.js";
 import { aliceBobCarol } from "../support/config.js";
 
-/** The runtime file and its import (spec-dyn.md, sections 6–7 and 9–12). */
-describe("dynamic-location runtime (spec-dyn.md, section 7)", () => {
+/** The runtime file and its import (spec §runtime-files, §runtime-import, §dyn-runtime–§dyn-array-operations). */
+describe("dynamic-location runtime (spec §runtime-files)", () => {
   it("exports every name a generated program may import", () => {
     const source = dynRuntimeSource("alice");
     for (const name of DYN_RUNTIME_EXPORTS) {
@@ -28,11 +30,26 @@ describe("dynamic-location runtime (spec-dyn.md, section 7)", () => {
     assert.match(dynRuntimeSource("bob"), /^export const __here: string = "bob";$/m);
   });
 
+  it("is the code spec.md lists, block for block (spec §dyn-runtime)", () => {
+    // Every `ts` block of the runtime sections must appear, as written, in the
+    // generated file: the specification shows the runtime, not a sketch of it.
+    const spec = readFileSync(join(import.meta.dirname, "..", "..", "spec.md"), "utf8");
+    const start = spec.indexOf('<a id="dyn-runtime"></a>');
+    const end = spec.indexOf("## 15. Examples");
+    assert.ok(start > 0 && end > start, "runtime sections not found");
+    const blocks = [...spec.slice(start, end).matchAll(/```ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
+    assert.ok(blocks.length >= 10, `expected the runtime's code blocks, found ${blocks.length}`);
+    const source = dynRuntimeSource("alice");
+    for (const block of blocks) {
+      assert.ok(source.includes(block.trimEnd()), `not in the generated runtime:\n${block}`);
+    }
+  });
+
   it("carries nothing choreographic", () => {
     assertNoChoreoResidue(dynRuntimeSource("alice"));
   });
 
-  it("halts on a location error instead of returning (section 6.2)", () => {
+  it("halts on a location error instead of returning (spec §location-errors)", () => {
     assert.match(
       dynRuntimeSource("alice"),
       /export function __locationError\(\): void \{\n  while \(true\) \{\n  \}\n\}/,
@@ -55,7 +72,7 @@ describe("dynamic-location runtime (spec-dyn.md, section 7)", () => {
     assert.match(result.outputs[2]!.source, /^import \{ __DynVal, __dynUnbound \} from "\.\/__runtime_carol";\n\n/);
   });
 
-  it("is not written, and nothing is imported, for a program without dyn (section 7.2)", () => {
+  it("is not written, and nothing is imported, for a program without dyn (spec §runtime-files)", () => {
     const result = compile(`let x: integer@alice = 1@alice;
 let y: integer@bob <- x;`);
     expectSuccess(result);
@@ -73,11 +90,11 @@ let y: integer@bob <- x;`);
   });
 });
 
-describe("input file names (spec-dyn.md, section 7.1)", () => {
+describe("input file names (spec §reserved-input-file-name)", () => {
   it("rejects a name that takes the compiler's __ prefix", () => {
     const result = compile(`let x: integer@alice = 1@alice;`, undefined, "dir/__runtime_x.cbs");
     assert.equal(result.success, false);
     assert.ok(result.errors[0]!.message.includes("must not begin with '__'"));
-    assert.deepEqual(result.errors[0]!.spec, ["input-files"]);
+    assert.deepEqual(result.errors[0]!.spec, ["input-files", "reserved-input-file-name"]);
   });
 });

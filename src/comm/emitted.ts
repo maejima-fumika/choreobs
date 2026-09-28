@@ -32,7 +32,7 @@ const BROADCAST_RE = new RegExp(
   `broadcast(${COMM_TYPES.join("|")})\\("([^"]+)",`,
   "g",
 );
-/** `__dynTransfer("tag", "kind", "to", …)` (spec-dyn.md, section 11). */
+/** `__dynTransfer("tag", "kind", "to", …)` (spec §dynamic-transfer). */
 const DYN_TRANSFER_RE = /__dynTransfer\("([^"]+)", "([^"]+)", "([^"]+)",/g;
 
 /**

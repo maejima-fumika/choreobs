@@ -320,7 +320,7 @@ class Parser {
     }
     if (this.isUnsupportedStatementKeyword(this.current().kind)) {
       throw this.fail(
-        `'${this.current().lexeme}' is not supported in ChoreoBS Core v0`,
+        `'${this.current().lexeme}' is not supported in ChoreoBS v1`,
       );
     }
     return this.parseExpressionStatement();
@@ -776,7 +776,7 @@ class Parser {
       member.lexeme !== PUSH_METHOD
     ) {
       throw this.fail(
-        `unknown array operation '.${member.lexeme}': v0 supports '.length' and '.push'`,
+        `unknown array operation '.${member.lexeme}': v1 supports '.length' and '.push'`,
         ["expressions", "array-typing"],
       );
     }

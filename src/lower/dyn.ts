@@ -64,7 +64,7 @@ import {
 } from "../runtime/dyn.js";
 
 /**
- * Dynamic-location lowering (spec-dyn.md, sections 3.3–3.5 and 8.2) — the
+ * Dynamic-location lowering (spec §coercion, §dynamic-transfer, §dyn-lowering) — the
  * stage between tag assignment and endpoint projection.
  *
  * The checker types a program with `~` and `⊔`, so a `dyn` value may meet a
@@ -77,11 +77,11 @@ import {
  * - a `dyn` literal, array literal, operator, conversion or array operation
  *   becomes the runtime function that performs it;
  * - a dynamic transfer becomes a `let` or an assignment of `__dynTransfer`,
- *   carrying the tag `assignCommTags` gave the transfer (section 11.1).
+ *   carrying the tag `assignCommTags` gave the transfer (spec §communication-tags).
  *
  * What comes out obeys the static location rules everywhere, with the runtime
  * functions as ordinary callees made at every endpoint. Endpoint projection
- * therefore needs no rule of its own for them (section 8.2), and
+ * therefore needs no rule of its own for them (spec §dyn-lowering), and
  * `verifyLowered` can check the result against the static rules alone.
  *
  * A program without `dyn` comes out as it went in: every rewrite here is
@@ -187,7 +187,7 @@ class DynLowerer {
 
   /**
    * A condition is required at the context's location: `every` in a
-   * choreography, so a `dyn` one is cast there (spec-dyn.md, section 15).
+   * choreography, so a `dyn` one is cast there (spec §if-condition-typing).
    */
   private condition(condition: TypedExpression, scope: Scope): TypedExpression {
     return this.coerced(condition, contextAsLocation(scope.context));
@@ -198,7 +198,7 @@ class DynLowerer {
       return { ...stmt, source: this.expr(stmt.source) };
     }
     // `let a: T@L <- e;` becomes `let a: T@L = [__cast(]__dynTransfer(...)[)];`
-    // (spec-dyn.md, section 3.5), and projects as the `let` it now is.
+    // (spec §dynamic-transfer), and projects as the `let` it now is.
     const let_: LetStatement = {
       kind: "LetStatement",
       name: stmt.stmt.name,
@@ -218,7 +218,7 @@ class DynLowerer {
     if (stmt.transferMode !== "dynamic") {
       return { ...stmt, source: this.expr(stmt.source) };
     }
-    // `a <- e;` becomes `a = [__cast(]__dynTransfer(...)[)];` (spec-dyn.md, section 3.5).
+    // `a <- e;` becomes `a = [__cast(]__dynTransfer(...)[)];` (spec §dynamic-transfer).
     const target = {
       kind: "IdentifierAssignmentTarget" as const,
       name: stmt.stmt.name,
@@ -240,7 +240,7 @@ class DynLowerer {
 
   /**
    * `__dynTransfer(tag, kind, "L", coerce(e → T@dyn))`, cast to the
-   * destination when that is concrete (spec-dyn.md, sections 3.5 and 11).
+   * destination when that is concrete (spec §dynamic-transfer).
    */
   private dynamicTransfer(
     destination: LocatedType,
@@ -250,7 +250,7 @@ class DynLowerer {
   ): TypedExpression {
     if (tag === undefined) {
       // Every dynamic transfer is tagged, like every transfer that may
-      // communicate (spec-dyn.md, section 11.1). Without one the endpoints
+      // communicate (spec §communication-tags). Without one the endpoints
       // could not pair the communication the runtime decides on.
       throw new Error(
         `internal error: dynamic transfer at ${span.start} has no communication tag`,
@@ -360,7 +360,7 @@ class DynLowerer {
 
   /**
    * `xs[i] = v` is dynamic when the array, the index or the value is `dyn`
-   * (spec-dyn.md, section 3.2): `arrAlice[iAlice] = valDyn` included.
+   * (spec §location-consistency-and-join): `arrAlice[iAlice] = valDyn` included.
    */
   private isDynamicElementAssignment(
     target: TypedAssignmentTarget,
@@ -380,7 +380,7 @@ class DynLowerer {
 
   /**
    * `__dynArraySet(xs, i, v)`, arguments in the order the assignment evaluates
-   * them (spec-dyn.md, section 12.2; spec §evaluation-order).
+   * them (spec §dyn-array-operations, §evaluation-order).
    */
   private dynamicElementSet(
     target: TypedIndexAssignmentTarget,
@@ -409,15 +409,15 @@ class DynLowerer {
 
   // --- expressions --------------------------------------------------------
 
-  /** Lowers `expr` and places it at `location` (spec-dyn.md, section 3.3). */
+  /** Lowers `expr` and places it at `location` (spec §coercion). */
   private coerced(expr: TypedExpression, location: Location): TypedExpression {
     return this.coerce(this.expr(expr), location);
   }
 
   /**
-   * `coerce(e : S@L → S@L')` on an already lowered `e` (spec-dyn.md, section
-   * 3.3): nothing when the locations agree, `inj<q>` into `dyn`, `cast<q>` out
-   * of it. Only the location changes; the base type never does (section 3.4).
+   * `coerce(e : S@L → S@L')` on an already lowered `e` (spec §coercion):
+   * nothing when the locations agree, `inj<q>` into `dyn`, `cast<q>` out
+   * of it. Only the location changes; the base type never does (spec §numeric-conversion).
    */
   private coerce(expr: TypedExpression, location: Location): TypedExpression {
     const from = expr.choreoType.location;
@@ -456,7 +456,7 @@ class DynLowerer {
           return literal;
         }
         // `c@dyn` is `__dynUnbound(c)`: the same payload everywhere, and a
-        // fresh unbound location variable (spec-dyn.md, section 5.1).
+        // fresh unbound location variable (spec §dyn-literals).
         const payload: TypedLiteralExpression = {
           ...literal,
           choreoType: { ...literal.choreoType, location: EVERY },
@@ -474,7 +474,7 @@ class DynLowerer {
         if (!isDyn(binary.choreoType.location)) {
           return { ...binary, left, right };
         }
-        // A static operand is injected first (spec-dyn.md, section 3.3).
+        // A static operand is injected first (spec §coercion).
         return this.call(
           DYN_BINARY[binary.expr.operator],
           [this.coerce(left, DYN), this.coerce(right, DYN)],
@@ -554,7 +554,7 @@ class DynLowerer {
 
   /**
    * `[e1, …, en]@dyn` is built one element at a time onto a typed empty array,
-   * whatever the elements are (spec-dyn.md, section 5.2). A concrete array
+   * whatever the elements are (spec §dyn-lowering). A concrete array
    * literal stays a literal; its `dyn` elements are cast to its location.
    */
   private arrayLiteral(array: TypedArrayLiteralExpression): TypedExpression {
@@ -577,7 +577,7 @@ class DynLowerer {
   }
 
   /**
-   * `e as T` on a `dyn` operand (spec-dyn.md, sections 3.4 and 10.5): one
+   * `e as T` on a `dyn` operand (spec §numeric-conversion, §dyn-numeric-conversion): one
    * runtime function per pair of types, and nothing when the type stays the
    * same, since the payload is already in its representation. A concrete
    * operand keeps BlueScript's own `as`.
@@ -616,7 +616,7 @@ class DynLowerer {
 
   /**
    * A string argument the compiler supplies — a location, a kind or a tag.
-   * It is `string@every`, the same at every endpoint (spec-dyn.md, section 8.2).
+   * It is `string@every`, the same at every endpoint (spec §dyn-lowering).
    */
   private constant(value: string, span: Span): TypedLiteralExpression {
     const literal: LocatedLiteral = {

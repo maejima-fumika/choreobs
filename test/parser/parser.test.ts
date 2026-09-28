@@ -330,7 +330,7 @@ let y: integer@bob <- x;`;
     }
   });
 
-  it("parses @dyn on types, literals, array literals and functions (spec-dyn.md, section 2)", () => {
+  it("parses @dyn on types, literals, array literals and functions (spec §dyn)", () => {
     const { program, errors } = parse(`
 let x: integer@dyn = 1@dyn;
 let xs = [1, 2]@dyn;

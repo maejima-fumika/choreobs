@@ -227,8 +227,8 @@ class BlueScriptEmitter {
 
 /**
  * `import { … } from "./__runtime_<endpoint>";` and a blank line, for a program
- * that uses the dynamic-location runtime (spec-dyn.md, section 7.3); nothing
- * otherwise, so a static program's output is unchanged (section 7.2). The
+ * that uses the dynamic-location runtime (spec §runtime-import); nothing
+ * otherwise, so a static program's output is unchanged (spec §runtime-files). The
  * module name has no extension because BlueScript appends `.bs` itself.
  */
 function runtimeImportLine(program: ProjectedProgram): string {

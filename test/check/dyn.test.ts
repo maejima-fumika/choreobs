@@ -22,7 +22,7 @@ import {
 } from "../../src/types/located.js";
 
 /**
- * Gradual locating in the checker (spec-dyn.md, sections 2–4): `~` and `⊔`,
+ * Gradual locating in the checker (spec §dyn, §omitted-locations): `~` and `⊔`,
  * omission as `dyn`, strict mode, and where `dyn` is not allowed.
  */
 
@@ -82,7 +82,7 @@ function types(...located: LocatedType[]): string[] {
   return located.map(formatLocatedType);
 }
 
-describe("location relations (spec-dyn.md, section 3.1)", () => {
+describe("location relations (spec §location-consistency-and-join)", () => {
   it("~ accepts dyn with anything and concrete locations only when equal", () => {
     assert.equal(locationsCompatible(alice, dyn), true);
     assert.equal(locationsCompatible(dyn, every), true);
@@ -104,13 +104,13 @@ describe("location relations (spec-dyn.md, section 3.1)", () => {
     assert.equal(concreteLocationsAgree([alice, dyn, bob]), false);
   });
 
-  it("a dyn value resides at every endpoint (section 2.1)", () => {
+  it("a dyn value resides at every endpoint (spec §location-matching-and-residency)", () => {
     assert.equal(residesAt(dyn, "alice"), true);
     assert.equal(residesAt(dyn, "bob"), true);
   });
 });
 
-describe("typing with ~ and ⊔ (spec-dyn.md, section 3.2)", () => {
+describe("typing with ~ and ⊔ (spec §location-consistency-and-join)", () => {
   const decls = `
 let d: integer@dyn = 1@dyn;
 let a: integer@alice = 2@alice;
@@ -144,7 +144,7 @@ let u = -d;
     );
   });
 
-  it("accepts a dyn condition in a choreography context (section 15)", () => {
+  it("accepts a dyn condition in a choreography context (spec §if-condition-typing)", () => {
     accepted(`let c: boolean@dyn = true@dyn;
 if (c) {}
 while (c) {}
@@ -168,7 +168,7 @@ let b: integer@bob = 3@bob;
 arrDyn[a] = b;
 `,
       "must not be at different locations",
-      "array-typing",
+      "element-assignment-across-locations",
     );
   });
 
@@ -176,7 +176,7 @@ arrDyn[a] = b;
     rejected(
       `let xs = [1@alice, 2@bob]@dyn;`,
       "array literal elements must not be at different locations",
-      "array-literals",
+      "array-literal-elements-across-locations",
     );
   });
 
@@ -190,8 +190,8 @@ arrDyn[a] = b;
   });
 });
 
-describe("omission is dyn (spec-dyn.md, section 4)", () => {
-  // Example 1 of section 4.5.
+describe("omission is dyn (spec §omitted-locations)", () => {
+  // The example of spec §omitted-locations.
   const example = `
 3;
 let a = 32;
@@ -206,7 +206,7 @@ function bar(): integer {
 }
 `;
 
-  it("completes the example of section 4.5", () => {
+  it("completes the example of spec §omitted-locations", () => {
     const typed = accepted(example);
     assert.equal(letType(typed, "a"), "integer@dyn");
     assert.equal(letType(typed, "b"), "integer@dyn");
@@ -222,7 +222,7 @@ function bar(): integer {
     assert.equal(letType(typed, "ys"), "float[]@dyn");
   });
 
-  it("gives an empty literal the annotation's element type (section 5.2)", () => {
+  it("gives an empty literal the annotation's element type (spec §array-literal-typing)", () => {
     const typed = accepted(`let e: float[]@alice = [];`);
     const item = typed.items[0] as TypedTopLevelStatement;
     const initializer = (item.statement as TypedLetStatement).initializer;
@@ -262,8 +262,8 @@ function bar(): integer {
   });
 });
 
-describe("strict mode (spec-dyn.md, section 4.2)", () => {
-  it("reports each omission of section 4.5 instead", () => {
+describe("strict mode (spec §strict-mode)", () => {
+  it("reports each omission of spec §omitted-locations instead", () => {
     rejected(`3;`, "location annotation required on literal", "location-annotation-omission", aliceBobStrict);
     rejected(`let xs = [1, 2];`, "array literal location annotation required", "array-literal-without-required-location", aliceBobStrict);
     rejected(`function foo(a: integer) {}`, "location annotation required on type", "location-annotation-omission", aliceBobStrict);
@@ -300,7 +300,7 @@ function bar(): integer { return 3@alice; }`,
   });
 });
 
-describe("where dyn is not allowed (spec-dyn.md, section 3.6)", () => {
+describe("where dyn is not allowed (spec §local-function-strict-location-rule)", () => {
   const LOCAL = "'dyn' cannot be used in a local function";
 
   it("rejects dyn anywhere in a local function", () => {
@@ -311,7 +311,7 @@ describe("where dyn is not allowed (spec-dyn.md, section 3.6)", () => {
       `function f@alice(): void { let x: integer@alice = 1@dyn; }`,
       `function f@alice(): void { [1]@dyn; }`,
     ]) {
-      rejected(source, LOCAL, "local-function-strict-location-rule");
+      rejected(source, LOCAL, "dyn-in-a-local-function");
     }
   });
 
@@ -322,11 +322,11 @@ describe("where dyn is not allowed (spec-dyn.md, section 3.6)", () => {
   });
 
   it("rejects dyn as a function location", () => {
-    rejected(`function f@dyn(): void {}`, "'dyn' is not a function location", "function-kinds");
+    rejected(`function f@dyn(): void {}`, "'dyn' is not a function location", "dyn-on-a-function-declaration");
   });
 });
 
-describe("dynamic transfers (spec-dyn.md, sections 3.5 and 11.1)", () => {
+describe("dynamic transfers (spec §dynamic-transfer, §communication-tags)", () => {
   function modes(source: string): (string | undefined)[][] {
     const typed = tagSource(source);
     return typed.items.flatMap((item) => {

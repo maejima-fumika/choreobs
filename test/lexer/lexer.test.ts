@@ -106,7 +106,7 @@ let x /* inner */ : integer = 1;`;
     assert.equal(tokens[3]?.kind, TokenKind.True);
   });
 
-  it("reserves `dyn` as the dynamic location (spec §keywords; spec-dyn.md, section 2)", () => {
+  it("reserves `dyn` as the dynamic location (spec §keywords, §dyn)", () => {
     assert.deepEqual(kinds("x@dyn"), [
       TokenKind.Identifier,
       TokenKind.At,
@@ -125,7 +125,7 @@ let x /* inner */ : integer = 1;`;
     ]);
   });
 
-  it("maps unsupported v0 words to keyword tokens", () => {
+  it("maps unsupported v1 words to keyword tokens", () => {
     assert.equal(tokenize("break").tokens[0]?.kind, TokenKind.Break);
     assert.equal(tokenize("async").tokens[0]?.kind, TokenKind.Async);
   });

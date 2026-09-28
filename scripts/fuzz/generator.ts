@@ -19,7 +19,7 @@ export interface Ty {
   readonly isArray: boolean;
 }
 
-/** An endpoint name, `every`, or `dyn` (spec-dyn.md, section 2). */
+/** An endpoint name, `every`, or `dyn` (spec §dyn). */
 export type Loc = string;
 
 interface Binding {
@@ -52,7 +52,7 @@ export interface GenOptions {
   readonly maxExprDepth?: number;
   readonly maxBlockDepth?: number;
   /**
-   * Generate `@dyn` too (spec-dyn.md): dynamic variables, literals, arrays,
+   * Generate `@dyn` too (spec §dyn): dynamic variables, literals, arrays,
    * parameters, return types and transfers, and dynamic values meeting
    * concrete ones. Off by default; when off, the generator draws exactly the
    * random numbers it always did, so a seed still names the same program.
@@ -60,7 +60,7 @@ export interface GenOptions {
   readonly dyn?: boolean;
   /**
    * With `dyn`, whether the program may also leave locations out and have them
-   * be `dyn` (spec-dyn.md, section 4.1). Must be `false` for a program that is
+   * be `dyn` (spec §omitted-locations). Must be `false` for a program that is
    * compiled with `"implicitDyn": false`. Defaults to `true`.
    */
   readonly implicitDyn?: boolean;
@@ -278,7 +278,7 @@ class Generator {
     if (ctx.kind === "local") {
       return ctx.endpoint;
     }
-    // A local function never holds `dyn` (spec-dyn.md, section 3.6).
+    // A local function never holds `dyn` (spec §local-function-strict-location-rule).
     return this.pick(
       this.dyn ? [...this.endpoints, "every", "dyn"] : [...this.endpoints, "every"],
     );
@@ -317,7 +317,7 @@ class Generator {
 
   /**
    * A parameter or transfer destination type. Where `dyn` may be left out,
-   * sometimes it is: an omitted location there means `dyn` (spec-dyn.md, section 4.1).
+   * sometimes it is: an omitted location there means `dyn` (spec §omitted-locations).
    */
   private formatOmissibleType(ty: Ty, loc: Loc): string {
     if (this.implicit && loc === "dyn" && this.chance(0.4)) {
@@ -334,7 +334,7 @@ class Generator {
     src: Loc,
     dst: Loc,
   ): "localCopy" | "broadcast" | "direct" | "dynamic" {
-    // With `dyn` on either side the runtime decides (spec-dyn.md, section 3.5).
+    // With `dyn` on either side the runtime decides (spec §dynamic-transfer).
     if (src === "dyn" || dst === "dyn") {
       return "dynamic";
     }
@@ -378,7 +378,7 @@ class Generator {
 
   private literal(base: Base, loc: Loc): string {
     const value = this.bareLiteral(base);
-    // A literal without a location is `c@dyn` (spec-dyn.md, section 4.1).
+    // A literal without a location is `c@dyn` (spec §omitted-locations).
     if (this.implicit && loc === "dyn" && this.chance(0.4)) {
       this.features.add("dyn:omitted literal location");
       return value;
@@ -411,7 +411,7 @@ class Generator {
     ctx: Ctx,
     depth: number,
   ): string {
-    // A `dyn` value is `~` any location (spec-dyn.md, section 3.1), so it may
+    // A `dyn` value is `~` any location (spec §location-consistency-and-join), so it may
     // stand anywhere a concrete one is asked for; the compiler casts it. Where
     // the result is observed instead, `exactDepth` keeps it exact.
     if (this.mayMixLocations(ctx) && loc !== "dyn" && this.chance(0.12)) {
@@ -509,7 +509,7 @@ class Generator {
     for (let i = 0; i < size; i += 1) {
       elements.push(this.bareLiteral(ty.base));
     }
-    // An unannotated array literal is `@dyn` (spec-dyn.md, section 5.2).
+    // An unannotated array literal is `@dyn` (spec §array-literals).
     if (this.implicit && loc === "dyn" && this.chance(0.4)) {
       this.features.add("dyn:unannotated array literal");
       return `[${elements.join(", ")}]`;
@@ -520,7 +520,7 @@ class Generator {
   /**
    * An expression for a position that places a single value at `loc` — a
    * `let` initializer, an assigned value, an argument, a returned value. Such
-   * a position injects a concrete value into `dyn` (spec-dyn.md, section 3.3),
+   * a position injects a concrete value into `dyn` (spec §coercion),
    * so where `dyn` is asked for, a concrete value may come instead.
    */
   private genPlaced(
@@ -830,7 +830,7 @@ class Generator {
     const bound = this.int(1, 5);
     let header = `for (let ${i}: integer@${loc} = 0@${loc}; ${i} < ${bound}@${loc}; ${i} = ${i} + 1@${loc}) {`;
     // A `dyn` counter: its condition is cast to `every` each time round
-    // (spec-dyn.md, section 15), in the written or the omitted form.
+    // (spec §if-condition-typing), in the written or the omitted form.
     if (this.dyn && ctx.kind === "choreography" && this.chance(0.3)) {
       loc = "dyn";
       this.features.add("dyn:for counter");
@@ -951,7 +951,7 @@ class Generator {
     this.features.add(at === undefined ? "function:choreography" : "function:local");
 
     // `function f(): T { … }` writes the base only; the location is inferred
-    // from the return, like an omitted return type's (spec-dyn.md, section 4.3).
+    // from the return, like an omitted return type's (spec §partial-return-annotations).
     const partialReturnType =
       this.dyn && ctx.kind === "choreography" && ret !== undefined && !omitReturnType &&
       this.chance(0.25);
@@ -1325,7 +1325,7 @@ class Generator {
         break;
       }
       // Omission is `dyn` only in a choreography context; a local function
-      // must still write every location (spec-dyn.md, sections 3.6 and 4.4).
+      // must still write every location (spec §local-function-strict-location-rule, §omitted-locations).
       case "literalWithoutLocationInLocal":
         if (choreography) return false;
         lines.push(`let ${n}: integer@${p} = 1;`);
@@ -1334,7 +1334,7 @@ class Generator {
         if (choreography) return false;
         lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
         break;
-      // `dyn` has no place in a local function (spec-dyn.md, section 3.6).
+      // `dyn` has no place in a local function (spec §local-function-strict-location-rule).
       case "dynValueInLocalFunction":
         if (choreography) return false;
         lines.push(`let ${n}: integer@${p} = 1@dyn;`);
@@ -1353,7 +1353,7 @@ class Generator {
         lines.push(`function ${n}@dyn(): void {`, `    return;`, `}`);
         break;
       // `dyn` defers the location check only; base types are as static as ever
-      // (spec-dyn.md, section 1).
+      // (spec §subtyping).
       case "dynNumericAssignMismatch":
         if (!choreography) return false;
         lines.push(`let ${n}: float@dyn = 1@${p};`);
@@ -1371,7 +1371,7 @@ class Generator {
         lines.push(`let ${n}: float[]@dyn = [1, 2]@dyn;`);
         break;
       // `~` is not transitive: two different concrete locations in one
-      // construct are an error even with `dyn` among them (spec-dyn.md, section 3.1).
+      // construct are an error even with `dyn` among them (spec §location-consistency-and-join).
       case "dynIndexAssignMixedConcrete":
         if (!choreography) return false;
         lines.push(`let ${n}: integer[]@dyn = [1]@dyn;`);
@@ -1381,7 +1381,7 @@ class Generator {
         if (!choreography) return false;
         lines.push(`let ${n} = [1@${p}, 2@${q}]@dyn;`);
         break;
-      // Strict mode: an omission that would be `dyn` is an error (spec-dyn.md, section 4.2).
+      // Strict mode: an omission that would be `dyn` is an error (spec §strict-mode).
       case "transferLetOmittedDestinationStrict":
         if (!choreography) return false;
         lines.push(`let ${n}: integer <- 1@${p};`);
@@ -1431,7 +1431,7 @@ export interface ViolationInfo {
   /** The rule the injected program breaks. Checked against spec.md by the compiler. */
   readonly spec: SpecId;
   /**
-   * Compile with `"implicitDyn": false` (spec-dyn.md, section 4.2). The
+   * Compile with `"implicitDyn": false` (spec §strict-mode). The
    * violation is an omission that the default mode reads as `dyn`.
    */
   readonly strict?: true;
@@ -1515,20 +1515,20 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "everyArrayArgumentToIndividual", spec: "err-every-array-argument", expect: ["argument", "every", "cannot"] },
   { id: "crossEndpointLocalCall", spec: "calling-another-endpoints-local-function", expect: ["cannot call"] },
   { id: "choreographyCallFromLocal", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
-  // Gradual locating (spec-dyn.md). None of these needs the generator's own
+  // Gradual locating (spec §dyn). None of these needs the generator's own
   // `dyn` mode: each writes its `dyn` out.
   { id: "literalWithoutLocationInLocal", spec: "location-annotation-omission", expect: ["location annotation required"] },
   { id: "arrayLiteralWithoutLocationInLocal", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
-  { id: "dynValueInLocalFunction", spec: "local-function-strict-location-rule", expect: ["'dyn' cannot be used in a local function"] },
-  { id: "dynVariableInLocalFunction", spec: "local-function-strict-location-rule", expect: ["'dyn' cannot be used in a local function"] },
-  { id: "dynArrayLiteralInLocalFunction", spec: "local-function-strict-location-rule", expect: ["'dyn' cannot be used in a local function"] },
-  { id: "dynFunctionLocation", spec: "function-kinds", expect: ["'dyn' is not a function location"] },
+  { id: "dynValueInLocalFunction", spec: "dyn-in-a-local-function", expect: [] },
+  { id: "dynVariableInLocalFunction", spec: "dyn-in-a-local-function", expect: [] },
+  { id: "dynArrayLiteralInLocalFunction", spec: "dyn-in-a-local-function", expect: [] },
+  { id: "dynFunctionLocation", spec: "dyn-on-a-function-declaration", expect: [] },
   { id: "dynNumericAssignMismatch", spec: "type-mismatch", expect: ["cannot assign integer"] },
   { id: "dynTransferNumericWidening", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
   { id: "dynMixedNumericArithmetic", spec: "invalid-arithmetic-or-logical-operand", expect: ["same numeric type"] },
   { id: "dynArrayInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
-  { id: "dynIndexAssignMixedConcrete", spec: "array-typing", expect: ["must not be at different locations"] },
-  { id: "dynArrayLiteralMixedConcrete", spec: "array-literals", expect: ["must not be at different locations"] },
+  { id: "dynIndexAssignMixedConcrete", spec: "element-assignment-across-locations", expect: [] },
+  { id: "dynArrayLiteralMixedConcrete", spec: "array-literal-elements-across-locations", expect: [] },
   { id: "transferLetOmittedDestinationStrict", spec: "transfer-let-does-not-infer-destination-type", expect: [], strict: true },
   { id: "omittedParameterLocationStrict", spec: "location-annotation-omission", expect: ["location annotation required"], strict: true },
   { id: "incompatibleInferredReturnLocationsStrict", spec: "incompatible-inferred-return-locations", expect: [], strict: true },

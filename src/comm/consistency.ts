@@ -14,7 +14,7 @@ import { TOP_SCOPE } from "./tags.js";
 import { ALL_COMM_KINDS } from "../runtime/names.js";
 import { DYN_LOCATION_NAME } from "../runtime/dyn.js";
 
-/** The runtime function a dynamic transfer is lowered to (spec-dyn.md, section 3.5). */
+/** The runtime function a dynamic transfer is lowered to (spec §dynamic-transfer). */
 const DYN_TRANSFER = "__dynTransfer";
 
 /** Scope key for communication tags (spec §communication-tags): top-level or function name. */
@@ -38,8 +38,8 @@ export function checkCommunicationConsistency(
 }
 
 /**
- * `dynTransfer` is a call to `__dynTransfer(tag, kind, to, v)` (spec-dyn.md,
- * section 11). Every endpoint makes that same call, and the runtime decides
+ * `dynTransfer` is a call to `__dynTransfer(tag, kind, to, v)` (spec §dynamic-transfer,
+ * §dyn-transfer-runtime). Every endpoint makes that same call, and the runtime decides
  * which of them send, broadcast or receive, so what can be checked here is
  * that they all make it, once, with the same arguments.
  */
@@ -268,7 +268,7 @@ class CommConsistencyChecker {
 
   /**
    * `__dynTransfer("tag", "kind", "to", v)`: the first three arguments are
-   * the constants the compiler wrote (spec-dyn.md, section 8.2).
+   * the constants the compiler wrote (spec §dyn-lowering).
    */
   private registerDynTransfer(
     ctx: WalkContext,
@@ -442,7 +442,7 @@ class CommConsistencyChecker {
 
   /**
    * Every endpoint calls `__dynTransfer` for a dynamic transfer, whatever the
-   * run time turns out to require of it (spec-dyn.md, sections 8.2 and 11.1).
+   * run time turns out to require of it (spec §dyn-lowering, §communication-tags).
    * One that did not would leave a peer waiting on a receive, or hold a
    * location variable the others do not.
    */

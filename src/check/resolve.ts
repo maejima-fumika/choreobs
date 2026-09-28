@@ -15,8 +15,8 @@ import { locatedType } from "../types/located.js";
  * `@L` always wins.
  *
  * `fallback` is what an omission that nothing infers means: `dyn` where the
- * program may leave locations to run time (spec-dyn.md, section 4.1), and
- * nothing — an error — in strict mode and inside a local function (section 4.2).
+ * program may leave locations to run time (spec §omitted-locations), and
+ * nothing — an error — in strict mode and inside a local function (spec §strict-mode).
  *
  * `void` is the exception: it holds no value, so it has no location and must not
  * be written with one (spec §void). The checker still stores a location on it so
@@ -51,7 +51,7 @@ export function resolveTypeAnnotation(
 
 /**
  * Resolve a written literal (spec §explicit-location-annotations); the location is never inferred.
- * An omitted one means `fallback` when there is one (spec-dyn.md, section 4.1).
+ * An omitted one means `fallback` when there is one (spec §omitted-locations).
  */
 export function resolveLiteralType(
   lit: LocatedLiteral,

@@ -10,7 +10,7 @@ import type {
 
 /**
  * ChoreoBS `void` projects to `void` at every endpoint (spec §type-projection),
- * and a `dyn` type to the runtime's `__DynVal` (spec-dyn.md, section 8.1).
+ * and a `dyn` type to the runtime's `__DynVal` (spec §type-projection).
  */
 export type ProjectedBaseType =
   | BaseType

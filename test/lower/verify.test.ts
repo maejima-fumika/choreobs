@@ -10,7 +10,7 @@ import type {
 
 /**
  * `verifyLowered` is the check that `lowerDyn` left nothing for endpoint
- * projection to get silently wrong (spec-dyn.md, section 8.2). These tests
+ * projection to get silently wrong (spec §dyn-lowering). These tests
  * break a lowered program by hand and expect it to say so.
  */
 
@@ -35,7 +35,7 @@ function withInitializer(
   return { ...program, items };
 }
 
-describe("verifyLowered (spec-dyn.md, section 8.2)", () => {
+describe("verifyLowered (spec §dyn-lowering)", () => {
   const source = `
 let d: integer@dyn = 1@dyn;
 let x: integer@alice = d;

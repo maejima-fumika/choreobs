@@ -35,7 +35,7 @@ export const TokenKind = {
   Void: "Void",
   As: "As",
 
-  // Keywords — reserved but unsupported in v0 (spec §keywords)
+  // Keywords — reserved but unsupported in v1 (spec §keywords)
   Break: "Break",
   Continue: "Continue",
   Const: "Const",

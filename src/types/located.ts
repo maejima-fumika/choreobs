@@ -34,7 +34,7 @@ export function locationsEqual(a: Location, b: Location): boolean {
 }
 
 /**
- * `L1 ~ L2` (spec-dyn.md, section 3.1): the two locations may meet in one
+ * `L1 ~ L2` (spec §location-consistency-and-join): the two locations may meet in one
  * construct. `dyn` meets anything, and the check it stands for is deferred to
  * run time; two concrete locations meet only when they are equal.
  *
@@ -46,7 +46,7 @@ export function locationsCompatible(a: Location, b: Location): boolean {
 }
 
 /**
- * Whether the locations are pairwise `~` (spec-dyn.md, section 3.1): every
+ * Whether the locations are pairwise `~` (spec §location-consistency-and-join): every
  * concrete one among them is the same location. At most one concrete location
  * may be involved; `dyn` is compatible with it.
  */
@@ -56,7 +56,7 @@ export function concreteLocationsAgree(locations: readonly Location[]): boolean 
 }
 
 /**
- * `L1 ⊔ L2` (spec-dyn.md, section 3.1), defined only for `L1 ~ L2`: the
+ * `L1 ⊔ L2` (spec §location-consistency-and-join), defined only for `L1 ~ L2`: the
  * location itself when the two are equal, `dyn` when either is `dyn`.
  */
 export function joinLocations(a: Location, b: Location): Location {
@@ -66,7 +66,7 @@ export function joinLocations(a: Location, b: Location): Location {
   return a;
 }
 
-/** The one dynamic location (spec-dyn.md, section 2). */
+/** The one dynamic location (spec §dyn). */
 export const DYN: Location = { kind: "dyn" };
 
 export function isDyn(location: Location): boolean {
@@ -92,7 +92,7 @@ export function residesAt(location: Location, endpoint: string): boolean {
     case "every":
       return true;
     // Every endpoint holds a `__DynVal` for a `dyn` value; which of them owns
-    // the payload is decided at run time (spec-dyn.md, section 2.1).
+    // the payload is decided at run time (spec §location-matching-and-residency).
     case "dyn":
       return true;
     case "individual":

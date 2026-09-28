@@ -391,7 +391,7 @@ describe("communication consistency — broadcast sender binding", () => {
   });
 });
 
-describe("communication consistency — dynamic transfers (spec-dyn.md, section 11)", () => {
+describe("communication consistency — dynamic transfers (spec §dynamic-transfer)", () => {
   function str(value: string) {
     return { kind: "StringLiteralExpression" as const, value, span };
   }

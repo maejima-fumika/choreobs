@@ -268,7 +268,7 @@ class Projector {
 
     if (parts.mode === "dynamic") {
       // `lowerDyn` turns every dynamic transfer into a `let` or an assignment
-      // of `__dynTransfer(...)` (spec-dyn.md, section 3.5).
+      // of `__dynTransfer(...)` (spec §dynamic-transfer).
       throw new Error(
         `internal error: dynamic transfer '${parts.name}' reached endpoint projection unlowered`,
       );
@@ -486,7 +486,7 @@ class Projector {
     }
   }
 
-  /** A bare expression in a header slot: a dynamic element assignment (spec-dyn.md, section 12.2). */
+  /** A bare expression in a header slot: a dynamic element assignment (spec §dyn-lowering). */
   private projectForExpressionInit(
     init: TypedForExpressionInit,
   ): import("../ir/projected.js").ProjectedForExpressionInit {
@@ -693,7 +693,7 @@ class Projector {
    * values, so {@link projectCall} projects them normally.
    *
    * Nested `nothing(...)` artifacts are left nested; flattening them is not
-   * part of Core v0 (spec §projected-ast-cleanup).
+   * part of ChoreoBS v1 (spec §projected-ast-cleanup).
    */
   private projectDiscarded(expr: TypedExpression): ProjectedExpression {
     const span = expr.expr.span;
@@ -800,8 +800,8 @@ class Projector {
 
   /**
    * A dynamic operation is a call to the runtime, and every endpoint makes it,
-   * exactly as every endpoint calls a choreography function (spec-dyn.md,
-   * section 8.2). That holds where the result does not reside here too:
+   * exactly as every endpoint calls a choreography function (spec §dyn-lowering,
+   * §calls-survive-an-absent-result). That holds where the result does not reside here too:
    * `__cast(v, "alice")` still binds `v`'s location at bob, and every endpoint
    * must add the same constraints in the same order.
    */
@@ -830,7 +830,7 @@ class Projector {
     if (!this.residesHere(type.location)) {
       return { kind: "AbsentType" };
     }
-    // `T@dyn` and `T[]@dyn` are `__DynVal` at every endpoint (spec-dyn.md, section 8.1).
+    // `T@dyn` and `T[]@dyn` are `__DynVal` at every endpoint (spec §type-projection).
     if (type.location.kind === "dyn") {
       return { kind: "PresentType", base: DYN_VALUE_TYPE };
     }
@@ -934,7 +934,7 @@ class Projector {
    * here, in the order the source evaluates them (spec §evaluation-order).
    *
    * For `xs[i] = v` that is the index and then the value; the receiver `xs` is
-   * an identifier in Core v0, so evaluating it has no effect to preserve.
+   * an identifier in ChoreoBS v1, so evaluating it has no effect to preserve.
    */
   private discardedTargetParts(
     target: import("../ast/typed.js").TypedAssignmentTarget,

@@ -330,7 +330,7 @@ function fact@alice(n: integer@alice): integer@alice {
       );
     });
 
-    // In the default mode both of these are `@dyn` instead (spec-dyn.md, section 4.1).
+    // In the default mode both of these are `@dyn` instead (spec §omitted-locations).
     it("rejects top-level let when initializer omits location, in strict mode (§explicit-location-annotations)", () => {
       expectTypeCheckFailure("let x = 1;", "location", aliceBobStrict);
     });
@@ -399,7 +399,7 @@ function bad@alice(c: boolean@alice) {
       );
     });
 
-    // In the default mode the return type is `integer@dyn` instead (spec-dyn.md, section 4.3).
+    // In the default mode the return type is `integer@dyn` instead (spec §function-return-type-inference).
     it("rejects incompatible inferred return locations, in strict mode (§function-return-type-inference)", () => {
       expectTypeCheckFailure(
         `

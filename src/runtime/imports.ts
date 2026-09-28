@@ -13,11 +13,11 @@ import {
 
 /**
  * The runtime names one endpoint's program uses, in import order
- * (spec-dyn.md, section 7.3): the `__DynVal` type if anything is declared with
+ * (spec §runtime-import): the `__DynVal` type if anything is declared with
  * it, and each runtime function it calls.
  *
  * Empty exactly when the program has no `dyn` in it, and then nothing is
- * imported and no runtime file is written (section 7.2).
+ * imported and no runtime file is written (spec §runtime-files).
  */
 export function runtimeImports(program: ProjectedProgram): readonly string[] {
   const used = new Set<string>();

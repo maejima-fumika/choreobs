@@ -33,7 +33,10 @@ describe("config — validateEndpoints (spec §choreobs-json)", () => {
   it("rejects 'every' as an endpoint name", () => {
     assert.deepEqual(
       validateEndpoints(["alice", "every"]),
-      { message: "'every' must not appear in endpoints", spec: ["choreobs-json"] },
+      {
+        message: "'every' must not appear in endpoints",
+        spec: ["choreobs-json", "using-every-as-an-endpoint"],
+      },
     );
   });
 
@@ -114,14 +117,20 @@ describe("config — validateEndpoints (spec §choreobs-json)", () => {
     // catch it — with a message that does not say why (spec §choreobs-json).
     assert.deepEqual(
       validateEndpoints(["every"]),
-      { message: "'every' must not appear in endpoints", spec: ["choreobs-json"] },
+      {
+        message: "'every' must not appear in endpoints",
+        spec: ["choreobs-json", "using-every-as-an-endpoint"],
+      },
     );
   });
 
   it("checks 'every' before duplicates", () => {
     assert.deepEqual(
       validateEndpoints(["alice", "alice", "every"]),
-      { message: "'every' must not appear in endpoints", spec: ["choreobs-json"] },
+      {
+        message: "'every' must not appear in endpoints",
+        spec: ["choreobs-json", "using-every-as-an-endpoint"],
+      },
     );
   });
 });
@@ -156,21 +165,21 @@ describe("config — loadConfig", () => {
         (e: Error) => {
           assert.ok(e instanceof ConfigError);
           assert.equal(e.message, `${path}: 'every' must not appear in endpoints`);
-          assert.deepEqual(e.spec, ["choreobs-json"]);
+          assert.deepEqual(e.spec, ["choreobs-json", "using-every-as-an-endpoint"]);
           return true;
         },
       );
     });
   });
 
-  it("rejects 'dyn' as an endpoint name (spec-dyn.md, section 2)", () => {
+  it("rejects 'dyn' as an endpoint name (spec §using-every-as-an-endpoint)", () => {
     assert.deepEqual(validateEndpoints(["alice", "dyn"]), {
       message: "'dyn' must not appear in endpoints",
-      spec: ["choreobs-json"],
+      spec: ["choreobs-json", "using-every-as-an-endpoint"],
     });
   });
 
-  it("reads implicitDyn, and leaves it out when absent (spec-dyn.md, section 4.2)", () => {
+  it("reads implicitDyn, and leaves it out when absent (spec §strict-mode)", () => {
     withConfig(JSON.stringify({ endpoints: ["alice"], implicitDyn: false }), (path) => {
       assert.deepEqual(loadConfig(path), { endpoints: ["alice"], implicitDyn: false });
     });
@@ -179,14 +188,14 @@ describe("config — loadConfig", () => {
     });
   });
 
-  it("rejects a non-boolean implicitDyn", () => {
+  it("rejects a non-boolean implicitDyn (spec §invalid-implicit-dyn)", () => {
     withConfig(JSON.stringify({ endpoints: ["alice"], implicitDyn: "no" }), (path) => {
       assert.throws(
         () => loadConfig(path),
         (e: Error) => {
           assert.ok(e instanceof ConfigError);
           assert.equal(e.message, `${path}: "implicitDyn" must be a boolean`);
-          assert.deepEqual(e.spec, ["choreobs-json"]);
+          assert.deepEqual(e.spec, ["choreobs-json", "invalid-implicit-dyn"]);
           return true;
         },
       );

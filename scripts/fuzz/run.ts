@@ -37,7 +37,7 @@ function parseArgs(argv: readonly string[]) {
     maxTopStatements: Number(get("--maxstmt", "8")),
     /** Draw a random endpoint subset per seed instead of using the whole list. */
     vary: argv.includes("--vary"),
-    /** Leave `@dyn` out of the generated programs (spec-dyn.md). */
+    /** Leave `@dyn` out of the generated programs (spec §dyn). */
     noDyn: argv.includes("--no-dyn"),
   };
 }
@@ -51,7 +51,7 @@ function inspectOutputs(
     return `expected ${endpoints.length} outputs, got ${result.outputs.length}`;
   }
   // The runtime comes for every endpoint or for none, and exactly when some
-  // endpoint's program imports from it (spec-dyn.md, sections 7.2 and 7.3).
+  // endpoint's program imports from it (spec §runtime-files, §runtime-import).
   const imports = result.outputs.some((o) => o.source.startsWith("import "));
   const expectedRuntime = imports ? endpoints.length : 0;
   if (result.runtimeOutputs.length !== expectedRuntime) {
@@ -107,7 +107,7 @@ function run(): void {
       ? args.endpoints.slice(0, 2 + (seed % (args.endpoints.length - 1)))
       : args.endpoints;
     // Every other seed is written for strict mode: its `dyn` is all spelled
-    // out (spec-dyn.md, section 4.2), which is checked below.
+    // out (spec §strict-mode), which is checked below.
     const strict = !args.noDyn && seed % 2 === 0;
     const program = generate({
       seed,
@@ -208,7 +208,7 @@ function run(): void {
     }
 
     // Metamorphic: a program that writes all its `dyn` out means the same in
-    // either mode (spec-dyn.md, section 4.2).
+    // either mode (spec §strict-mode).
     if (strict) {
       const implicit = compileSource(program.source, "index.cbs", { endpoints });
       const same =

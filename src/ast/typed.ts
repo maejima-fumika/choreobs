@@ -52,7 +52,7 @@ export type CommTag = string;
 /**
  * How `<-` transfers a value (spec §transfer-typing).
  *
- * `dynamic` is a transfer with `dyn` on either side (spec-dyn.md, section 3.5).
+ * `dynamic` is a transfer with `dyn` on either side (spec §dynamic-transfer).
  * It is tagged like `direct` and `broadcast`, and `lowerDyn` then rewrites it
  * into a `let` or an assignment of `__dynTransfer(...)`, so endpoint projection
  * never sees one.
@@ -71,7 +71,7 @@ export interface TypedProgram {
 }
 
 /**
- * A typed program after `lowerDyn` (spec-dyn.md, section 8.2): every dynamic
+ * A typed program after `lowerDyn` (spec §dyn-lowering): every dynamic
  * operation is a {@link TypedRuntimeCallExpression}, every `dyn` value that
  * meets a concrete location has been injected or cast, and no transfer is
  * `dynamic`. What is left obeys the static location rules throughout.
@@ -204,7 +204,7 @@ export type TypedForUpdate = TypedForAssignmentInit | TypedForExpressionInit;
 /**
  * A `for` header slot holding a bare expression. The parser never makes one:
  * `lowerDyn` does, for a dynamic element assignment `xs[i] = v`, which becomes
- * the void call `__dynArraySet(xs, i, v)` (spec-dyn.md, section 12.2) and so is
+ * the void call `__dynArraySet(xs, i, v)` (spec §dyn-lowering) and so is
  * no longer an assignment. It projects to `ProjectedForExpressionInit`.
  */
 export interface TypedForExpressionInit {
@@ -244,7 +244,7 @@ export type TypedExpression =
 
 /**
  * A call to a function of the dynamic-location runtime — `__inject`, `__cast`,
- * `__dynPlus`, … (spec-dyn.md, section 8.2).
+ * `__dynPlus`, … (spec §dyn-lowering).
  *
  * Only `lowerDyn` builds these, so the syntax it stands in for is synthetic:
  * the span is that of the construct it came from. It projects like a call to

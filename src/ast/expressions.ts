@@ -64,7 +64,7 @@ export interface IdentifierExpression extends AstNode {
   readonly name: string;
 }
 
-/** `f(a, b)` — callee is always a simple identifier in v0 (spec §expressions). */
+/** `f(a, b)` — callee is always a simple identifier in v1 (spec §expressions). */
 export interface CallExpression extends AstNode {
   readonly kind: "CallExpression";
   readonly callee: string;

@@ -17,9 +17,9 @@ interface Configuration {
   readonly seed: number;
   readonly runs: number;
   readonly maxBlockDepth?: number;
-  /** Generate `@dyn` (spec-dyn.md). */
+  /** Generate `@dyn` (spec §dyn). */
   readonly dyn?: boolean;
-  /** Compile in strict mode, and generate no omissions for it (spec-dyn.md, section 4.2). */
+  /** Compile in strict mode, and generate no omissions for it (spec §strict-mode). */
   readonly strict?: boolean;
 }
 

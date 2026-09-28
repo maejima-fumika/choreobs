@@ -44,7 +44,10 @@ export function loadConfig(path: string): ChoreoBSConfig {
     return { endpoints: names };
   }
   if (typeof implicitDyn !== "boolean") {
-    throw new ConfigError(`${path}: "implicitDyn" must be a boolean`, ["choreobs-json"]);
+    throw new ConfigError(`${path}: "implicitDyn" must be a boolean`, [
+      "choreobs-json",
+      "invalid-implicit-dyn",
+    ]);
   }
   return { endpoints: names, implicitDyn };
 }

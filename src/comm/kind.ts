@@ -7,7 +7,7 @@ import { specRef } from "../spec/ref.js";
  *
  * Endpoint projection picks the send, receive, broadcast and clone functions
  * by it, and a dynamic transfer passes it to the runtime as its `kind`
- * argument (spec-dyn.md, section 11), which dispatches on it the same way.
+ * argument (spec §dynamic-transfer), which dispatches on it the same way.
  *
  * Exhaustive on purpose. An earlier version defaulted every unrecognised base
  * type to `"integer"`, which silently emitted `sendInteger` for values that

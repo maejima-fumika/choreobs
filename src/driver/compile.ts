@@ -52,7 +52,7 @@ export interface CompileResult {
   readonly outputs: readonly CompileOutput[];
   /**
    * `__runtime_<endpoint>.bs` for each endpoint, for a program that uses `dyn`;
-   * empty otherwise (spec-dyn.md, sections 7.1–7.2). Kept apart from `outputs`,
+   * empty otherwise (spec §output-files, §runtime-files). Kept apart from `outputs`,
    * which hold the endpoint programs alone.
    */
   readonly runtimeOutputs: readonly CompileOutput[];
@@ -102,7 +102,7 @@ export function compileSource(
   }
 
   // The compiler writes `__runtime_<endpoint>.bs` next to the outputs
-  // (spec-dyn.md, section 7.1), so an input whose name took the reserved `__`
+  // (spec §output-files), so an input whose name took the reserved `__`
   // prefix could have its own output overwritten by it (spec §input-files,
   // §identifiers).
   if (basename(cbsPath).startsWith(COMPILER_NAME_PREFIX)) {
@@ -112,7 +112,7 @@ export function compileSource(
       runtimeOutputs: [],
       errors: [{
         message: `input file name '${basename(cbsPath)}' must not begin with '${COMPILER_NAME_PREFIX}', which is reserved for the compiler`,
-        spec: ["input-files"],
+        spec: ["input-files", "reserved-input-file-name"],
       }],
     };
   }
@@ -132,9 +132,9 @@ export function compileSource(
   }
 
   // Tagging -> dyn lowering -> EPP -> absent finalization -> cleanup -> emission
-  // (spec §communication-tags, §absent-finalization, §projected-ast-cleanup;
-  // spec-dyn.md, section 8.2). Lowering comes after tagging so that a dynamic
-  // transfer is numbered with the static ones, in source order (section 11.1).
+  // (spec §communication-tags, §dyn-lowering, §absent-finalization,
+  // §projected-ast-cleanup). Lowering comes after tagging so that a dynamic
+  // transfer is numbered with the static ones, in source order (spec §communication-tags).
   const tagged = assignCommTags(checked.typed);
   const lowered = lowerDyn(tagged);
   verifyLowered(lowered);
@@ -168,7 +168,7 @@ export function compileSource(
   }
 
   // The runtime is written only for a program that uses it, and then for every
-  // endpoint (spec-dyn.md, section 7.2): a `dyn` value lives at all of them.
+  // endpoint (spec §runtime-files): a `dyn` value lives at all of them.
   const usesDyn = cleaned.some((program) => runtimeImports(program).length > 0);
   const runtimeOutputs: CompileOutput[] = usesDyn
     ? config.endpoints.map((endpoint) => ({

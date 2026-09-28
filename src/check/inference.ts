@@ -56,14 +56,14 @@ export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
 
 /**
  * What return inference does with two different concrete locations
- * (spec-dyn.md, sections 4.2 and 4.3): make the result `dyn`, or report it.
+ * (spec §strict-mode, §function-return-type-inference): make the result `dyn`, or report it.
  */
 export type IncompatibleLocations = "dyn" | "error";
 
 /**
  * Least upper bound on locations for return inference (spec §function-return-type-inference).
  *
- * This is `⊔` (spec-dyn.md, section 3.1): a location with itself, and `dyn`
+ * This is `⊔` (spec §location-consistency-and-join): a location with itself, and `dyn`
  * with anything. Two different concrete locations have none; what happens
  * then is the caller's choice, because it depends on the mode.
  */
@@ -193,7 +193,7 @@ export function inferReturnTypeFromCandidates(
 
 /**
  * The location of a return type whose base is written and whose location is
- * not — `function f(): integer { … }` (spec-dyn.md, section 4.3). The location
+ * not — `function f(): integer { … }` (spec §partial-return-annotations). The location
  * comes from the values returned, like a fully omitted return type's; the base
  * is the annotation's, and the ordinary return checks compare it later.
  *

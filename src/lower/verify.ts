@@ -45,9 +45,9 @@ import {
 import type { DynRuntimeFunction } from "../runtime/dyn.js";
 
 /**
- * Checks what `lowerDyn` promises (spec-dyn.md, section 8.2): the lowered
+ * Checks what `lowerDyn` promises (spec §dyn-lowering): the lowered
  * program obeys the *static* location rules, with the runtime functions typed
- * as in the table of section 8.2.
+ * as in the table of spec §runtime-functions.
  *
  * The checker accepts a `dyn` value wherever `~` holds, and `lowerDyn` must
  * then insert an inject or a cast at exactly those places. A place it misses
@@ -71,7 +71,7 @@ export function verifyLowered(program: LoweredProgram): void {
   }
 }
 
-/** How a runtime function's argument is typed (spec-dyn.md, section 8.2). */
+/** How a runtime function's argument is typed (spec §dyn-lowering). */
 type ArgumentShape =
   /** A `T@dyn` value. */
   | "dyn"
@@ -126,9 +126,9 @@ const SIGNATURES: Readonly<Record<DynRuntimeFunction, Signature>> = {
 class LoweredVerifier {
   /**
    * The context of the item being checked. A local function holds no `dyn` at
-   * all (spec-dyn.md, section 3.6) — no value, type or runtime call. That is
+   * all (spec §local-function-strict-location-rule) — no value, type or runtime call. That is
    * one of the reasons every endpoint performs the same dynamic operations in
-   * the same order (section 1), so it is checked here rather than trusted.
+   * the same order (spec §dyn), so it is checked here rather than trusted.
    */
   constructor(private readonly context: ExecutionContext) {}
 

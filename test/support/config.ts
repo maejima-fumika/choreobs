@@ -13,7 +13,7 @@ export const aliceBobCarol: ChoreoBSConfig = {
 };
 
 /**
- * `aliceBob` in strict mode (spec-dyn.md, section 4.2): an omitted location
+ * `aliceBob` in strict mode (spec §strict-mode): an omitted location
  * that nothing infers is an error instead of `@dyn`. For the tests of those
  * errors, which the default mode no longer reports in choreography code.
  */
