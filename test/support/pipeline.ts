@@ -4,6 +4,7 @@ import { typeCheck, type TypeCheckResult } from "../../src/check/index.js";
 import type { TypedProgram } from "../../src/ast/typed.js";
 import { assignCommTags } from "../../src/comm/index.js";
 import { projectAll } from "../../src/epp/index.js";
+import { lowerDyn, verifyLowered } from "../../src/lower/index.js";
 import type { ProjectedProgram } from "../../src/ir/projected.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 import { aliceBob } from "./config.js";
@@ -53,5 +54,7 @@ export function projectSource(
   const { typed, errors: typeErrors } = typeCheck(program, config);
   assert.equal(typeErrors.length, 0, JSON.stringify(typeErrors));
   assert.ok(typed);
-  return projectAll(assignCommTags(typed), config.endpoints);
+  const lowered = lowerDyn(assignCommTags(typed));
+  verifyLowered(lowered);
+  return projectAll(lowered, config.endpoints);
 }

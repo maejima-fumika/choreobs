@@ -17,7 +17,6 @@ import type {
   Block,
 } from "./statements.js";
 import type {
-  Expression,
   BinaryExpression,
   UnaryExpression,
   ConversionExpression,
@@ -34,6 +33,8 @@ import type { LocatedLiteral } from "./literals.js";
 import type { TypeAnnotation } from "./syntax-types.js";
 import type { ExecutionContext } from "./context.js";
 import type { Location } from "./location.js";
+import type { Span } from "./span.js";
+import type { DynRuntimeFunction } from "../runtime/dyn.js";
 
 /**
  * Fully resolved located type `T@L` after type-checking (spec §located-types).
@@ -48,8 +49,15 @@ export interface LocatedType {
 /** Communication tag assigned before EPP (spec §communication-tags). */
 export type CommTag = string;
 
-/** How `<-` transfers a value (spec §transfer-typing). */
-export type TransferMode = "direct" | "broadcast" | "localCopy";
+/**
+ * How `<-` transfers a value (spec §transfer-typing).
+ *
+ * `dynamic` is a transfer with `dyn` on either side (spec-dyn.md, section 3.5).
+ * It is tagged like `direct` and `broadcast`, and `lowerDyn` then rewrites it
+ * into a `let` or an assignment of `__dynTransfer(...)`, so endpoint projection
+ * never sees one.
+ */
+export type TransferMode = "direct" | "broadcast" | "localCopy" | "dynamic";
 
 // ---------------------------------------------------------------------------
 // Typed AST — mirrors syntactic nodes with `choreoType` and comm metadata.
@@ -58,6 +66,21 @@ export type TransferMode = "direct" | "broadcast" | "localCopy";
 
 export interface TypedProgram {
   readonly kind: "TypedProgram";
+  readonly program: Program;
+  readonly items: readonly TypedTopLevelItem[];
+}
+
+/**
+ * A typed program after `lowerDyn` (spec-dyn.md, section 8.2): every dynamic
+ * operation is a {@link TypedRuntimeCallExpression}, every `dyn` value that
+ * meets a concrete location has been injected or cast, and no transfer is
+ * `dynamic`. What is left obeys the static location rules throughout.
+ *
+ * Endpoint projection takes only this, so that no entry point can skip the
+ * lowering the way one once skipped tag assignment.
+ */
+export interface LoweredProgram {
+  readonly kind: "LoweredProgram";
   readonly program: Program;
   readonly items: readonly TypedTopLevelItem[];
 }
@@ -159,7 +182,10 @@ export interface TypedForStatement {
   readonly body: TypedBlock;
 }
 
-export type TypedForInit = TypedForLetInit | TypedForAssignmentInit;
+export type TypedForInit =
+  | TypedForLetInit
+  | TypedForAssignmentInit
+  | TypedForExpressionInit;
 
 export interface TypedForLetInit {
   readonly init: ForLetInit;
@@ -173,7 +199,18 @@ export interface TypedForAssignmentInit {
   readonly value: TypedExpression;
 }
 
-export type TypedForUpdate = TypedForAssignmentInit;
+export type TypedForUpdate = TypedForAssignmentInit | TypedForExpressionInit;
+
+/**
+ * A `for` header slot holding a bare expression. The parser never makes one:
+ * `lowerDyn` does, for a dynamic element assignment `xs[i] = v`, which becomes
+ * the void call `__dynArraySet(xs, i, v)` (spec-dyn.md, section 12.2) and so is
+ * no longer an assignment. It projects to `ProjectedForExpressionInit`.
+ */
+export interface TypedForExpressionInit {
+  readonly init: { readonly kind: "ForExpressionInit"; readonly span: Span };
+  readonly expression: TypedExpression;
+}
 
 export interface TypedReturnStatement {
   readonly stmt: ReturnStatement;
@@ -202,7 +239,24 @@ export type TypedExpression =
   | TypedIndexExpression
   | TypedLengthExpression
   | TypedPushExpression
-  | TypedParenthesizedExpression;
+  | TypedParenthesizedExpression
+  | TypedRuntimeCallExpression;
+
+/**
+ * A call to a function of the dynamic-location runtime — `__inject`, `__cast`,
+ * `__dynPlus`, … (spec-dyn.md, section 8.2).
+ *
+ * Only `lowerDyn` builds these, so the syntax it stands in for is synthetic:
+ * the span is that of the construct it came from. It projects like a call to
+ * a choreography function, which every endpoint makes; that is all endpoint
+ * projection needs to know about dynamic operations.
+ */
+export interface TypedRuntimeCallExpression {
+  readonly expr: { readonly kind: "RuntimeCallExpression"; readonly span: Span };
+  readonly choreoType: LocatedType;
+  readonly callee: DynRuntimeFunction;
+  readonly args: readonly TypedExpression[];
+}
 
 export interface TypedBinaryExpression {
   readonly expr: BinaryExpression;
@@ -289,7 +343,7 @@ export interface FunctionSymbol {
 }
 
 /** Narrow typed expressions by syntactic kind. */
-export type TypedExpressionOf<K extends Expression["kind"]> = Extract<
+export type TypedExpressionOf<K extends TypedExpression["expr"]["kind"]> = Extract<
   TypedExpression,
   { readonly expr: { readonly kind: K } }
 >;

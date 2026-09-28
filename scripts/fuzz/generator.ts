@@ -19,7 +19,7 @@ export interface Ty {
   readonly isArray: boolean;
 }
 
-/** An endpoint name, or `every`. */
+/** An endpoint name, `every`, or `dyn` (spec-dyn.md, section 2). */
 export type Loc = string;
 
 interface Binding {
@@ -51,6 +51,19 @@ export interface GenOptions {
   readonly maxTopStatements?: number;
   readonly maxExprDepth?: number;
   readonly maxBlockDepth?: number;
+  /**
+   * Generate `@dyn` too (spec-dyn.md): dynamic variables, literals, arrays,
+   * parameters, return types and transfers, and dynamic values meeting
+   * concrete ones. Off by default; when off, the generator draws exactly the
+   * random numbers it always did, so a seed still names the same program.
+   */
+  readonly dyn?: boolean;
+  /**
+   * With `dyn`, whether the program may also leave locations out and have them
+   * be `dyn` (spec-dyn.md, section 4.1). Must be `false` for a program that is
+   * compiled with `"implicitDyn": false`. Defaults to `true`.
+   */
+  readonly implicitDyn?: boolean;
 }
 
 export interface GeneratedProgram {
@@ -156,12 +169,26 @@ class Generator {
   private injectionTarget = 0;
   private statementsSeen = 0;
   private injected: { id: string; context: string } | undefined;
+  /** Whether `@dyn` is generated at all (see {@link GenOptions.dyn}). */
+  private readonly dyn: boolean;
+  /** Whether omitted locations are generated for `dyn` (see {@link GenOptions.implicitDyn}). */
+  private readonly implicit: boolean;
+  /**
+   * Nonzero while generating an expression whose location is *observed*
+   * rather than checked with `~`: an inferred `let`, or the return of a
+   * function whose return location is inferred. There the expression must end
+   * up exactly where the generator records it, so no value is swapped for one
+   * at another location.
+   */
+  private exactDepth = 0;
 
   constructor(private readonly options: GenOptions) {
     this.rng = mulberry32(options.seed);
     this.endpoints = options.endpoints;
     this.maxExprDepth = options.maxExprDepth ?? 3;
     this.maxBlockDepth = options.maxBlockDepth ?? 2;
+    this.dyn = options.dyn === true;
+    this.implicit = this.dyn && options.implicitDyn !== false;
   }
 
   run(): GeneratedProgram {
@@ -251,7 +278,30 @@ class Generator {
     if (ctx.kind === "local") {
       return ctx.endpoint;
     }
+    // A local function never holds `dyn` (spec-dyn.md, section 3.6).
+    return this.pick(
+      this.dyn ? [...this.endpoints, "every", "dyn"] : [...this.endpoints, "every"],
+    );
+  }
+
+  /** A concrete location usable in a choreography context. */
+  private someConcreteLocation(): Loc {
     return this.pick([...this.endpoints, "every"]);
+  }
+
+  /** Generates with {@link exactDepth} raised, so nothing is swapped for `dyn`. */
+  private exactly<T>(body: () => T): T {
+    this.exactDepth += 1;
+    try {
+      return body();
+    } finally {
+      this.exactDepth -= 1;
+    }
+  }
+
+  /** Whether a value may be swapped for one at another, `~`-compatible location here. */
+  private mayMixLocations(ctx: Ctx): boolean {
+    return this.dyn && ctx.kind === "choreography" && this.exactDepth === 0;
   }
 
   private someType(allowArray = true): Ty {
@@ -265,10 +315,29 @@ class Generator {
     return `${ty.base}${ty.isArray ? "[]" : ""}@${loc}`;
   }
 
+  /**
+   * A parameter or transfer destination type. Where `dyn` may be left out,
+   * sometimes it is: an omitted location there means `dyn` (spec-dyn.md, section 4.1).
+   */
+  private formatOmissibleType(ty: Ty, loc: Loc): string {
+    if (this.implicit && loc === "dyn" && this.chance(0.4)) {
+      this.features.add("dyn:omitted type location");
+      return `${ty.base}${ty.isArray ? "[]" : ""}`;
+    }
+    return this.formatType(ty, loc);
+  }
+
   // --- coverage ---------------------------------------------------------
 
   /** spec §transfer-typing: the location pair decides how a transfer is carried out. */
-  private transferMode(src: Loc, dst: Loc): "localCopy" | "broadcast" | "direct" {
+  private transferMode(
+    src: Loc,
+    dst: Loc,
+  ): "localCopy" | "broadcast" | "direct" | "dynamic" {
+    // With `dyn` on either side the runtime decides (spec-dyn.md, section 3.5).
+    if (src === "dyn" || dst === "dyn") {
+      return "dynamic";
+    }
     if (src === "every" || src === dst) {
       return "localCopy";
     }
@@ -308,7 +377,13 @@ class Generator {
   // --- expressions ------------------------------------------------------
 
   private literal(base: Base, loc: Loc): string {
-    return `${this.bareLiteral(base)}@${loc}`;
+    const value = this.bareLiteral(base);
+    // A literal without a location is `c@dyn` (spec-dyn.md, section 4.1).
+    if (this.implicit && loc === "dyn" && this.chance(0.4)) {
+      this.features.add("dyn:omitted literal location");
+      return value;
+    }
+    return `${value}@${loc}`;
   }
 
   /** Array literal elements carry no location of their own (spec §array-literals). */
@@ -336,6 +411,13 @@ class Generator {
     ctx: Ctx,
     depth: number,
   ): string {
+    // A `dyn` value is `~` any location (spec-dyn.md, section 3.1), so it may
+    // stand anywhere a concrete one is asked for; the compiler casts it. Where
+    // the result is observed instead, `exactDepth` keeps it exact.
+    if (this.mayMixLocations(ctx) && loc !== "dyn" && this.chance(0.12)) {
+      this.features.add("dyn:cast");
+      return this.genExpr(ty, "dyn", scope, ctx, depth);
+    }
     const choices: (() => string)[] = [];
     const vars = this.varsOf(scope, ty, loc);
     if (vars.length > 0) {
@@ -427,7 +509,32 @@ class Generator {
     for (let i = 0; i < size; i += 1) {
       elements.push(this.bareLiteral(ty.base));
     }
+    // An unannotated array literal is `@dyn` (spec-dyn.md, section 5.2).
+    if (this.implicit && loc === "dyn" && this.chance(0.4)) {
+      this.features.add("dyn:unannotated array literal");
+      return `[${elements.join(", ")}]`;
+    }
     return `[${elements.join(", ")}]@${loc}`;
+  }
+
+  /**
+   * An expression for a position that places a single value at `loc` — a
+   * `let` initializer, an assigned value, an argument, a returned value. Such
+   * a position injects a concrete value into `dyn` (spec-dyn.md, section 3.3),
+   * so where `dyn` is asked for, a concrete value may come instead.
+   */
+  private genPlaced(
+    ty: Ty,
+    loc: Loc,
+    scope: readonly Binding[],
+    ctx: Ctx,
+    depth: number,
+  ): string {
+    if (this.mayMixLocations(ctx) && loc === "dyn" && this.chance(0.25)) {
+      this.features.add("dyn:inject");
+      return this.genExpr(ty, this.someConcreteLocation(), scope, ctx, depth);
+    }
+    return this.genExpr(ty, loc, scope, ctx, depth);
   }
 
   /**
@@ -447,7 +554,7 @@ class Generator {
     ctx: Ctx,
     depth: number,
   ): string {
-    const args = fn.params.map((p) => this.genExpr(p.ty, p.loc, scope, ctx, depth));
+    const args = fn.params.map((p) => this.genPlaced(p.ty, p.loc, scope, ctx, depth));
     return `${fn.name}(${args.join(", ")})`;
   }
 
@@ -528,17 +635,19 @@ class Generator {
     const name = this.declareName("v", scope, depth);
     // An empty array literal is only allowed against an explicit array type
     // with its own location annotation (spec §array-typing).
-    const init =
-      ty.isArray && this.chance(0.15)
-        ? `[]@${loc}`
-        : this.genExpr(
-            ty,
-            loc,
-            scope,
-            ctx,
-            1,
-          );
-    if (ty.isArray && init === `[]@${loc}`) {
+    const empty = ty.isArray && this.chance(0.15);
+    const init = empty
+      ? this.implicit && loc === "dyn" && this.chance(0.5)
+        ? `[]`
+        : `[]@${loc}`
+      : this.genPlaced(
+          ty,
+          loc,
+          scope,
+          ctx,
+          1,
+        );
+    if (empty) {
       this.features.add("array:empty literal");
     }
     this.emit(indent, `let ${name}: ${this.formatType(ty, loc)} = ${init};`);
@@ -554,7 +663,8 @@ class Generator {
     const ty = this.someType();
     const loc = this.someLocation(ctx);
     const name = this.declareName("v", scope, depth);
-    const init = this.genExpr(ty, loc, scope, ctx, 1);
+    // The binding is recorded at `loc`, so the initializer must end up there.
+    const init = this.exactly(() => this.genExpr(ty, loc, scope, ctx, 1));
     this.emit(indent, `let ${name} = ${init};`);
     scope.push({ name, ty, loc, depth });
   }
@@ -572,7 +682,7 @@ class Generator {
     const name = this.declareName("t", scope, depth);
     const source = this.genExpr(ty, src, scope, ctx, 1);
     this.recordTransfer(src, dst, ty);
-    this.emit(indent, `let ${name}: ${this.formatType(ty, dst)} <- ${source};`);
+    this.emit(indent, `let ${name}: ${this.formatOmissibleType(ty, dst)} <- ${source};`);
     scope.push({ name, ty, loc: dst, depth });
   }
 
@@ -586,7 +696,7 @@ class Generator {
     if (target === undefined) {
       return this.genLetAnnotated(scope, ctx, indent, depth);
     }
-    const value = this.genExpr(
+    const value = this.genPlaced(
       target.ty,
       target.loc,
       scope,
@@ -715,13 +825,20 @@ class Generator {
   }
 
   private genFor(scope: Binding[], ctx: Ctx, blockDepth: number, indent: string): void {
-    const loc = this.ctxLocation(ctx);
+    let loc = this.ctxLocation(ctx);
     const i = this.fresh("i");
     const bound = this.int(1, 5);
-    this.emit(
-      indent,
-      `for (let ${i}: integer@${loc} = 0@${loc}; ${i} < ${bound}@${loc}; ${i} = ${i} + 1@${loc}) {`,
-    );
+    let header = `for (let ${i}: integer@${loc} = 0@${loc}; ${i} < ${bound}@${loc}; ${i} = ${i} + 1@${loc}) {`;
+    // A `dyn` counter: its condition is cast to `every` each time round
+    // (spec-dyn.md, section 15), in the written or the omitted form.
+    if (this.dyn && ctx.kind === "choreography" && this.chance(0.3)) {
+      loc = "dyn";
+      this.features.add("dyn:for counter");
+      header = this.implicit && this.chance(0.5)
+        ? `for (let ${i} = 0; ${i} < ${bound}; ${i} = ${i} + 1) {`
+        : `for (let ${i}: integer@dyn = 0@dyn; ${i} < ${bound}@dyn; ${i} = ${i} + 1@dyn) {`;
+    }
+    this.emit(indent, header);
     const inner: Binding[] = [
       ...scope,
       { name: i, ty: INTEGER, loc, depth: blockDepth + 1 },
@@ -753,6 +870,11 @@ class Generator {
     "everyValueInLocalFunction",
     "otherLocationInLocalFunction",
     "transferDestinationInLocalFunction",
+    "literalWithoutLocationInLocal",
+    "arrayLiteralWithoutLocationInLocal",
+    "dynValueInLocalFunction",
+    "dynVariableInLocalFunction",
+    "dynArrayLiteralInLocalFunction",
   ]);
 
   /**
@@ -813,6 +935,7 @@ class Generator {
         depth: 0,
       });
     }
+    const paramTypes = params.map((p) => this.formatOmissibleType(p.ty, p.loc));
 
     const returnsValue = this.chance(0.6);
     const ret = returnsValue
@@ -827,12 +950,24 @@ class Generator {
     }
     this.features.add(at === undefined ? "function:choreography" : "function:local");
 
+    // `function f(): T { … }` writes the base only; the location is inferred
+    // from the return, like an omitted return type's (spec-dyn.md, section 4.3).
+    const partialReturnType =
+      this.dyn && ctx.kind === "choreography" && ret !== undefined && !omitReturnType &&
+      this.chance(0.25);
+    if (partialReturnType) {
+      this.features.add("dyn:partial return type");
+    }
     const annotation = omitReturnType
       ? ""
-      : `: ${ret === undefined ? "void" : this.formatType(ret.ty, ret.loc)}`;
+      : ret === undefined
+        ? ": void"
+        : partialReturnType
+          ? `: ${ret.ty.base}${ret.ty.isArray ? "[]" : ""}`
+          : `: ${this.formatType(ret.ty, ret.loc)}`;
     const header =
       `function ${name}${at === undefined ? "" : `@${at}`}` +
-      `(${params.map((p) => `${p.name}: ${this.formatType(p.ty, p.loc)}`).join(", ")})` +
+      `(${params.map((p, i) => `${p.name}: ${paramTypes[i]}`).join(", ")})` +
       `${annotation} {`;
 
     this.emit("", header);
@@ -857,8 +992,12 @@ class Generator {
         };
       } else if (ret === undefined) {
         this.emit("    ", `return;`);
+      } else if (omitReturnType || partialReturnType) {
+        // The return location is inferred from this, so it must be `ret.loc` exactly.
+        const value = this.exactly(() => this.genExpr(ret.ty, ret.loc, scope, ctx, 1));
+        this.emit("    ", `return ${value};`);
       } else {
-        this.emit("    ", `return ${this.genExpr(ret.ty, ret.loc, scope, ctx, 1)};`);
+        this.emit("    ", `return ${this.genPlaced(ret.ty, ret.loc, scope, ctx, 1)};`);
       }
     });
     this.emit("", `}`);
@@ -1185,6 +1324,87 @@ class Generator {
         lines.push(`${target.name}(${args.join(", ")});`);
         break;
       }
+      // Omission is `dyn` only in a choreography context; a local function
+      // must still write every location (spec-dyn.md, sections 3.6 and 4.4).
+      case "literalWithoutLocationInLocal":
+        if (choreography) return false;
+        lines.push(`let ${n}: integer@${p} = 1;`);
+        break;
+      case "arrayLiteralWithoutLocationInLocal":
+        if (choreography) return false;
+        lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
+        break;
+      // `dyn` has no place in a local function (spec-dyn.md, section 3.6).
+      case "dynValueInLocalFunction":
+        if (choreography) return false;
+        lines.push(`let ${n}: integer@${p} = 1@dyn;`);
+        break;
+      case "dynVariableInLocalFunction":
+        if (choreography) return false;
+        lines.push(`let ${n}: integer@dyn = 1@${p};`);
+        break;
+      case "dynArrayLiteralInLocalFunction":
+        if (choreography) return false;
+        lines.push(`[1, 2]@dyn;`);
+        break;
+      case "dynFunctionLocation":
+        // A function declaration is a top-level item.
+        if (!choreography || this.enclosing.length > 0) return false;
+        lines.push(`function ${n}@dyn(): void {`, `    return;`, `}`);
+        break;
+      // `dyn` defers the location check only; base types are as static as ever
+      // (spec-dyn.md, section 1).
+      case "dynNumericAssignMismatch":
+        if (!choreography) return false;
+        lines.push(`let ${n}: float@dyn = 1@${p};`);
+        break;
+      case "dynTransferNumericWidening":
+        if (!choreography) return false;
+        lines.push(`let ${n}: float@${q} <- 1@dyn;`);
+        break;
+      case "dynMixedNumericArithmetic":
+        if (!choreography) return false;
+        lines.push(`let ${n} = 1@dyn + 1.5@dyn;`);
+        break;
+      case "dynArrayInvariance":
+        if (!choreography) return false;
+        lines.push(`let ${n}: float[]@dyn = [1, 2]@dyn;`);
+        break;
+      // `~` is not transitive: two different concrete locations in one
+      // construct are an error even with `dyn` among them (spec-dyn.md, section 3.1).
+      case "dynIndexAssignMixedConcrete":
+        if (!choreography) return false;
+        lines.push(`let ${n}: integer[]@dyn = [1]@dyn;`);
+        lines.push(`${n}[0@${p}] = 1@${q};`);
+        break;
+      case "dynArrayLiteralMixedConcrete":
+        if (!choreography) return false;
+        lines.push(`let ${n} = [1@${p}, 2@${q}]@dyn;`);
+        break;
+      // Strict mode: an omission that would be `dyn` is an error (spec-dyn.md, section 4.2).
+      case "transferLetOmittedDestinationStrict":
+        if (!choreography) return false;
+        lines.push(`let ${n}: integer <- 1@${p};`);
+        break;
+      case "omittedParameterLocationStrict":
+        if (!choreography || this.enclosing.length > 0) return false;
+        lines.push(`function ${n}(a: integer): void {`, `    return;`, `}`);
+        break;
+      case "incompatibleInferredReturnLocationsStrict":
+      case "partialReturnIncompatibleStrict": {
+        if (!choreography || this.enclosing.length > 0) return false;
+        const annotation = id === "partialReturnIncompatibleStrict" ? ": integer" : "";
+        lines.push(
+          `function ${n}(c: boolean@every)${annotation} {`,
+          `    if (c) {`,
+          `        return 1@${p};`,
+          `    } else {`,
+          `        return 1@${q};`,
+          `    }`,
+          `}`,
+        );
+        break;
+      }
       default:
         return false;
     }
@@ -1210,6 +1430,11 @@ export interface ViolationInfo {
   readonly id: string;
   /** The rule the injected program breaks. Checked against spec.md by the compiler. */
   readonly spec: SpecId;
+  /**
+   * Compile with `"implicitDyn": false` (spec-dyn.md, section 4.2). The
+   * violation is an omission that the default mode reads as `dyn`.
+   */
+  readonly strict?: true;
   /**
    * Prose the rejection must mention, for violations whose diagnostic does not
    * cite `spec` yet, or where one section covers several of them. Empty means
@@ -1260,7 +1485,7 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   },
   { id: "reservedCompilerPrefix", spec: "function-names", expect: ["reserved runtime name"] },
   { id: "voidValue", spec: "invalid-use-of-void", expect: ["produces no value"] },
-  { id: "arrayLiteralWithLocatedElements", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
+  { id: "arrayLiteralWithLocatedElements", spec: "array-literal-without-required-location", expect: ["location annotation required"], strict: true },
   { id: "transferDestinationInLocalFunction", spec: "local-function-strict-location-rule", expect: ["variable type must be located at"] },
   { id: "missingReturnValue", spec: "missing-return-in-a-non-void-function", expect: [] },
   { id: "unknownEndpoint", spec: "unknown-endpoint", expect: ["nosuchendpoint"] },
@@ -1276,11 +1501,11 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
     spec: "err-name-already-held",
     expect: ["is a function name and cannot be used as a"],
   },
-  { id: "arrayLiteralWithoutLocation", spec: "array-literal-without-required-location", expect: ["location"] },
+  { id: "arrayLiteralWithoutLocation", spec: "array-literal-without-required-location", expect: ["location"], strict: true },
   { id: "nestedArray", spec: "nested-array", expect: ["nested", "array"] },
   { id: "typeMismatch", spec: "type-mismatch", expect: ["cannot assign boolean"] },
   { id: "uninitializedLet", spec: "uninitialized-let", expect: ["=", "<-"] },
-  { id: "literalWithoutLocation", spec: "location-annotation-omission", expect: ["location"] },
+  { id: "literalWithoutLocation", spec: "location-annotation-omission", expect: ["location"], strict: true },
   { id: "emptyArrayWithoutType", spec: "cannot-infer-empty-array-element-type", expect: ["element type", "empty"] },
   { id: "stringArray", spec: "unsupported-array-element-type", expect: ["array element type"] },
   { id: "breakStatement", spec: "err-break-and-continue", expect: ["break"] },
@@ -1290,6 +1515,24 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "everyArrayArgumentToIndividual", spec: "err-every-array-argument", expect: ["argument", "every", "cannot"] },
   { id: "crossEndpointLocalCall", spec: "calling-another-endpoints-local-function", expect: ["cannot call"] },
   { id: "choreographyCallFromLocal", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
+  // Gradual locating (spec-dyn.md). None of these needs the generator's own
+  // `dyn` mode: each writes its `dyn` out.
+  { id: "literalWithoutLocationInLocal", spec: "location-annotation-omission", expect: ["location annotation required"] },
+  { id: "arrayLiteralWithoutLocationInLocal", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
+  { id: "dynValueInLocalFunction", spec: "local-function-strict-location-rule", expect: ["'dyn' cannot be used in a local function"] },
+  { id: "dynVariableInLocalFunction", spec: "local-function-strict-location-rule", expect: ["'dyn' cannot be used in a local function"] },
+  { id: "dynArrayLiteralInLocalFunction", spec: "local-function-strict-location-rule", expect: ["'dyn' cannot be used in a local function"] },
+  { id: "dynFunctionLocation", spec: "function-kinds", expect: ["'dyn' is not a function location"] },
+  { id: "dynNumericAssignMismatch", spec: "type-mismatch", expect: ["cannot assign integer"] },
+  { id: "dynTransferNumericWidening", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
+  { id: "dynMixedNumericArithmetic", spec: "invalid-arithmetic-or-logical-operand", expect: ["same numeric type"] },
+  { id: "dynArrayInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
+  { id: "dynIndexAssignMixedConcrete", spec: "array-typing", expect: ["must not be at different locations"] },
+  { id: "dynArrayLiteralMixedConcrete", spec: "array-literals", expect: ["must not be at different locations"] },
+  { id: "transferLetOmittedDestinationStrict", spec: "transfer-let-does-not-infer-destination-type", expect: [], strict: true },
+  { id: "omittedParameterLocationStrict", spec: "location-annotation-omission", expect: ["location annotation required"], strict: true },
+  { id: "incompatibleInferredReturnLocationsStrict", spec: "incompatible-inferred-return-locations", expect: [], strict: true },
+  { id: "partialReturnIncompatibleStrict", spec: "incompatible-inferred-return-locations", expect: [], strict: true },
 ];
 
 export const VIOLATION_IDS: readonly string[] = VIOLATIONS.map((v) => v.id);

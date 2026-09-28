@@ -27,13 +27,55 @@ export function isArraySubtype(source: LocatedType, target: LocatedType): boolea
  * `<-` transfer.
  */
 export function locationsEqual(a: Location, b: Location): boolean {
-  if (a.kind !== b.kind) {
-    return false;
+  if (a.kind === "individual") {
+    return b.kind === "individual" && a.name === b.name;
   }
-  if (a.kind === "every") {
-    return true;
+  return a.kind === b.kind;
+}
+
+/**
+ * `L1 ~ L2` (spec-dyn.md, section 3.1): the two locations may meet in one
+ * construct. `dyn` meets anything, and the check it stands for is deferred to
+ * run time; two concrete locations meet only when they are equal.
+ *
+ * `~` is not transitive — `alice ~ dyn` and `dyn ~ bob` both hold — so a
+ * construct with more than two locations uses {@link concreteLocationsAgree}.
+ */
+export function locationsCompatible(a: Location, b: Location): boolean {
+  return a.kind === "dyn" || b.kind === "dyn" || locationsEqual(a, b);
+}
+
+/**
+ * Whether the locations are pairwise `~` (spec-dyn.md, section 3.1): every
+ * concrete one among them is the same location. At most one concrete location
+ * may be involved; `dyn` is compatible with it.
+ */
+export function concreteLocationsAgree(locations: readonly Location[]): boolean {
+  const concrete = locations.filter((l) => l.kind !== "dyn");
+  return concrete.every((l) => locationsEqual(l, concrete[0]!));
+}
+
+/**
+ * `L1 ⊔ L2` (spec-dyn.md, section 3.1), defined only for `L1 ~ L2`: the
+ * location itself when the two are equal, `dyn` when either is `dyn`.
+ */
+export function joinLocations(a: Location, b: Location): Location {
+  if (a.kind === "dyn" || b.kind === "dyn") {
+    return DYN;
   }
-  return b.kind === "individual" && a.name === b.name;
+  return a;
+}
+
+/** The one dynamic location (spec-dyn.md, section 2). */
+export const DYN: Location = { kind: "dyn" };
+
+export function isDyn(location: Location): boolean {
+  return location.kind === "dyn";
+}
+
+/** `every`, `dyn` or the endpoint name — how a location is written after `@`. */
+export function formatLocation(location: Location): string {
+  return location.kind === "individual" ? location.name : location.kind;
 }
 
 /**
@@ -46,7 +88,16 @@ export function locationsEqual(a: Location, b: Location): boolean {
  * `T@alice` value. Only EPP may use this.
  */
 export function residesAt(location: Location, endpoint: string): boolean {
-  return location.kind === "every" || location.name === endpoint;
+  switch (location.kind) {
+    case "every":
+      return true;
+    // Every endpoint holds a `__DynVal` for a `dyn` value; which of them owns
+    // the payload is decided at run time (spec-dyn.md, section 2.1).
+    case "dyn":
+      return true;
+    case "individual":
+      return location.name === endpoint;
+  }
 }
 
 /** Execution context as the location that its statements must be located at. */
@@ -62,9 +113,7 @@ export function formatLocatedType(type: LocatedType): string {
   if (type.base === "void" && type.isArray !== true) {
     return head; // `void` has no location (spec §void)
   }
-  const loc =
-    type.location.kind === "every" ? "every" : type.location.name;
-  return `${head}@${loc}`;
+  return `${head}@${formatLocation(type.location)}`;
 }
 
 export function locatedType(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { checkSource, tagSource } from "../support/pipeline.js";
 import { assertCites } from "../support/spec.js";
+import { aliceBobStrict } from "../support/config.js";
 import type { TypedProgram } from "../../src/ast/typed.js";
 
 /**
@@ -1105,11 +1106,13 @@ for (let i: integer = 0@every; i < 3@every; i = i + 1@every) {
 
     it("does not infer the destination of a transfer let (spec §transfer-let-does-not-infer-destination-type)", () => {
       // Inferring from the source would make destination == source, turning
-      // every transfer into a no-op local copy.
+      // every transfer into a no-op local copy. In the default mode the
+      // destination is `dyn` instead (spec-dyn.md, section 4.1), so this is
+      // the strict mode's error.
       const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
 let y: integer <- x;
-`);
+`, aliceBobStrict);
       assert.equal(typed, null);
       assert.ok(
         errors.some((e) =>

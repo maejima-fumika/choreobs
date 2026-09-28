@@ -4,7 +4,13 @@ import type { BaseType } from "../ast/syntax-types.js";
 import type { Block, Statement } from "../ast/statements.js";
 import type { LocatedType } from "../ast/typed.js";
 import type { SpecRefs } from "../spec/ref.js";
-import { locationsEqual, locatedType } from "../types/located.js";
+import {
+  DYN,
+  formatLocation,
+  joinLocations,
+  locatedType,
+  locationsCompatible,
+} from "../types/located.js";
 
 export type InferOk<T> = { readonly ok: true; readonly value: T };
 export type InferErr = {
@@ -48,16 +54,33 @@ export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
   );
 }
 
-/** Least upper bound on locations for return inference (spec §function-return-type-inference). */
-export function lubLocation(a: Location, b: Location): InferResult<Location> {
-  if (locationsEqual(a, b)) {
-    return inferenceOk(a);
+/**
+ * What return inference does with two different concrete locations
+ * (spec-dyn.md, sections 4.2 and 4.3): make the result `dyn`, or report it.
+ */
+export type IncompatibleLocations = "dyn" | "error";
+
+/**
+ * Least upper bound on locations for return inference (spec §function-return-type-inference).
+ *
+ * This is `⊔` (spec-dyn.md, section 3.1): a location with itself, and `dyn`
+ * with anything. Two different concrete locations have none; what happens
+ * then is the caller's choice, because it depends on the mode.
+ */
+export function lubLocation(
+  a: Location,
+  b: Location,
+  onIncompatible: IncompatibleLocations = "error",
+): InferResult<Location> {
+  if (locationsCompatible(a, b)) {
+    return inferenceOk(joinLocations(a, b));
   }
-  const aName = a.kind === "every" ? "every" : a.name;
-  const bName = b.kind === "every" ? "every" : b.name;
+  if (onIncompatible === "dyn") {
+    return inferenceOk(DYN);
+  }
   return inferenceError(
-    `incompatible return locations: cannot compute least upper bound of ${aName} and ${bName}`,
-    ["function-return-type-inference"],
+    `incompatible return locations: cannot compute least upper bound of ${formatLocation(a)} and ${formatLocation(b)}`,
+    ["function-return-type-inference", "incompatible-inferred-return-locations"],
   );
 }
 
@@ -65,6 +88,7 @@ export function lubLocation(a: Location, b: Location): InferResult<Location> {
 export function lubLocatedType(
   a: LocatedType,
   b: LocatedType,
+  onIncompatible: IncompatibleLocations = "error",
 ): InferResult<LocatedType> {
   if (a.isArray || b.isArray) {
     if (a.isArray !== true || b.isArray !== true || a.base !== b.base) {
@@ -73,7 +97,7 @@ export function lubLocatedType(
         ["array-typing"],
       );
     }
-    const location = lubLocation(a.location, b.location);
+    const location = lubLocation(a.location, b.location, onIncompatible);
     if (!location.ok) {
       return location;
     }
@@ -83,7 +107,7 @@ export function lubLocatedType(
   if (!base.ok) {
     return base;
   }
-  const location = lubLocation(a.location, b.location);
+  const location = lubLocation(a.location, b.location, onIncompatible);
   if (!location.ok) {
     return location;
   }
@@ -126,6 +150,7 @@ export function inferReturnTypeFromCandidates(
   body: Block,
   functionLocation: Location,
   candidates: readonly ReturnCandidate[],
+  onIncompatible: IncompatibleLocations = "error",
 ): InferResult<LocatedType> {
   if (candidates.length === 0) {
     return inferenceOk(locatedType("void", functionLocation));
@@ -149,7 +174,7 @@ export function inferReturnTypeFromCandidates(
 
   let merged = valueCandidates[0]!.type;
   for (let i = 1; i < valueCandidates.length; i++) {
-    const lub = lubLocatedType(merged, valueCandidates[i]!.type);
+    const lub = lubLocatedType(merged, valueCandidates[i]!.type, onIncompatible);
     if (!lub.ok) {
       return lub;
     }
@@ -163,5 +188,37 @@ export function inferReturnTypeFromCandidates(
     );
   }
 
+  return inferenceOk(merged);
+}
+
+/**
+ * The location of a return type whose base is written and whose location is
+ * not — `function f(): integer { … }` (spec-dyn.md, section 4.3). The location
+ * comes from the values returned, like a fully omitted return type's; the base
+ * is the annotation's, and the ordinary return checks compare it later.
+ *
+ * With no value returned there is nothing to take a location from. The
+ * function then fails its return checks anyway, so `fallback` only has to be
+ * some location for that to happen against.
+ */
+export function inferReturnLocation(
+  candidates: readonly ReturnCandidate[],
+  fallback: Location,
+  onIncompatible: IncompatibleLocations,
+): InferResult<Location> {
+  const locations = candidates.flatMap((c) =>
+    c.kind === "value" ? [c.type.location] : [],
+  );
+  if (locations.length === 0) {
+    return inferenceOk(fallback);
+  }
+  let merged = locations[0]!;
+  for (let i = 1; i < locations.length; i++) {
+    const lub = lubLocation(merged, locations[i]!, onIncompatible);
+    if (!lub.ok) {
+      return lub;
+    }
+    merged = lub.value;
+  }
   return inferenceOk(merged);
 }

@@ -54,8 +54,9 @@ function runCompile(args: string[]): number {
     return 1;
   }
 
-  writeOutputs(result.outputs);
-  for (const output of result.outputs) {
+  const written = [...result.outputs, ...result.runtimeOutputs];
+  writeOutputs(written);
+  for (const output of written) {
     console.log(output.path);
   }
   return 0;

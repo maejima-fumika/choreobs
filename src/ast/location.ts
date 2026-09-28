@@ -13,12 +13,14 @@ export type EveryLocation = { readonly kind: "every" };
 export type ConcreteLocation = IndividualLocation | EveryLocation;
 
 /**
- * Every location in Core v0 is concrete (spec §locations).
- *
- * Kept as a distinct alias so that a future dynamic location can widen this to
- * `ConcreteLocation | DynLocation` without touching the concrete-location side.
+ * The dynamic location `dyn` (spec-dyn.md, section 2). Where a `dyn` value lives
+ * is decided at run time, so the checker only asks that its uses be consistent
+ * (`~`), and endpoint projection gives every endpoint a copy of it.
  */
-export type Location = ConcreteLocation;
+export type DynLocation = { readonly kind: "dyn" };
+
+/** A location: a concrete location or `dyn` (spec-dyn.md, section 2). */
+export type Location = ConcreteLocation | DynLocation;
 
 /** `@` annotation on types and literals (spec §types, §located-literals). */
 export interface LocationAnnotation extends AstNode {

@@ -14,7 +14,7 @@ import { compileSource } from "../../src/driver/index.js";
 import { assertCommConsistent } from "../support/comm.js";
 import { aliceBob } from "../support/config.js";
 import { projectSource } from "../support/pipeline.js";
-import { span, ident, program } from "../support/ir.js";
+import { span, ident, program, call, exprStmt } from "../support/ir.js";
 
 function receive(
   comm: CommKind,
@@ -386,6 +386,108 @@ describe("communication consistency — broadcast sender binding", () => {
       result.errors.some((e) =>
         e.message.includes("receives its own broadcast"),
       ),
+      JSON.stringify(result.errors),
+    );
+  });
+});
+
+describe("communication consistency — dynamic transfers (spec-dyn.md, section 11)", () => {
+  function str(value: string) {
+    return { kind: "StringLiteralExpression" as const, value, span };
+  }
+
+  function dynTransfer(tag: string, kind = "integer", to = "dyn") {
+    return exprStmt(call("__dynTransfer", str(tag), str(kind), str(to), ident("v")));
+  }
+
+  function messages(programs: Parameters<typeof checkCommunicationConsistency>[0]) {
+    return checkCommunicationConsistency(programs).errors.map((e) => e.message);
+  }
+
+  it("accepts a compiled program with dynamic transfers", () => {
+    const all = projectSource(`
+let d: integer@dyn = 1@dyn;
+let a: integer@alice = 2@alice;
+let t: integer@bob <- d;
+let u: integer@dyn <- a;
+let w: integer@bob <- a;
+`);
+    assertCommConsistent(all);
+    const cleaned = cleanupAll(finalizeAbsentAll(all));
+    const emitted = cleaned.map((p) => ({ endpoint: p.endpoint, source: emit(p) }));
+    const result = verifyCommunicationConsistency(cleaned, emitted);
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  });
+
+  it("accepts the same call at every endpoint", () => {
+    assert.deepEqual(
+      messages([
+        program([dynTransfer("__top_0")], "alice"),
+        program([dynTransfer("__top_0")], "bob"),
+      ]),
+      [],
+    );
+  });
+
+  it("reports an endpoint that does not make the call", () => {
+    assert.deepEqual(
+      messages([program([dynTransfer("__top_0")], "alice"), program([], "bob")]),
+      [`missing __dynTransfer("__top_0", ...) at bob (scope __top)`],
+    );
+  });
+
+  it("reports a call made twice at one endpoint", () => {
+    const errors = messages([
+      program([dynTransfer("__top_0"), dynTransfer("__top_0")], "alice"),
+      program([dynTransfer("__top_0")], "bob"),
+    ]);
+    assert.ok(errors.some((m) => m.includes("is used more than once at alice")), JSON.stringify(errors));
+  });
+
+  it("reports endpoints that disagree on the destination or the kind", () => {
+    const destination = messages([
+      program([dynTransfer("__top_0", "integer", "bob")], "alice"),
+      program([dynTransfer("__top_0", "integer", "dyn")], "bob"),
+    ]);
+    assert.ok(destination.some((m) => m.includes("transfers to bob at alice but to dyn at bob")), JSON.stringify(destination));
+    const kind = messages([
+      program([dynTransfer("__top_0", "integer")], "alice"),
+      program([dynTransfer("__top_0", "float")], "bob"),
+    ]);
+    assert.ok(kind.some((m) => m.includes("used for both integer and float")), JSON.stringify(kind));
+  });
+
+  it("reports a tag shared with a static communication", () => {
+    const errors = messages([
+      program([dynTransfer("__top_0")], "alice"),
+      program([dynTransfer("__top_0"), receiveLet("alice", "__top_0")], "bob"),
+    ]);
+    assert.ok(
+      errors.some((m) => m.includes("used for both a dynamic transfer and a static receive")),
+      JSON.stringify(errors),
+    );
+  });
+
+  it("reports a destination no endpoint has", () => {
+    const errors = messages([
+      program([dynTransfer("__top_0", "integer", "carol")], "alice"),
+      program([dynTransfer("__top_0", "integer", "carol")], "bob"),
+    ]);
+    assert.ok(errors.some((m) => m.includes("unknown location 'carol'")), JSON.stringify(errors));
+  });
+
+  it("checks the emitted text as well", () => {
+    const line = `__dynTransfer("__top_0", "integer", "dyn", v);\n`;
+    const result = verifyCommunicationConsistency(
+      [program([dynTransfer("__top_0")], "alice"), program([dynTransfer("__top_0")], "bob")],
+      [
+        { endpoint: "alice", source: line },
+        { endpoint: "bob", source: "" },
+      ],
+    );
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((e) => e.message.includes(`missing __dynTransfer("__top_0", ...) at bob`)),
       JSON.stringify(result.errors),
     );
   });

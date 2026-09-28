@@ -14,6 +14,10 @@ import { locatedType } from "../types/located.js";
  * initialized `let` takes it from the initializer (spec §let-type-inference). A written
  * `@L` always wins.
  *
+ * `fallback` is what an omission that nothing infers means: `dyn` where the
+ * program may leave locations to run time (spec-dyn.md, section 4.1), and
+ * nothing — an error — in strict mode and inside a local function (section 4.2).
+ *
  * `void` is the exception: it holds no value, so it has no location and must not
  * be written with one (spec §void). The checker still stores a location on it so
  * that it travels through the ordinary machinery; that location is internal and
@@ -22,6 +26,7 @@ import { locatedType } from "../types/located.js";
 export function resolveTypeAnnotation(
   ann: TypeAnnotation,
   inferred?: Location,
+  fallback?: Location,
 ): LocatedType {
   if (ann.base === "void") {
     if (ann.location !== undefined) {
@@ -33,7 +38,7 @@ export function resolveTypeAnnotation(
     }
     return locatedType("void", inferred ?? { kind: "every" });
   }
-  const location = ann.location?.location ?? inferred;
+  const location = ann.location?.location ?? inferred ?? fallback;
   if (location === undefined) {
     throw new TypeResolveError(
       "location annotation required on type",
@@ -44,17 +49,24 @@ export function resolveTypeAnnotation(
   return locatedType(ann.base, location);
 }
 
-/** Resolve a written literal (spec §explicit-location-annotations); the location is never inferred. */
-export function resolveLiteralType(lit: LocatedLiteral): LocatedType {
+/**
+ * Resolve a written literal (spec §explicit-location-annotations); the location is never inferred.
+ * An omitted one means `fallback` when there is one (spec-dyn.md, section 4.1).
+ */
+export function resolveLiteralType(
+  lit: LocatedLiteral,
+  fallback?: Location,
+): LocatedType {
   const base = rawLiteralBaseType(lit.literal);
-  if (lit.location === undefined) {
+  const location = lit.location?.location ?? fallback;
+  if (location === undefined) {
     throw new TypeResolveError(
       "location annotation required on literal",
       lit.span,
       ["explicit-location-annotations", "location-annotation-omission"],
     );
   }
-  return locatedType(base, lit.location.location);
+  return locatedType(base, location);
 }
 
 /** Array element base types are restricted (spec §unsupported-array-element-type). Unrelated to locations. */

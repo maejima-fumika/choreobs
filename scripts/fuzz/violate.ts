@@ -88,6 +88,7 @@ function run(): void {
     try {
       result = compileSource(program.source, "index.cbs", {
         endpoints: args.endpoints,
+        implicitDyn: violation.strict !== true,
       });
     } catch (e) {
       tally.wrongReason += 1;

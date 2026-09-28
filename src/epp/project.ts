@@ -4,7 +4,7 @@ import type { Location } from "../ast/location.js";
 import type { CommTag, LocatedType, TransferMode } from "../ast/typed.js";
 import type { FunctionDeclaration } from "../ast/declarations.js";
 import type {
-  TypedProgram,
+  LoweredProgram,
   TypedFunctionDeclaration,
   TypedTopLevelStatement,
   TypedStatement,
@@ -19,8 +19,10 @@ import type {
   TypedWhileStatement,
   TypedForStatement,
   TypedForInit,
+  TypedForUpdate,
   TypedForLetInit,
   TypedForAssignmentInit,
+  TypedForExpressionInit,
   TypedReturnStatement,
   TypedExpressionStatement,
   TypedLiteralExpression,
@@ -32,8 +34,11 @@ import type {
   TypedIndexExpression,
   TypedLengthExpression,
   TypedParenthesizedExpression,
+  TypedRuntimeCallExpression,
 } from "../ast/typed.js";
 import { residesAt } from "../types/located.js";
+import { commKindForType } from "../comm/kind.js";
+import { DYN_VALUE_TYPE } from "../runtime/dyn.js";
 import type {
   ProjectedProgram,
   ProjectedFunction,
@@ -54,14 +59,14 @@ import {
 } from "../runtime/names.js";
 
 export function projectAll(
-  typed: TypedProgram,
+  typed: LoweredProgram,
   endpoints: readonly string[],
 ): readonly ProjectedProgram[] {
   return endpoints.map((endpoint) => project(typed, endpoint));
 }
 
 export function project(
-  typed: TypedProgram,
+  typed: LoweredProgram,
   endpoint: string,
 ): ProjectedProgram {
   return new Projector(endpoint).projectProgram(typed);
@@ -87,7 +92,7 @@ class Projector {
 
   constructor(private readonly endpoint: string) {}
 
-  projectProgram(typed: TypedProgram): ProjectedProgram {
+  projectProgram(typed: LoweredProgram): ProjectedProgram {
     const functions: ProjectedFunction[] = [];
     const body: ProjectedStatement[] = [];
 
@@ -261,6 +266,14 @@ class Projector {
   ): ProjectedStatement | ProjectedStatement[] {
     const { source, span } = parts;
 
+    if (parts.mode === "dynamic") {
+      // `lowerDyn` turns every dynamic transfer into a `let` or an assignment
+      // of `__dynTransfer(...)` (spec-dyn.md, section 3.5).
+      throw new Error(
+        `internal error: dynamic transfer '${parts.name}' reached endpoint projection unlowered`,
+      );
+    }
+
     if (parts.mode === "localCopy") {
       // Nothing is sent, so an endpoint that does not hold the destination is
       // left with the source's computations alone (spec §local-copy).
@@ -289,7 +302,12 @@ class Projector {
         `internal error: ${parts.mode} transfer '${parts.name}' has no communication tag`,
       );
     }
-    const comm = this.commKindForType(parts.type);
+    const comm = commKindForType(parts.type);
+    if (dst.kind === "dyn" || src.kind === "dyn") {
+      throw new Error(
+        `internal error: static transfer '${parts.name}' has a \`dyn\` side`,
+      );
+    }
 
     if (dst.kind === "every") {
       return this.projectBroadcastTransfer(parts, bind, src, tag, comm);
@@ -359,7 +377,7 @@ class Projector {
     span: Span,
   ): ProjectedExpression {
     if (choreoType.isArray) {
-      const comm = this.commKindForType(choreoType);
+      const comm = commKindForType(choreoType);
       return {
         kind: "CallExpression",
         callee: cloneFunction(comm),
@@ -458,10 +476,25 @@ class Projector {
   private projectForInit(
     init: TypedForInit,
   ): import("../ir/projected.js").ProjectedForInit | undefined {
-    if ("init" in init && init.init.kind === "ForLetInit") {
-      return this.projectForLetInit(init as TypedForLetInit);
+    switch (init.init.kind) {
+      case "ForLetInit":
+        return this.projectForLetInit(init as TypedForLetInit);
+      case "ForAssignmentInit":
+        return this.projectForAssignmentInit(init as TypedForAssignmentInit);
+      case "ForExpressionInit":
+        return this.projectForExpressionInit(init as TypedForExpressionInit);
     }
-    return this.projectForAssignmentInit(init as TypedForAssignmentInit);
+  }
+
+  /** A bare expression in a header slot: a dynamic element assignment (spec-dyn.md, section 12.2). */
+  private projectForExpressionInit(
+    init: TypedForExpressionInit,
+  ): import("../ir/projected.js").ProjectedForExpressionInit {
+    return {
+      kind: "ForExpressionInit",
+      expression: this.projectExpression(init.expression),
+      span: init.init.span,
+    };
   }
 
   private projectForLetInit(init: TypedForLetInit): import("../ir/projected.js").ProjectedForLetInit {
@@ -504,9 +537,12 @@ class Projector {
   }
 
   private projectForUpdate(
-    init: TypedForAssignmentInit,
+    update: TypedForUpdate,
   ): import("../ir/projected.js").ProjectedForUpdate | undefined {
-    const projected = this.projectForAssignmentInit(init);
+    if (update.init.kind === "ForExpressionInit") {
+      return this.projectForExpressionInit(update as TypedForExpressionInit);
+    }
+    const projected = this.projectForAssignmentInit(update as TypedForAssignmentInit);
     if (projected === undefined || projected.kind === "ForLetInit") {
       return undefined;
     }
@@ -635,6 +671,8 @@ class Projector {
           span: expr.expr.span,
         };
       }
+      case "RuntimeCallExpression":
+        return this.projectRuntimeCall(expr as TypedRuntimeCallExpression);
     }
   }
 
@@ -687,6 +725,8 @@ class Projector {
       }
       case "CallExpression":
         return this.projectCall(expr as TypedCallExpression);
+      case "RuntimeCallExpression":
+        return this.projectRuntimeCall(expr as TypedRuntimeCallExpression);
       case "IndexExpression": {
         const index = expr as TypedIndexExpression;
         return this.nothingExpression(
@@ -750,17 +790,36 @@ class Projector {
    * cleanup removes (spec §projected-ast-cleanup).
    */
   private projectCall(expr: TypedCallExpression): ProjectedExpression {
-    const span = expr.expr.span;
-    const args = expr.args.map((a) => this.projectExpression(a));
-    if (!this.shouldEmitFunction(expr.callee.decl)) {
+    return this.callProjection(
+      expr.expr.callee,
+      expr.args,
+      this.shouldEmitFunction(expr.callee.decl),
+      expr.expr.span,
+    );
+  }
+
+  /**
+   * A dynamic operation is a call to the runtime, and every endpoint makes it,
+   * exactly as every endpoint calls a choreography function (spec-dyn.md,
+   * section 8.2). That holds where the result does not reside here too:
+   * `__cast(v, "alice")` still binds `v`'s location at bob, and every endpoint
+   * must add the same constraints in the same order.
+   */
+  private projectRuntimeCall(expr: TypedRuntimeCallExpression): ProjectedExpression {
+    return this.callProjection(expr.callee, expr.args, true, expr.expr.span);
+  }
+
+  private callProjection(
+    callee: string,
+    typedArgs: readonly TypedExpression[],
+    calledHere: boolean,
+    span: Span,
+  ): ProjectedExpression {
+    const args = typedArgs.map((a) => this.projectExpression(a));
+    if (!calledHere) {
       return this.nothingExpression(args, span);
     }
-    return {
-      kind: "CallExpression",
-      callee: expr.expr.callee,
-      args,
-      span,
-    };
+    return { kind: "CallExpression", callee, args, span };
   }
 
   private projectType(type: LocatedType): ProjectedType {
@@ -770,6 +829,10 @@ class Projector {
     }
     if (!this.residesHere(type.location)) {
       return { kind: "AbsentType" };
+    }
+    // `T@dyn` and `T[]@dyn` are `__DynVal` at every endpoint (spec-dyn.md, section 8.1).
+    if (type.location.kind === "dyn") {
+      return { kind: "PresentType", base: DYN_VALUE_TYPE };
     }
     return { kind: "PresentType", base: this.projectedBase(type) };
   }
@@ -948,53 +1011,6 @@ class Projector {
       tag,
       span,
     };
-  }
-
-  /**
-   * Scalar payload kind for a transferred base type (spec §communication-api).
-   *
-   * Exhaustive on purpose. An earlier version defaulted every unrecognised base
-   * type to `"integer"`, which silently emitted `sendInteger` for values that
-   * were not integers at all. Anything not transferable must be rejected by the
-   * checker (spec §transfer-typing), so reaching the throws below is an internal bug.
-   */
-  private commKind(base: LocatedType["base"]): CommKind {
-    switch (base) {
-      case "integer":
-      case "float":
-      case "boolean":
-      case "string":
-      case "null":
-        return base;
-      case "void":
-        throw new Error(
-          `internal error: \`void\` has no value to transfer ${specRef("void", "invalid-use-of-void")}`,
-        );
-      default: {
-        const unexpected: never = base;
-        throw new Error(
-          `internal error: unhandled transfer base type '${String(unexpected)}'`,
-        );
-      }
-    }
-  }
-
-  private commKindForType(type: LocatedType): CommKind {
-    if (type.isArray === true) {
-      switch (type.base) {
-        case "integer":
-          return "integerArray";
-        case "float":
-          return "floatArray";
-        case "boolean":
-          return "booleanArray";
-        default:
-          throw new Error(
-            `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
-          );
-      }
-    }
-    return this.commKind(type.base);
   }
 
   /** Does this endpoint hold a copy of a value at `location`? (spec §location-matching-and-residency, §type-projection) */

@@ -11,3 +11,13 @@ export const aliceBob: ChoreoBSConfig = { endpoints: ["alice", "bob"] };
 export const aliceBobCarol: ChoreoBSConfig = {
   endpoints: ["alice", "bob", "carol"],
 };
+
+/**
+ * `aliceBob` in strict mode (spec-dyn.md, section 4.2): an omitted location
+ * that nothing infers is an error instead of `@dyn`. For the tests of those
+ * errors, which the default mode no longer reports in choreography code.
+ */
+export const aliceBobStrict: ChoreoBSConfig = {
+  endpoints: ["alice", "bob"],
+  implicitDyn: false,
+};

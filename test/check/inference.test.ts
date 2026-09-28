@@ -64,6 +64,30 @@ describe("return inference utilities (spec §function-return-type-inference)", (
     it("rejects every with individual", () => {
       assert.equal(lubLocation(every, alice).ok, false);
     });
+
+    it("is ⊔ with dyn: dyn absorbs any location (spec-dyn.md, section 3.1)", () => {
+      const dyn = { kind: "dyn" as const };
+      for (const other of [alice, every, dyn]) {
+        const r = lubLocation(other, dyn);
+        assert.equal(r.ok, true);
+        if (r.ok) {
+          assert.deepEqual(r.value, dyn);
+        }
+      }
+    });
+
+    it("gives dyn for two concrete locations only when asked to (spec-dyn.md, section 4.3)", () => {
+      const r = lubLocation(every, alice, "dyn");
+      assert.equal(r.ok, true);
+      if (r.ok) {
+        assert.equal(r.value.kind, "dyn");
+      }
+      const strict = lubLocation(every, alice, "error");
+      assert.equal(strict.ok, false);
+      if (!strict.ok) {
+        assert.ok(strict.spec.includes("incompatible-inferred-return-locations"));
+      }
+    });
   });
 
   describe("lubLocatedType", () => {

@@ -32,6 +32,8 @@ const BROADCAST_RE = new RegExp(
   `broadcast(${COMM_TYPES.join("|")})\\("([^"]+)",`,
   "g",
 );
+/** `__dynTransfer("tag", "kind", "to", …)` (spec-dyn.md, section 11). */
+const DYN_TRANSFER_RE = /__dynTransfer\("([^"]+)", "([^"]+)", "([^"]+)",/g;
 
 /**
  * Checks generated BlueScript for send/receive/broadcast pairing by
@@ -92,6 +94,26 @@ function emittedToProjectedProgram(
         comm,
         sourceEndpoint: match[2]!,
         tag: match[3]!,
+        span,
+      },
+      span,
+    });
+  }
+
+  for (const match of source.matchAll(DYN_TRANSFER_RE)) {
+    const constant = (value: string) =>
+      ({ kind: "StringLiteralExpression", value, span }) as const;
+    body.push({
+      kind: "ExpressionStatement",
+      expression: {
+        kind: "CallExpression",
+        callee: "__dynTransfer",
+        args: [
+          constant(match[1]!),
+          constant(match[2]!),
+          constant(match[3]!),
+          { kind: "IdentifierExpression", name: "_", span },
+        ],
         span,
       },
       span,

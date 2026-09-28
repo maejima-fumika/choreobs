@@ -37,6 +37,8 @@ function parseArgs(argv: readonly string[]) {
     maxTopStatements: Number(get("--maxstmt", "8")),
     /** Draw a random endpoint subset per seed instead of using the whole list. */
     vary: argv.includes("--vary"),
+    /** Leave `@dyn` out of the generated programs (spec-dyn.md). */
+    noDyn: argv.includes("--no-dyn"),
   };
 }
 
@@ -48,7 +50,14 @@ function inspectOutputs(
   if (result.outputs.length !== endpoints.length) {
     return `expected ${endpoints.length} outputs, got ${result.outputs.length}`;
   }
-  for (const out of result.outputs) {
+  // The runtime comes for every endpoint or for none, and exactly when some
+  // endpoint's program imports from it (spec-dyn.md, sections 7.2 and 7.3).
+  const imports = result.outputs.some((o) => o.source.startsWith("import "));
+  const expectedRuntime = imports ? endpoints.length : 0;
+  if (result.runtimeOutputs.length !== expectedRuntime) {
+    return `expected ${expectedRuntime} runtime files, got ${result.runtimeOutputs.length}`;
+  }
+  for (const out of [...result.outputs, ...result.runtimeOutputs]) {
     if (/@/.test(out.source)) {
       return `${out.endpoint}: location annotation survived projection`;
     }
@@ -97,12 +106,17 @@ function run(): void {
     const endpoints = args.vary
       ? args.endpoints.slice(0, 2 + (seed % (args.endpoints.length - 1)))
       : args.endpoints;
+    // Every other seed is written for strict mode: its `dyn` is all spelled
+    // out (spec-dyn.md, section 4.2), which is checked below.
+    const strict = !args.noDyn && seed % 2 === 0;
     const program = generate({
       seed,
       endpoints,
       maxBlockDepth: args.blockDepth,
       maxFunctions: args.maxFunctions,
       maxTopStatements: args.maxTopStatements,
+      dyn: !args.noDyn,
+      implicitDyn: !strict,
     });
     for (const feature of program.features) {
       featureCounts.set(feature, (featureCounts.get(feature) ?? 0) + 1);
@@ -120,7 +134,10 @@ function run(): void {
 
     let result: ReturnType<typeof compileSource>;
     try {
-      result = compileSource(program.source, "index.cbs", { endpoints });
+      result = compileSource(program.source, "index.cbs", {
+        endpoints,
+        implicitDyn: !strict,
+      });
     } catch (e) {
       record("crash", e instanceof Error ? `${e.name}: ${e.message}` : String(e));
       continue;
@@ -153,7 +170,10 @@ function run(): void {
       continue;
     }
 
-    const again = compileSource(program.source, "index.cbs", { endpoints });
+    const again = compileSource(program.source, "index.cbs", {
+      endpoints,
+      implicitDyn: !strict,
+    });
     const before = JSON.stringify(result.outputs.map((o) => o.source));
     const after = JSON.stringify(again.outputs.map((o) => o.source));
     if (before !== after) {
@@ -165,6 +185,7 @@ function run(): void {
     // program's meaning, so each endpoint's output must be unaffected by it.
     const reversed = compileSource(program.source, "index.cbs", {
       endpoints: [...endpoints].reverse(),
+      implicitDyn: !strict,
     });
     if (!reversed.success) {
       record(
@@ -186,7 +207,20 @@ function run(): void {
       continue;
     }
 
-    if (result.outputs.some((o) => /send|receive|broadcast/.test(o.source))) {
+    // Metamorphic: a program that writes all its `dyn` out means the same in
+    // either mode (spec-dyn.md, section 4.2).
+    if (strict) {
+      const implicit = compileSource(program.source, "index.cbs", { endpoints });
+      const same =
+        implicit.success &&
+        JSON.stringify(implicit.outputs.map((o) => o.source)) === before;
+      if (!same) {
+        record("badOutput", "a program with explicit locations only compiles differently without strict mode");
+        continue;
+      }
+    }
+
+    if (result.outputs.some((o) => /send|receive|broadcast|__dynTransfer/.test(o.source))) {
       withCommunication += 1;
     }
     counts.ok += 1;

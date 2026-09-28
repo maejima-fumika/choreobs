@@ -11,10 +11,24 @@ import { assertNoChoreoResidue } from "../support/compile.js";
  * rejection here is a finding rather than an expected outcome. Seeds are fixed
  * so failures reproduce; widen the search with the script, not this test.
  */
-const CONFIGURATIONS = [
+interface Configuration {
+  readonly label: string;
+  readonly endpoints: readonly string[];
+  readonly seed: number;
+  readonly runs: number;
+  readonly maxBlockDepth?: number;
+  /** Generate `@dyn` (spec-dyn.md). */
+  readonly dyn?: boolean;
+  /** Compile in strict mode, and generate no omissions for it (spec-dyn.md, section 4.2). */
+  readonly strict?: boolean;
+}
+
+const CONFIGURATIONS: readonly Configuration[] = [
   { label: "three endpoints", endpoints: ["alice", "bob", "carol"], seed: 1, runs: 150 },
   { label: "two endpoints", endpoints: ["alice", "bob"], seed: 100000, runs: 75 },
   { label: "five endpoints, deep nesting", endpoints: ["a", "b", "c", "d", "e"], seed: 200000, runs: 75, maxBlockDepth: 3 },
+  { label: "dyn, three endpoints", endpoints: ["alice", "bob", "carol"], seed: 300000, runs: 150, dyn: true },
+  { label: "dyn, strict mode", endpoints: ["alice", "bob"], seed: 400000, runs: 75, dyn: true, strict: true },
 ];
 
 describe("generated programs compile (fuzz corpus)", () => {
@@ -26,9 +40,12 @@ describe("generated programs compile (fuzz corpus)", () => {
           seed,
           endpoints: config.endpoints,
           maxBlockDepth: config.maxBlockDepth,
+          dyn: config.dyn,
+          implicitDyn: config.strict !== true,
         });
         const result = compileSource(program.source, "index.cbs", {
           endpoints: config.endpoints,
+          implicitDyn: config.strict !== true,
         });
         assert.equal(
           result.success,

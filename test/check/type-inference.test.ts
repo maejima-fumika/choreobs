@@ -4,6 +4,7 @@ import { parse } from "../../src/parser/index.js";
 import { typeCheck } from "../../src/check/index.js";
 import { checkSource } from "../support/pipeline.js";
 import { assertCites, describeDiags } from "../support/spec.js";
+import { aliceBobStrict } from "../support/config.js";
 import type { SpecId } from "../../src/spec/ref.js";
 
 
@@ -17,8 +18,9 @@ function expectTypeCheckSuccess(source: string) {
 function expectTypeCheckFailure(
   source: string,
   messageIncludes: string | readonly string[],
+  config?: Parameters<typeof checkSource>[1],
 ) {
-  const { typed, errors } = checkSource(source);
+  const { typed, errors } = checkSource(source, config);
   assert.equal(typed, null);
   const needles =
     typeof messageIncludes === "string" ? [messageIncludes] : messageIncludes;
@@ -328,11 +330,12 @@ function fact@alice(n: integer@alice): integer@alice {
       );
     });
 
-    it("rejects top-level let when initializer omits location (§explicit-location-annotations)", () => {
-      expectTypeCheckFailure("let x = 1;", "location");
+    // In the default mode both of these are `@dyn` instead (spec-dyn.md, section 4.1).
+    it("rejects top-level let when initializer omits location, in strict mode (§explicit-location-annotations)", () => {
+      expectTypeCheckFailure("let x = 1;", "location", aliceBobStrict);
     });
 
-    it("rejects let in a choreography function when initializer omits location (§explicit-location-annotations)", () => {
+    it("rejects let in a choreography function when initializer omits location, in strict mode (§explicit-location-annotations)", () => {
       expectTypeCheckFailure(
         `
 function f() {
@@ -340,6 +343,7 @@ function f() {
 }
 `,
         "location",
+        aliceBobStrict,
       );
     });
 
@@ -395,7 +399,8 @@ function bad@alice(c: boolean@alice) {
       );
     });
 
-    it("rejects incompatible inferred return locations (§function-return-type-inference)", () => {
+    // In the default mode the return type is `integer@dyn` instead (spec-dyn.md, section 4.3).
+    it("rejects incompatible inferred return locations, in strict mode (§function-return-type-inference)", () => {
       expectTypeCheckFailure(
         `
 function bad(c: boolean@every) {
@@ -407,6 +412,7 @@ function bad(c: boolean@every) {
 }
 `,
         "location",
+        aliceBobStrict,
       );
     });
 

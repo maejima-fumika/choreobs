@@ -6,6 +6,11 @@ import { projectAll } from "../epp/index.js";
 import { finalizeAbsentAll } from "../finalize/index.js";
 import { cleanupAll } from "../cleanup/index.js";
 import { emit } from "../emit/index.js";
+import { lowerDyn, verifyLowered } from "../lower/index.js";
+import { runtimeImports } from "../runtime/imports.js";
+import { dynRuntimeSource } from "../runtime/source.js";
+import { runtimeModuleName } from "../runtime/dyn.js";
+import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
 import {
   assignCommTags,
   commConsistencyDiagnostics,
@@ -43,7 +48,14 @@ export interface CompileOutput {
 
 export interface CompileResult {
   readonly success: boolean;
+  /** One program per endpoint, in the order `endpoints` lists them. */
   readonly outputs: readonly CompileOutput[];
+  /**
+   * `__runtime_<endpoint>.bs` for each endpoint, for a program that uses `dyn`;
+   * empty otherwise (spec-dyn.md, sections 7.1–7.2). Kept apart from `outputs`,
+   * which hold the endpoint programs alone.
+   */
+  readonly runtimeOutputs: readonly CompileOutput[];
   readonly errors: readonly CompileDiagnostic[];
 }
 
@@ -65,7 +77,7 @@ export function compileFile(
     // of which breaks a spec rule.
     const message = e instanceof Error ? e.message : String(e);
     const spec = e instanceof ConfigError ? e.spec : [];
-    return { success: false, outputs: [], errors: [{ message, spec }] };
+    return { success: false, outputs: [], runtimeOutputs: [], errors: [{ message, spec }] };
   }
   return compileSource(source, cbsPath, config);
 }
@@ -84,7 +96,24 @@ export function compileSource(
     return {
       success: false,
       outputs: [],
+      runtimeOutputs: [],
       errors: [{ message: invalidConfig.message, spec: invalidConfig.spec }],
+    };
+  }
+
+  // The compiler writes `__runtime_<endpoint>.bs` next to the outputs
+  // (spec-dyn.md, section 7.1), so an input whose name took the reserved `__`
+  // prefix could have its own output overwritten by it (spec §input-files,
+  // §identifiers).
+  if (basename(cbsPath).startsWith(COMPILER_NAME_PREFIX)) {
+    return {
+      success: false,
+      outputs: [],
+      runtimeOutputs: [],
+      errors: [{
+        message: `input file name '${basename(cbsPath)}' must not begin with '${COMPILER_NAME_PREFIX}', which is reserved for the compiler`,
+        spec: ["input-files"],
+      }],
     };
   }
 
@@ -92,20 +121,24 @@ export function compileSource(
   const errors: CompileDiagnostic[] = [...parsed.errors];
 
   if (parsed.program === null || parsed.errors.length > 0) {
-    return { success: false, outputs: [], errors };
+    return { success: false, outputs: [], runtimeOutputs: [], errors };
   }
 
   const checked = typeCheck(parsed.program, config);
   errors.push(...checked.errors);
 
   if (checked.typed === null || checked.errors.length > 0) {
-    return { success: false, outputs: [], errors };
+    return { success: false, outputs: [], runtimeOutputs: [], errors };
   }
 
-  // Tagging -> EPP -> absent finalization -> cleanup -> emission
-  // (spec §communication-tags, §absent-finalization, §projected-ast-cleanup).
+  // Tagging -> dyn lowering -> EPP -> absent finalization -> cleanup -> emission
+  // (spec §communication-tags, §absent-finalization, §projected-ast-cleanup;
+  // spec-dyn.md, section 8.2). Lowering comes after tagging so that a dynamic
+  // transfer is numbered with the static ones, in source order (section 11.1).
   const tagged = assignCommTags(checked.typed);
-  const projected = projectAll(tagged, config.endpoints);
+  const lowered = lowerDyn(tagged);
+  verifyLowered(lowered);
+  const projected = projectAll(lowered, config.endpoints);
   const finalized = finalizeAbsentAll(projected);
   const cleaned = cleanupAll(finalized);
   const stem = basename(cbsPath, extname(cbsPath));
@@ -129,11 +162,23 @@ export function compileSource(
     return {
       success: false,
       outputs: [],
+      runtimeOutputs: [],
       errors: [...errors, ...commConsistencyDiagnostics(commCheck.errors)],
     };
   }
 
-  return { success: true, outputs, errors };
+  // The runtime is written only for a program that uses it, and then for every
+  // endpoint (spec-dyn.md, section 7.2): a `dyn` value lives at all of them.
+  const usesDyn = cleaned.some((program) => runtimeImports(program).length > 0);
+  const runtimeOutputs: CompileOutput[] = usesDyn
+    ? config.endpoints.map((endpoint) => ({
+        endpoint,
+        path: join(outDir, `${runtimeModuleName(endpoint)}.bs`),
+        source: dynRuntimeSource(endpoint),
+      }))
+    : [];
+
+  return { success: true, outputs, runtimeOutputs, errors };
 }
 
 export function writeOutputs(outputs: readonly CompileOutput[]): void {

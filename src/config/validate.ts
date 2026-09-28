@@ -24,11 +24,16 @@ export interface EndpointsProblem extends SpecCited {
 export function validateEndpoints(
   endpoints: readonly string[],
 ): EndpointsProblem | undefined {
-  if (endpoints.includes("every")) {
-    return {
-      message: "'every' must not appear in endpoints",
-      spec: ["choreobs-json"],
-    };
+  // `every` and `dyn` are locations of their own, not endpoint names
+  // (spec §every; spec-dyn.md, section 2). Both are keywords, so the identifier
+  // check below would reject them too, but only with a message about syntax.
+  for (const reserved of ["every", "dyn"]) {
+    if (endpoints.includes(reserved)) {
+      return {
+        message: `'${reserved}' must not appear in endpoints`,
+        spec: ["choreobs-json"],
+      };
+    }
   }
   // An endpoint name is written after `@` in the source (spec §types) and is
   // pasted into the output file name (spec §output-files). A name that is not an

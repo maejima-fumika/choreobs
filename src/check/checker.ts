@@ -1,6 +1,6 @@
 import type { Span } from "../ast/span.js";
 import type { Program, TopLevelItem, TopLevelStatement } from "../ast/program.js";
-import type { FunctionDeclaration } from "../ast/declarations.js";
+import type { FunctionDeclaration, Parameter } from "../ast/declarations.js";
 import type {
   Statement,
   Block,
@@ -75,10 +75,16 @@ import type { ChoreoBSConfig } from "../config/types.js";
 import { CHOREOGRAPHY_CONTEXT } from "../ast/context.js";
 import { isNumericType } from "../ast/syntax-types.js";
 import {
+  DYN,
+  concreteLocationsAgree,
   contextAsLocation,
   formatLocatedType,
+  formatLocation,
   isArraySubtype,
+  isDyn,
+  joinLocations,
   locatedType,
+  locationsCompatible,
   locationsEqual,
 } from "../types/located.js";
 import {
@@ -95,7 +101,9 @@ import { childExpressions } from "../ast/traverse.js";
 import { isReservedRuntimeName } from "../runtime/names.js";
 import {
   checkReturnCoverage,
+  inferReturnLocation,
   inferReturnTypeFromCandidates,
+  type IncompatibleLocations,
   type ReturnCandidate,
 } from "./inference.js";
 import {
@@ -140,7 +148,7 @@ function functionLocationOf(decl: FunctionDeclaration): Location {
  * `[]@L` — the one expression with no element type of its own, which is why an
  * annotation may supply it (spec §array-literal-typing, §cannot-infer-empty-array-element-type).
  */
-function isEmptyArrayLiteral(expr: Expression): boolean {
+function isEmptyArrayLiteral(expr: TypedExpression["expr"]): boolean {
   return expr.kind === "ArrayLiteralExpression" && expr.elements.length === 0;
 }
 
@@ -160,6 +168,8 @@ class TypeChecker {
   /** Used to check `@L` against the declared set; the set itself is validated
    * by `validateEndpoints` before the checker runs (spec §choreobs-json). */
   private readonly endpoints: Set<string>;
+  /** Whether an omission that nothing infers is `dyn` (spec-dyn.md, sections 4.1–4.2). */
+  private readonly implicitDyn: boolean;
   private currentFunction: FunctionDeclaration | undefined;
   /** Resolved return type for the function currently being type-checked. */
   private currentFunctionReturnType: LocatedType | undefined;
@@ -178,6 +188,7 @@ class TypeChecker {
     config: ChoreoBSConfig,
   ) {
     this.endpoints = new Set(config.endpoints);
+    this.implicitDyn = config.implicitDyn ?? true;
   }
 
   check(): TypeCheckResult {
@@ -234,7 +245,14 @@ class TypeChecker {
             ["function-kinds", "every-on-a-function-declaration"],
           );
         }
-        this.validateLocation(item.at, item.span);
+        if (item.at.kind === "dyn") {
+          this.error(
+            `function '${item.name}': 'dyn' is not a function location. A declared location makes a function local and must be individual.`,
+            item.span,
+            ["function-kinds"],
+          );
+        }
+        this.validateLocation(item.at, item.span, CHOREOGRAPHY_CONTEXT);
       }
     }
   }
@@ -282,7 +300,7 @@ class TypeChecker {
 
   private resolveExplicitFunctionSignatures(): void {
     for (const decl of this.functions.values()) {
-      if (decl.returnType === undefined) {
+      if (decl.returnType === undefined || this.hasPartialReturnType(decl)) {
         continue;
       }
       const returnType = this.resolveReturnType(decl.returnType, decl);
@@ -360,22 +378,77 @@ class TypeChecker {
     this.returnCandidates = undefined;
     this.currentFunction = undefined;
     this.currentFunctionReturnType = undefined;
-    const inferred = inferReturnTypeFromCandidates(
-      decl.body,
-      functionLocationOf(decl),
-      candidates,
-    );
-    if (!inferred.ok) {
-      this.error(inferred.message, decl.span, inferred.spec);
+    const onIncompatible = this.incompatibleReturnLocations(decl);
+    let returnType: LocatedType;
+    if (decl.returnType !== undefined) {
+      // A partial annotation (spec-dyn.md, section 4.3): the base is written,
+      // the location comes from what the body returns.
+      const location = inferReturnLocation(
+        candidates,
+        functionLocationOf(decl),
+        onIncompatible,
+      );
+      if (!location.ok) {
+        this.error(location.message, decl.span, location.spec);
+      }
+      returnType = this.resolveReturnType(decl.returnType, decl, location.value);
+    } else {
+      const inferred = inferReturnTypeFromCandidates(
+        decl.body,
+        functionLocationOf(decl),
+        candidates,
+        onIncompatible,
+      );
+      if (!inferred.ok) {
+        this.error(inferred.message, decl.span, inferred.spec);
+      }
+      returnType = inferred.value;
     }
     this.validateLocalFunctionLocatedType(
       decl,
-      inferred.value,
+      returnType,
       decl.span,
       "return type",
     );
-    this.resolvedReturnTypes.set(decl.name, inferred.value);
+    this.resolvedReturnTypes.set(decl.name, returnType);
     return true;
+  }
+
+  /**
+   * `function f(): integer { … }` — a return type written without its location
+   * (spec-dyn.md, section 4.3). Its location is inferred like an omitted return
+   * type's, in either mode. A local function may not omit a location at all
+   * (spec §local-function-strict-location-rule), so there it is left to the
+   * ordinary resolution, which reports it.
+   */
+  private hasPartialReturnType(decl: FunctionDeclaration): boolean {
+    const ann = decl.returnType;
+    return (
+      ann !== undefined &&
+      ann.location === undefined &&
+      ann.base !== "void" &&
+      decl.context.kind === "choreography"
+    );
+  }
+
+  /**
+   * What an omitted location that nothing infers stands for in `ctx`
+   * (spec-dyn.md, sections 4.1–4.2): `dyn` in a choreography context unless
+   * strict mode is on. A local function never omits a location
+   * (spec §local-function-strict-location-rule), so there it stays an error.
+   */
+  private omittedLocation(ctx: ExecutionContext): Location | undefined {
+    return ctx.kind === "choreography" && this.implicitDyn ? DYN : undefined;
+  }
+
+  /**
+   * Returns at two different concrete locations give `dyn` exactly where an
+   * omission would (spec-dyn.md, sections 4.2–4.3), and are an error elsewhere.
+   */
+  private incompatibleReturnLocations(
+    decl: FunctionDeclaration,
+  ): IncompatibleLocations {
+    return this.omittedLocation(decl.context) === undefined ? "error" : "dyn";
   }
 
   /** Return type after resolution or inference; does not read raw AST annotations. */
@@ -385,6 +458,14 @@ class TypeChecker {
       return resolved;
     }
     if (decl.returnType !== undefined) {
+      if (this.hasPartialReturnType(decl)) {
+        // Its location comes from inference, which resolves every callee first
+        // (see `calleesReadyForInference`); resolving it here instead would
+        // quietly make it `dyn`.
+        throw new Error(
+          `internal error: partial return type of '${decl.name}' used before it was inferred`,
+        );
+      }
       const returnType = this.resolveReturnType(decl.returnType, decl);
       this.resolvedReturnTypes.set(decl.name, returnType);
       return returnType;
@@ -508,7 +589,7 @@ class TypeChecker {
     const params: TypedParameter[] = [];
     const env = new Map<string, LocatedType>();
     for (const param of decl.params) {
-      const type = this.resolveType(param.type);
+      const type = this.resolveParameterType(decl, param);
       this.validateLocalFunctionLocatedType(
         decl,
         type,
@@ -639,13 +720,14 @@ class TypeChecker {
       this.error("cannot infer empty array element type", binding.span,
         ["cannot-infer-empty-array-element-type"]);
     }
-    const choreoType =
+    const resolved =
       binding.type !== undefined
-        ? this.resolveLetType(binding.type, initializer, binding.span)
-        : this.inferredValueType(initializer, binding.span);
+        ? this.resolveLetType(binding.type, initializer, binding.span, ctx)
+        : { choreoType: this.inferredValueType(initializer, binding.span), initializer };
+    const choreoType = resolved.choreoType;
     this.requireExpressionAvailable(choreoType.location, ctx, binding.span);
     this.defineLocal(binding.name, choreoType, binding.span);
-    return { choreoType, initializer };
+    return resolved;
   }
 
   /**
@@ -679,12 +761,14 @@ class TypeChecker {
     ann: import("../ast/syntax-types.js").TypeAnnotation,
     initializer: TypedExpression,
     span: Span,
-  ): LocatedType {
+    ctx: ExecutionContext,
+  ): { readonly choreoType: LocatedType; readonly initializer: TypedExpression } {
     // An initialized `let` may omit the location; it comes from the
     // initializer (spec §let-type-inference). Transfer `let` goes through `resolveType`
     // directly and keeps requiring an explicit destination (spec §transfer-let-does-not-infer-destination-type).
     const choreoType = this.resolveType(
       ann,
+      ctx,
       initializer.choreoType.location,
     );
     this.validateLocalFunctionLocatedType(
@@ -699,18 +783,32 @@ class TypeChecker {
     // checked against the annotation below (spec §array-invariance):
     // `let xs: float[]@alice = [1, 2]@alice;` is a type error, because the
     // literal is `integer[]`.
+    //
+    // The empty literal takes the annotation's element type, so that it is
+    // typed as what it will hold: a `dyn` one is built by
+    // `__dynArrayNew(kind)`, whose kind comes from here (spec-dyn.md, section 5.2).
+    // Its location is still its own and is checked like any other.
     if (choreoType.isArray === true && isEmptyArrayLiteral(initializer.expr)) {
-      return choreoType;
+      const typed: TypedExpression = {
+        ...initializer,
+        choreoType: locatedType(choreoType.base, initializer.choreoType.location, true),
+      };
+      this.validateAssignmentLike(choreoType, typed.choreoType, span);
+      return { choreoType, initializer: typed };
     }
     this.validateAssignmentLike(choreoType, initializer.choreoType, span);
-    return choreoType;
+    return { choreoType, initializer };
   }
 
   private checkLetReceive(
     stmt: LetTransferStatement,
     ctx: ExecutionContext,
   ): TypedLetTransferStatement {
-    const choreoType = this.resolveType(stmt.type);
+    // An omitted destination is `dyn` (spec-dyn.md, section 4.1); it is never
+    // taken from the source (spec §transfer-let-does-not-infer-destination-type).
+    const choreoType = this.resolveType(stmt.type, ctx, undefined, [
+      "transfer-let-does-not-infer-destination-type",
+    ]);
     // The destination of a transfer `let` is a variable the body declares, so
     // inside `function f@P` it must be located at `P` like any other local
     // (spec §local-function-strict-location-rule). Without this the checker would accept a send out of a
@@ -763,9 +861,24 @@ class TypeChecker {
     }
     const elementType = locatedType(arrayType.base, arrayType.location);
     this.validateAssignmentLike(elementType, value.choreoType, span);
-    if (!locationsEqual(index.choreoType.location, arrayType.location)) {
+    if (!locationsCompatible(index.choreoType.location, arrayType.location)) {
       this.error("array index must be at the same location as the array", span,
         ["invalid-array-index-location"]);
+    }
+    // Pairwise `~` is not enough to say they are all compatible:
+    // `arrDyn[iAlice] = valBob` passes both checks above (spec-dyn.md, section 3.2).
+    if (
+      !concreteLocationsAgree([
+        arrayType.location,
+        index.choreoType.location,
+        value.choreoType.location,
+      ])
+    ) {
+      this.error(
+        "the array, index and value of an element assignment must not be at different locations",
+        span,
+        ["array-typing"],
+      );
     }
     return { target, arrayType, index, elementType };
   }
@@ -950,7 +1063,8 @@ class TypeChecker {
       this.error("condition must have type boolean", expr.span);
     }
     if (ctx.kind === "choreography") {
-      if (typed.choreoType.location.kind !== "every") {
+      // A `dyn` condition is cast to `every` (spec-dyn.md, section 15).
+      if (!locationsCompatible(typed.choreoType.location, contextAsLocation(ctx))) {
         this.error(
           "condition must be boolean@every in a choreography context",
           expr.span,
@@ -958,12 +1072,8 @@ class TypeChecker {
         );
       }
     } else if (!locationsEqual(typed.choreoType.location, contextAsLocation(ctx))) {
-      const loc =
-        typed.choreoType.location.kind === "every"
-          ? "every"
-          : typed.choreoType.location.name;
       this.error(
-        `condition must be boolean@${ctx.endpoint} in local function, got boolean@${loc}`,
+        `condition must be boolean@${ctx.endpoint} in local function, got boolean@${formatLocation(typed.choreoType.location)}`,
         expr.span,
         ["if-condition-typing", "while-and-for-condition-typing"],
       );
@@ -1155,7 +1265,7 @@ class TypeChecker {
     expr: LiteralExpression,
     ctx: ExecutionContext,
   ): TypedLiteralExpression {
-    const choreoType = this.resolveLiteral(expr.literal);
+    const choreoType = this.resolveLiteral(expr.literal, ctx);
     this.requireExpressionAvailable(choreoType.location, ctx, expr.span);
     return { expr, choreoType, literal: expr.literal };
   }
@@ -1164,7 +1274,9 @@ class TypeChecker {
     expr: ArrayLiteralExpression,
     ctx: ExecutionContext,
   ): TypedArrayLiteralExpression {
-    let location = expr.location?.location;
+    // An unannotated array literal is `dyn`; its elements are never looked at
+    // for a location (spec-dyn.md, section 5.2).
+    const location = expr.location?.location ?? this.omittedLocation(ctx);
     if (location === undefined) {
       this.error(
         "array literal location annotation required",
@@ -1172,11 +1284,27 @@ class TypeChecker {
         ["array-literals", "array-literal-without-required-location"],
       );
     }
+    this.validateLocation(location, expr.location?.span ?? expr.span, ctx);
+    this.requireExpressionAvailable(location, ctx, expr.span);
     const elements = expr.elements.map((element) =>
       this.typeArrayElementExpression(element, location, ctx),
     );
     if (elements.length === 0) {
       return { expr, choreoType: locatedType("integer", location, true), elements };
+    }
+    // Each element is `~` the array; they must also be `~` one another
+    // (spec-dyn.md, sections 3.2 and 5.2): `[a@alice, b@bob]@dyn` is rejected.
+    if (
+      !concreteLocationsAgree([
+        location,
+        ...elements.map((element) => element.choreoType.location),
+      ])
+    ) {
+      this.error(
+        "array literal elements must not be at different locations",
+        expr.span,
+        ["array-literals"],
+      );
     }
     for (const element of elements) {
       this.requireValueExpression(element, element.expr.span);
@@ -1208,7 +1336,7 @@ class TypeChecker {
       } as TypedLiteralExpression;
     }
     const typed = this.checkExpression(element, ctx);
-    if (!locationsEqual(typed.choreoType.location, arrayLocation)) {
+    if (!locationsCompatible(typed.choreoType.location, arrayLocation)) {
       this.error("array element must be at the same location as the array literal", element.span);
     }
     return typed;
@@ -1300,9 +1428,14 @@ class TypeChecker {
       target.choreoType.location,
     );
     this.validateAssignmentLike(elementType, value.choreoType, expr.span);
+    // When either side is `dyn`, the append is a dynamic operation performed at
+    // every endpoint (spec-dyn.md, section 12.3); the location says so.
     return {
       expr,
-      choreoType: locatedType("void", target.choreoType.location),
+      choreoType: locatedType(
+        "void",
+        joinLocations(target.choreoType.location, value.choreoType.location),
+      ),
       target,
       value,
     };
@@ -1354,13 +1487,16 @@ class TypeChecker {
     if (index.choreoType.base !== "integer" || index.choreoType.isArray) {
       this.error("array index must have type integer", expr.index.span);
     }
-    if (!locationsEqual(index.choreoType.location, target.choreoType.location)) {
+    if (!locationsCompatible(index.choreoType.location, target.choreoType.location)) {
       this.error("array index must be at the same location as the array", expr.span,
         ["invalid-array-index-location"]);
     }
     return {
       expr,
-      choreoType: locatedType(target.choreoType.base, target.choreoType.location),
+      choreoType: locatedType(
+        target.choreoType.base,
+        joinLocations(target.choreoType.location, index.choreoType.location),
+      ),
       target,
       index,
     };
@@ -1396,7 +1532,7 @@ class TypeChecker {
       );
     }
     if (decl.at.kind !== "individual" || decl.at.name !== ctx.endpoint) {
-      const at = decl.at.kind === "every" ? "every" : decl.at.name;
+      const at = formatLocation(decl.at);
       this.error(
         `cannot call function '${decl.name}' at '${at}' from '${ctx.endpoint}'`,
         span,
@@ -1422,7 +1558,7 @@ class TypeChecker {
         span,
       );
     }
-    if (!locationsEqual(arg.location, param.location)) {
+    if (!locationsCompatible(arg.location, param.location)) {
       this.error(
         `argument ${formatLocatedType(arg)} is not at parameter location ${formatLocatedType(param)}: use a transfer instead`,
         span,
@@ -1445,7 +1581,7 @@ class TypeChecker {
           : ["type-mismatch"],
       );
     }
-    if (!locationsEqual(source.location, target.location)) {
+    if (!locationsCompatible(source.location, target.location)) {
       this.error(
         `invalid assignment across locations: use a transfer instead`,
         span,
@@ -1466,7 +1602,7 @@ class TypeChecker {
         span,
       );
     }
-    if (!locationsEqual(value.location, returnType.location)) {
+    if (!locationsCompatible(value.location, returnType.location)) {
       this.error(
         `return value ${formatLocatedType(value)} is not at return type location ${formatLocatedType(returnType)}`,
         span,
@@ -1489,6 +1625,12 @@ class TypeChecker {
     }
     const srcLoc = source.location;
     const dstLoc = target.location;
+
+    // Checked first: `dyn -> dyn` is also equal, and a local copy would get no
+    // tag, where a dynamic transfer always has one (spec-dyn.md, section 11.1).
+    if (isDyn(srcLoc) || isDyn(dstLoc)) {
+      return "dynamic";
+    }
 
     // There is no restriction on the source/destination locations (spec §transfer-typing).
     // A transfer is a local copy exactly when every endpoint the destination
@@ -1540,8 +1682,9 @@ class TypeChecker {
       }
       return left;
     }
-    if (locationsEqual(left, right)) {
-      return left;
+    // `L1 ~ L2`, located at `L1 ⊔ L2` (spec-dyn.md, section 3.2).
+    if (locationsCompatible(left, right)) {
+      return joinLocations(left, right);
     }
     this.error("binary operands must be at the same location", span, ["operators"]);
   }
@@ -1556,7 +1699,7 @@ class TypeChecker {
     }
     if (!locationsEqual(valueLoc, contextAsLocation(ctx))) {
       this.error(
-        `value at ${valueLoc.kind === "every" ? "every" : valueLoc.name} is not usable in local function at ${ctx.endpoint}`,
+        `value at ${formatLocation(valueLoc)} is not usable in local function at ${ctx.endpoint}`,
         span,
       );
     }
@@ -1619,9 +1762,18 @@ class TypeChecker {
   }
 
   /** Resolve a type in a value position; `void` is not a value type (spec §void). */
+  /**
+   * Resolve a type in a value position; `void` is not a value type (spec §void).
+   *
+   * `ctx` is where the type is written, and decides what an omitted location
+   * means there (see {@link omittedLocation}). `omissionSpec` names the rule an
+   * omission breaks when that is more specific than the general one.
+   */
   private resolveType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
+    ctx: ExecutionContext,
     inferredLocation?: Location,
+    omissionSpec: SpecRefs = [],
   ): LocatedType {
     if (ann.base === "void" && ann.isArray !== true) {
       this.error(
@@ -1630,34 +1782,58 @@ class TypeChecker {
         ["void", "invalid-use-of-void"],
       );
     }
-    return this.resolveTypeAllowingVoid(ann, inferredLocation);
+    return this.resolveTypeAllowingVoid(ann, ctx, inferredLocation, omissionSpec);
   }
 
-  /** Resolve a function return type, where `void` is allowed (spec §void). */
+  /**
+   * A parameter's type. `buildParameterEnv` and `functionSymbol` both resolve
+   * it, and must agree — an omitted location is `dyn` in a choreography
+   * function (spec-dyn.md, section 4.1).
+   */
+  private resolveParameterType(
+    decl: FunctionDeclaration,
+    param: Parameter,
+  ): LocatedType {
+    return this.resolveType(param.type, decl.context);
+  }
+
+  /**
+   * Resolve a function return type, where `void` is allowed (spec §void).
+   * `inferredLocation` completes a partial annotation (spec-dyn.md, section 4.3).
+   */
   private resolveReturnType(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
     decl: FunctionDeclaration,
+    inferredLocation?: Location,
   ): LocatedType {
     // `void` carries no location; give it the function's own so that it travels
     // through the ordinary machinery. It is never shown or written.
     return this.resolveTypeAllowingVoid(
       ann,
-      ann.base === "void" ? functionLocationOf(decl) : undefined,
+      decl.context,
+      ann.base === "void" ? functionLocationOf(decl) : inferredLocation,
     );
   }
 
   private resolveTypeAllowingVoid(
     ann: import("../ast/syntax-types.js").TypeAnnotation,
+    ctx: ExecutionContext,
     inferredLocation?: Location,
+    omissionSpec: SpecRefs = [],
   ): LocatedType {
     try {
       validateArrayTypeAnnotation(ann);
-      const resolved = resolveTypeAnnotation(ann, inferredLocation);
-      this.validateLocation(resolved.location, ann.span);
+      const resolved = resolveTypeAnnotation(
+        ann,
+        inferredLocation,
+        this.omittedLocation(ctx),
+      );
+      this.validateLocation(resolved.location, ann.span, ctx);
       return { ...resolved, isArray: ann.isArray === true ? true : undefined };
     } catch (e) {
       if (e instanceof TypeResolveError) {
-        this.error(e.message, e.span, e.spec);
+        const omission = e.spec.includes("location-annotation-omission");
+        this.error(e.message, e.span, omission ? [...omissionSpec, ...e.spec] : e.spec);
       }
       throw e;
     }
@@ -1665,10 +1841,11 @@ class TypeChecker {
 
   private resolveLiteral(
     lit: import("../ast/literals.js").LocatedLiteral,
+    ctx: ExecutionContext,
   ): LocatedType {
     try {
-      const resolved = resolveLiteralType(lit);
-      this.validateLocation(resolved.location, lit.span);
+      const resolved = resolveLiteralType(lit, this.omittedLocation(ctx));
+      this.validateLocation(resolved.location, lit.span, ctx);
       return resolved;
     } catch (e) {
       if (e instanceof TypeResolveError) {
@@ -1678,16 +1855,33 @@ class TypeChecker {
     }
   }
 
-  private validateLocation(loc: Location, span: Span): void {
-    if (loc.kind === "every") {
-      return;
-    }
-    if (!this.endpoints.has(loc.name)) {
-      this.error(
-        `unknown endpoint '${loc.name}'`,
-        span,
-        ["unknown-endpoint"],
-      );
+  /**
+   * A written location must name a declared endpoint, and `dyn` has no place
+   * in a local function (spec-dyn.md, section 3.6): its body runs at one
+   * endpoint only, so nothing there could be decided at run time in step with
+   * the others.
+   */
+  private validateLocation(loc: Location, span: Span, ctx: ExecutionContext): void {
+    switch (loc.kind) {
+      case "every":
+        return;
+      case "dyn":
+        if (ctx.kind === "local") {
+          this.error(
+            `'dyn' cannot be used in a local function: every location in a function at ${ctx.endpoint} must be ${ctx.endpoint}`,
+            span,
+            ["local-function-strict-location-rule"],
+          );
+        }
+        return;
+      case "individual":
+        if (!this.endpoints.has(loc.name)) {
+          this.error(
+            `unknown endpoint '${loc.name}'`,
+            span,
+            ["unknown-endpoint"],
+          );
+        }
     }
   }
 
@@ -1839,9 +2033,7 @@ class TypeChecker {
   }
 
   private functionSymbol(decl: FunctionDeclaration): FunctionSymbol {
-    const params = decl.params.map((p) =>
-      this.resolveType(p.type),
-    );
+    const params = decl.params.map((p) => this.resolveParameterType(decl, p));
     const returnType = this.getResolvedReturnType(decl);
     return {
       name: decl.name,

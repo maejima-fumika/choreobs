@@ -2,6 +2,7 @@ export type { TypeCheckError } from "./errors.js";
 export { typeCheckError } from "./errors.js";
 export { typeCheck, type TypeCheckResult } from "./checker.js";
 export type {
+  IncompatibleLocations,
   InferErr,
   InferOk,
   InferResult,
@@ -11,6 +12,7 @@ export type {
 } from "./inference.js";
 export {
   checkReturnCoverage,
+  inferReturnLocation,
   inferReturnTypeFromCandidates,
   inferenceError,
   inferenceOk,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TokenKind, tokenize } from "../../src/lexer/index.js";
+import { TokenKind, isIdentifierName, tokenize } from "../../src/lexer/index.js";
 
 function kinds(source: string): string[] {
   return tokenize(source).tokens.map((t) => t.kind);
@@ -104,6 +104,16 @@ let x /* inner */ : integer = 1;`;
     assert.equal(tokens[1]?.kind, TokenKind.Let);
     assert.equal(tokens[2]?.kind, TokenKind.Every);
     assert.equal(tokens[3]?.kind, TokenKind.True);
+  });
+
+  it("reserves `dyn` as the dynamic location (spec §keywords; spec-dyn.md, section 2)", () => {
+    assert.deepEqual(kinds("x@dyn"), [
+      TokenKind.Identifier,
+      TokenKind.At,
+      TokenKind.Dyn,
+      TokenKind.EOF,
+    ]);
+    assert.equal(isIdentifierName("dyn"), false);
   });
 
   it("reserves `as` for numeric conversion (spec §keywords, §numeric-conversion)", () => {

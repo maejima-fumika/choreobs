@@ -163,6 +163,36 @@ describe("config — loadConfig", () => {
     });
   });
 
+  it("rejects 'dyn' as an endpoint name (spec-dyn.md, section 2)", () => {
+    assert.deepEqual(validateEndpoints(["alice", "dyn"]), {
+      message: "'dyn' must not appear in endpoints",
+      spec: ["choreobs-json"],
+    });
+  });
+
+  it("reads implicitDyn, and leaves it out when absent (spec-dyn.md, section 4.2)", () => {
+    withConfig(JSON.stringify({ endpoints: ["alice"], implicitDyn: false }), (path) => {
+      assert.deepEqual(loadConfig(path), { endpoints: ["alice"], implicitDyn: false });
+    });
+    withConfig(JSON.stringify({ endpoints: ["alice"] }), (path) => {
+      assert.deepEqual(loadConfig(path), { endpoints: ["alice"] });
+    });
+  });
+
+  it("rejects a non-boolean implicitDyn", () => {
+    withConfig(JSON.stringify({ endpoints: ["alice"], implicitDyn: "no" }), (path) => {
+      assert.throws(
+        () => loadConfig(path),
+        (e: Error) => {
+          assert.ok(e instanceof ConfigError);
+          assert.equal(e.message, `${path}: "implicitDyn" must be a boolean`);
+          assert.deepEqual(e.spec, ["choreobs-json"]);
+          return true;
+        },
+      );
+    });
+  });
+
   it("rejects a non-array endpoints field", () => {
     withConfig(JSON.stringify({ endpoints: "alice" }), (path) => {
       assert.throws(() => loadConfig(path), /must be an array of strings/);

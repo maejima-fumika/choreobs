@@ -11,6 +11,11 @@ import type {
 import { childExpressions } from "../ir/traverse.js";
 import type { SpecCited, SpecRefs } from "../spec/ref.js";
 import { TOP_SCOPE } from "./tags.js";
+import { ALL_COMM_KINDS } from "../runtime/names.js";
+import { DYN_LOCATION_NAME } from "../runtime/dyn.js";
+
+/** The runtime function a dynamic transfer is lowered to (spec-dyn.md, section 3.5). */
+const DYN_TRANSFER = "__dynTransfer";
 
 /** Scope key for communication tags (spec §communication-tags): top-level or function name. */
 export type CommScopeId = string;
@@ -32,7 +37,13 @@ export function checkCommunicationConsistency(
   return checker.check();
 }
 
-type CommRole = "send" | "receive" | "broadcast";
+/**
+ * `dynTransfer` is a call to `__dynTransfer(tag, kind, to, v)` (spec-dyn.md,
+ * section 11). Every endpoint makes that same call, and the runtime decides
+ * which of them send, broadcast or receive, so what can be checked here is
+ * that they all make it, once, with the same arguments.
+ */
+type CommRole = "send" | "receive" | "broadcast" | "dynTransfer";
 
 /**
  * One end of a communication, located by the control path it sits on.
@@ -48,7 +59,10 @@ interface Occurrence {
   readonly tag: string;
   readonly comm: CommKind;
   readonly role: CommRole;
-  /** Destination for `send`, source for `receive`, unused for `broadcast`. */
+  /**
+   * Destination for `send`, source for `receive`, unused for `broadcast`, and
+   * the `to` argument — an endpoint, `every` or `dyn` — for `dynTransfer`.
+   */
   readonly peer?: string;
   readonly path: ControlPath;
   readonly span: Span;
@@ -244,9 +258,58 @@ class CommConsistencyChecker {
       this.registerReceive(ctx, expr);
       return;
     }
+    if (expr.kind === "CallExpression" && expr.callee === DYN_TRANSFER) {
+      this.registerDynTransfer(ctx, expr);
+    }
     for (const child of childExpressions(expr)) {
       this.walkExpression(ctx, child);
     }
+  }
+
+  /**
+   * `__dynTransfer("tag", "kind", "to", v)`: the first three arguments are
+   * the constants the compiler wrote (spec-dyn.md, section 8.2).
+   */
+  private registerDynTransfer(
+    ctx: WalkContext,
+    call: ProjectedExpression & { readonly kind: "CallExpression" },
+  ): void {
+    const [tag, kind, to] = call.args.slice(0, 3).map((arg) =>
+      arg?.kind === "StringLiteralExpression" ? arg.value : undefined,
+    );
+    if (
+      call.args.length !== 4 ||
+      tag === undefined ||
+      kind === undefined ||
+      to === undefined
+    ) {
+      this.error(
+        `malformed ${DYN_TRANSFER} call at ${ctx.endpoint} (scope ${ctx.scope}): expected a tag, a kind, a location and a value`,
+        call.span,
+      );
+      return;
+    }
+    const comm = ALL_COMM_KINDS.find((k) => k === kind);
+    if (comm === undefined) {
+      this.error(
+        `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} names unknown kind '${kind}' (scope ${ctx.scope})`,
+        call.span,
+      );
+      return;
+    }
+    if (to !== DYN_LOCATION_NAME && to !== "every" && !this.endpoints.includes(to)) {
+      this.error(
+        `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} transfers to unknown location '${to}' (scope ${ctx.scope})`,
+        call.span,
+      );
+    }
+    this.record(ctx, {
+      tag,
+      comm,
+      role: "dynTransfer",
+      peer: to,
+      span: call.span,
+    });
   }
 
   private registerReceive(ctx: WalkContext, recv: ReceiveExpression): void {
@@ -340,6 +403,11 @@ class CommConsistencyChecker {
     this.validateOnePerEndpoint(occurrences);
     this.validateSamePath(occurrences);
 
+    if (occurrences.some((o) => o.role === "dynTransfer")) {
+      this.validateDynTransfer(occurrences);
+      return;
+    }
+
     const broadcasts = occurrences.filter((o) => o.role === "broadcast");
     const sends = occurrences.filter((o) => o.role === "send");
     const receives = occurrences.filter((o) => o.role === "receive");
@@ -370,6 +438,40 @@ class CommConsistencyChecker {
       );
     }
     this.validateDirect(sends, receives);
+  }
+
+  /**
+   * Every endpoint calls `__dynTransfer` for a dynamic transfer, whatever the
+   * run time turns out to require of it (spec-dyn.md, sections 8.2 and 11.1).
+   * One that did not would leave a peer waiting on a receive, or hold a
+   * location variable the others do not.
+   */
+  private validateDynTransfer(occurrences: readonly Occurrence[]): void {
+    const first = occurrences[0]!;
+    const { scope, tag } = first;
+    const other = occurrences.find((o) => o.role !== "dynTransfer");
+    if (other !== undefined) {
+      this.error(
+        `tag '${tag}' in scope '${scope}' is used for both a dynamic transfer and a static ${other.role}`,
+        other.span,
+      );
+      return;
+    }
+    for (const endpoint of this.endpoints) {
+      if (!occurrences.some((o) => o.endpoint === endpoint)) {
+        this.error(
+          `missing ${DYN_TRANSFER}("${tag}", ...) at ${endpoint} (scope ${scope})`,
+          first.span,
+        );
+      }
+    }
+    const differing = occurrences.find((o) => o.peer !== first.peer);
+    if (differing !== undefined) {
+      this.error(
+        `tag '${tag}' in scope '${scope}' transfers to ${first.peer} at ${first.endpoint} but to ${differing.peer} at ${differing.endpoint}`,
+        differing.span,
+      );
+    }
   }
 
   private validateBroadcast(

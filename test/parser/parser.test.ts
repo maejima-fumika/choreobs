@@ -330,6 +330,38 @@ let y: integer@bob <- x;`;
     }
   });
 
+  it("parses @dyn on types, literals, array literals and functions (spec-dyn.md, section 2)", () => {
+    const { program, errors } = parse(`
+let x: integer@dyn = 1@dyn;
+let xs = [1, 2]@dyn;
+function f@dyn(): void {}
+`);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    const [first, second, third] = program!.items;
+    assert.ok(first?.kind === "TopLevelStatement" && first.statement.kind === "LetStatement");
+    assert.equal(first.statement.type?.location?.location.kind, "dyn");
+    const init = first.statement.initializer;
+    assert.ok(init.kind === "LiteralExpression");
+    assert.equal(init.literal.location?.location.kind, "dyn");
+    assert.ok(second?.kind === "TopLevelStatement" && second.statement.kind === "LetStatement");
+    const array = second.statement.initializer;
+    assert.ok(array.kind === "ArrayLiteralExpression");
+    assert.equal(array.location?.location.kind, "dyn");
+    // The parser accepts the location; the checker rejects it on a function.
+    assert.ok(third?.kind === "FunctionDeclaration");
+    assert.equal(third.at?.kind, "dyn");
+    assert.equal(third.context.kind, "choreography");
+  });
+
+  it("names dyn among the locations it expected", () => {
+    const { program, errors } = parse(`let x: integer@1 = 1@alice;`);
+    assert.equal(program, null);
+    assert.ok(
+      errors.some((e) => e.message.includes("expected location name, 'every' or 'dyn'")),
+      JSON.stringify(errors),
+    );
+  });
+
   it("reports parse errors for unsupported statements", () => {
     const { program, errors } = parse("break;");
     assert.equal(program, null);

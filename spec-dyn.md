@@ -315,12 +315,16 @@ source と宛先の base type は同じ `T` である（`spec.md` §transfer-typ
 
 - 省略時の既定値は `true`（省略は `@dyn`）である。
 - `false` のとき、省略は現行の `spec.md` §location-annotation-omission のエラーになる。戻り値のロケーションの lub が取れない場合は `spec.md` §incompatible-inferred-return-locations、宛先の無い転送 `let` は `spec.md` §transfer-let-does-not-infer-destination-type のエラーになる。`@dyn` と明示した箇所だけが動的になる。
+- 4.3 節の推論は、strict モードでも同じに働く。strict モードが変えるのは、推論でも決まらない省略を `dyn` にするかエラーにするか、だけである。戻り値型の部分注釈も、strict モードで推論される。
 
 ### 4.3 単純なロケーション推論
 
 - **変数宣言**: 右辺のロケーションから、変数のロケーションを推論する（`spec.md` §let-type-inference）。部分注釈 `let a: integer = 3@mcu;` も同じである。
 - **`for` の初期化子**: 同上（`spec.md` §for-initializer-let-type-inference）。
 - **関数の戻り値**: `return` の lub から推論する（`spec.md` §function-return-type-inference）。ロケーションの lub が取れなければ `dyn` にする。
+  - ロケーションの lub は `⊔`（3.1 節）である。同じロケーション同士ならそのロケーション、どちらかが `dyn` なら `dyn` になる。
+  - 違う具体ロケーション同士には lub が無い。このときは、strict モードでなければ `dyn`、strict モードではエラーにする（4.2 節）。
+  - したがって、明示した `dyn` を返す `return` があれば、strict モードでも戻り値型は `dyn` になる。
 - **戻り値型の部分注釈**: `function f(): integer { … }` のように、戻り値型を書いてロケーションだけを省略した場合。
   let の部分注釈と同じく、base type は注釈から、ロケーションは `return` の lub から取る。lub が取れなければ `dyn` にする。
 - **配列リテラルの要素**: 配列リテラル自身の注釈から、注釈の無いリテラル要素へ補う（`spec.md` §array-literals と同じ向き）。
@@ -564,13 +568,15 @@ export function __bind(v: __LocVar, loc: string): void {
 
 ```ts
 export function __locationError(): void {
-  // 実行を止める。戻ってはならない。
+  while (true) {
+  }
 }
 ```
 
 - 仕様としては、「location error を検出したエンドポイントは、その操作で実行を停止する」とだけ定める。
 - 全エンドポイントが同じ制約を同じ順に加えるので、全エンドポイントが同じ操作で停止する。エンドポイント間の協調は要らない。
-- 中身を `throw` にするか、プラットフォームの停止関数にするかは要確認である（16 節）。
+- 当面の実装は無限ループで止める。`throw` にもプラットフォームの停止関数にも依存せずに、「戻らない」ことを守れるからである。
+  `throw` やプラットフォームの停止関数が使えるかは要確認である（16 節）。分かり次第、差し替える。
 
 ### 6.3 `__DynVal`
 
@@ -661,10 +667,11 @@ __runtime_bob.bs       @dyn を含むプログラムでだけ生成
 - 内部だけで使うヘルパにも `__` を付ける（`__root`、`__copyPayload`、`__sendAny` など）。
   BlueScript のモジュールスコープの扱いに依存しないためである。
 - `<input>_<endpoint>.bs` では、使用する関数・定数だけを import する。
+- import するモジュール名には拡張子を書かない。BlueScript は、相対 import のモジュール名に `.bs` を付けてファイルを探すからである。
 
 ```ts
 // index_alice.bs
-import { __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime_alice.bs";
+import { __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime_alice";
 ```
 
 ***

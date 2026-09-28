@@ -39,7 +39,14 @@ export function loadConfig(path: string): ChoreoBSConfig {
   if (invalid !== undefined) {
     throw new ConfigError(`${path}: ${invalid.message}`, invalid.spec);
   }
-  return { endpoints: names };
+  const implicitDyn = (data as { implicitDyn?: unknown }).implicitDyn;
+  if (implicitDyn === undefined) {
+    return { endpoints: names };
+  }
+  if (typeof implicitDyn !== "boolean") {
+    throw new ConfigError(`${path}: "implicitDyn" must be a boolean`, ["choreobs-json"]);
+  }
+  return { endpoints: names, implicitDyn };
 }
 
 export function defaultConfigPath(cbsPath: string): string {

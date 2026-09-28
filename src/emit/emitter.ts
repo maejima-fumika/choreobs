@@ -9,6 +9,8 @@ import type {
   ProjectedForUpdate,
 } from "../ir/projected.js";
 import { emitType } from "./types.js";
+import { runtimeImports } from "../runtime/imports.js";
+import { runtimeModuleName } from "../runtime/dyn.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
 import {
   ARRAY_SENTINEL,
@@ -38,7 +40,8 @@ class BlueScriptEmitter {
     for (const stmt of program.body) {
       this.emitStatement(stmt);
     }
-    return this.lines.join("\n") + (this.lines.length > 0 ? "\n" : "");
+    const code = this.lines.join("\n") + (this.lines.length > 0 ? "\n" : "");
+    return runtimeImportLine(program) + code;
   }
 
   private emitFunction(fn: ProjectedFunction): void {
@@ -220,6 +223,21 @@ class BlueScriptEmitter {
   private line(text: string): void {
     this.lines.push("  ".repeat(this.indent) + text);
   }
+}
+
+/**
+ * `import { … } from "./__runtime_<endpoint>";` and a blank line, for a program
+ * that uses the dynamic-location runtime (spec-dyn.md, section 7.3); nothing
+ * otherwise, so a static program's output is unchanged (section 7.2). The
+ * module name has no extension because BlueScript appends `.bs` itself.
+ */
+function runtimeImportLine(program: ProjectedProgram): string {
+  const names = runtimeImports(program);
+  if (names.length === 0) {
+    return "";
+  }
+  const line = `import { ${names.join(", ")} } from "./${runtimeModuleName(program.endpoint)}";\n`;
+  return program.functions.length > 0 || program.body.length > 0 ? `${line}\n` : line;
 }
 
 function formatFloat(value: number): string {

@@ -24,7 +24,9 @@ export const CHOREOGRAPHY_CONTEXT: ExecutionContext = { kind: "choreography" };
 export function executionContextFromLocation(
   location: Location | undefined,
 ): ExecutionContext {
-  if (location === undefined || location.kind === "every") {
+  // `@every` and `@dyn` do not make a function local; the checker rejects
+  // both on a declaration (spec §every-on-a-function-declaration, §function-kinds).
+  if (location === undefined || location.kind !== "individual") {
     return CHOREOGRAPHY_CONTEXT;
   }
   return { kind: "local", endpoint: location.name };

@@ -8,13 +8,17 @@ import type {
   UnaryOperator,
 } from "../ast/operators.js";
 
-/** ChoreoBS `void` projects to `void` at every endpoint (spec §type-projection). */
+/**
+ * ChoreoBS `void` projects to `void` at every endpoint (spec §type-projection),
+ * and a `dyn` type to the runtime's `__DynVal` (spec-dyn.md, section 8.1).
+ */
 export type ProjectedBaseType =
   | BaseType
   | "void"
   | "integer[]"
   | "float[]"
-  | "boolean[]";
+  | "boolean[]"
+  | "__DynVal";
 
 /**
  * Projected type: present base type or internal absent (spec §type-projection, §absent).
