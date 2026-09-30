@@ -16,18 +16,7 @@ import { specRef } from "../spec/ref.js";
  */
 export function commKindForType(type: LocatedType): CommKind {
   if (type.isArray === true) {
-    switch (type.base) {
-      case "integer":
-        return "integerArray";
-      case "float":
-        return "floatArray";
-      case "boolean":
-        return "booleanArray";
-      default:
-        throw new Error(
-          `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
-        );
-    }
+    return `${supportedArrayBase(type)}Array`;
   }
   const base = type.base;
   switch (base) {
@@ -48,4 +37,37 @@ export function commKindForType(type: LocatedType): CommKind {
       );
     }
   }
+}
+
+/** An element type an array may have (spec §array-types). */
+export type ArrayElementBase = "integer" | "float" | "boolean";
+
+/**
+ * The element type of the array type `type` (spec §array-types).
+ *
+ * Exhaustive on purpose, like {@link commKindForType}: the checker rejects every
+ * other element type (spec §unsupported-array-element-type), so reaching the throw is an
+ * internal bug rather than a reason to guess.
+ */
+export function supportedArrayBase(type: LocatedType): ArrayElementBase {
+  switch (type.base) {
+    case "integer":
+    case "float":
+    case "boolean":
+      return type.base;
+    default:
+      throw new Error(
+        `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
+      );
+  }
+}
+
+/** The kinds of the array types, the only values ever cloned (spec §communication-api). */
+export function isArrayCommKind(kind: CommKind): boolean {
+  return kind.endsWith("Array");
+}
+
+/** The element type an array kind holds: `integerArray` holds `integer`. */
+export function arrayCommKindElement(kind: CommKind): ArrayElementBase {
+  return kind.slice(0, -"Array".length) as ArrayElementBase;
 }

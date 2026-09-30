@@ -74,6 +74,12 @@ export interface GeneratedProgram {
   readonly features: readonly string[];
   /** Where the requested violation landed, if one was requested and injected. */
   readonly injected?: { readonly id: string; readonly context: string };
+  /**
+   * The `"implicitDyn"` to compile the program with (spec §strict-mode): `false`
+   * for a program written for strict mode — asked for with
+   * {@link GenOptions.implicitDyn}, or a violation that is one only there.
+   */
+  readonly implicitDyn: boolean;
 }
 
 /** Array element types are restricted to these (spec §array-typing, §unsupported-array-element-type). */
@@ -218,6 +224,9 @@ class Generator {
       source: this.lines.join("\n") + "\n",
       features: [...this.features],
       injected: this.injected,
+      implicitDyn:
+        this.options.implicitDyn !== false &&
+        VIOLATIONS.find((v) => v.id === this.options.violation)?.strict !== true,
     };
   }
 
@@ -299,9 +308,14 @@ class Generator {
     }
   }
 
+  /** Whether `@dyn` may be generated here: never in a local function (spec §local-function-strict-location-rule). */
+  private dynAllowedIn(ctx: Ctx): boolean {
+    return this.dyn && ctx.kind === "choreography";
+  }
+
   /** Whether a value may be swapped for one at another, `~`-compatible location here. */
   private mayMixLocations(ctx: Ctx): boolean {
-    return this.dyn && ctx.kind === "choreography" && this.exactDepth === 0;
+    return this.dynAllowedIn(ctx) && this.exactDepth === 0;
   }
 
   private someType(allowArray = true): Ty {
@@ -311,20 +325,36 @@ class Generator {
     return { base: this.pick(ALL_BASES), isArray: false };
   }
 
+  /** `T` or `T[]`, without a location. */
+  private formatBase(ty: Ty): string {
+    return `${ty.base}${ty.isArray ? "[]" : ""}`;
+  }
+
   private formatType(ty: Ty, loc: Loc): string {
-    return `${ty.base}${ty.isArray ? "[]" : ""}@${loc}`;
+    return `${this.formatBase(ty)}@${loc}`;
   }
 
   /**
-   * A parameter or transfer destination type. Where `dyn` may be left out,
-   * sometimes it is: an omitted location there means `dyn` (spec §omitted-locations).
+   * `text@loc`, or — where `dyn` may be left out and `loc` is `dyn` — sometimes
+   * the bare `text`, since an omitted location there means `dyn`
+   * (spec §omitted-locations). `feature` is recorded when it is left out.
+   *
+   * The chance is drawn only where an omission could apply, as the inline
+   * checks this replaces did, so a seed still names the same program.
    */
-  private formatOmissibleType(ty: Ty, loc: Loc): string {
-    if (this.implicit && loc === "dyn" && this.chance(0.4)) {
-      this.features.add("dyn:omitted type location");
-      return `${ty.base}${ty.isArray ? "[]" : ""}`;
+  private omissible(text: string, loc: Loc, chance: number, feature?: string): string {
+    if (this.implicit && loc === "dyn" && this.chance(chance)) {
+      if (feature !== undefined) {
+        this.features.add(feature);
+      }
+      return text;
     }
-    return this.formatType(ty, loc);
+    return `${text}@${loc}`;
+  }
+
+  /** A parameter or transfer destination type, whose location may be left out. */
+  private formatOmissibleType(ty: Ty, loc: Loc): string {
+    return this.omissible(this.formatBase(ty), loc, 0.4, "dyn:omitted type location");
   }
 
   // --- coverage ---------------------------------------------------------
@@ -377,13 +407,8 @@ class Generator {
   // --- expressions ------------------------------------------------------
 
   private literal(base: Base, loc: Loc): string {
-    const value = this.bareLiteral(base);
     // A literal without a location is `c@dyn` (spec §omitted-locations).
-    if (this.implicit && loc === "dyn" && this.chance(0.4)) {
-      this.features.add("dyn:omitted literal location");
-      return value;
-    }
-    return `${value}@${loc}`;
+    return this.omissible(this.bareLiteral(base), loc, 0.4, "dyn:omitted literal location");
   }
 
   /** Array literal elements carry no location of their own (spec §array-literals). */
@@ -510,11 +535,7 @@ class Generator {
       elements.push(this.bareLiteral(ty.base));
     }
     // An unannotated array literal is `@dyn` (spec §array-literals).
-    if (this.implicit && loc === "dyn" && this.chance(0.4)) {
-      this.features.add("dyn:unannotated array literal");
-      return `[${elements.join(", ")}]`;
-    }
-    return `[${elements.join(", ")}]@${loc}`;
+    return this.omissible(`[${elements.join(", ")}]`, loc, 0.4, "dyn:unannotated array literal");
   }
 
   /**
@@ -637,9 +658,7 @@ class Generator {
     // with its own location annotation (spec §array-typing).
     const empty = ty.isArray && this.chance(0.15);
     const init = empty
-      ? this.implicit && loc === "dyn" && this.chance(0.5)
-        ? `[]`
-        : `[]@${loc}`
+      ? this.omissible("[]", loc, 0.5)
       : this.genPlaced(
           ty,
           loc,
@@ -828,17 +847,17 @@ class Generator {
     let loc = this.ctxLocation(ctx);
     const i = this.fresh("i");
     const bound = this.int(1, 5);
-    let header = `for (let ${i}: integer@${loc} = 0@${loc}; ${i} < ${bound}@${loc}; ${i} = ${i} + 1@${loc}) {`;
     // A `dyn` counter: its condition is cast to `every` each time round
     // (spec §if-condition-typing), in the written or the omitted form.
-    if (this.dyn && ctx.kind === "choreography" && this.chance(0.3)) {
+    let omitted = false;
+    if (this.dynAllowedIn(ctx) && this.chance(0.3)) {
       loc = "dyn";
       this.features.add("dyn:for counter");
-      header = this.implicit && this.chance(0.5)
-        ? `for (let ${i} = 0; ${i} < ${bound}; ${i} = ${i} + 1) {`
-        : `for (let ${i}: integer@dyn = 0@dyn; ${i} < ${bound}@dyn; ${i} = ${i} + 1@dyn) {`;
+      omitted = this.implicit && this.chance(0.5);
     }
-    this.emit(indent, header);
+    const at = omitted ? "" : `@${loc}`;
+    const type = omitted ? "" : `: integer${at}`;
+    this.emit(indent, `for (let ${i}${type} = 0${at}; ${i} < ${bound}${at}; ${i} = ${i} + 1${at}) {`);
     const inner: Binding[] = [
       ...scope,
       { name: i, ty: INTEGER, loc, depth: blockDepth + 1 },
@@ -865,17 +884,19 @@ class Generator {
 
   // --- functions --------------------------------------------------------
 
-  /** Violations that can only be broken inside a local function body (spec §local-function-strict-location-rule). */
-  private static readonly LOCAL_ONLY_VIOLATIONS = new Set([
-    "everyValueInLocalFunction",
-    "otherLocationInLocalFunction",
-    "transferDestinationInLocalFunction",
-    "literalWithoutLocationInLocal",
-    "arrayLiteralWithoutLocationInLocal",
-    "dynValueInLocalFunction",
-    "dynVariableInLocalFunction",
-    "dynArrayLiteralInLocalFunction",
-  ]);
+  /** Whether violation `id` can be built in `ctx` (see {@link ViolationInfo.where}). */
+  private violationFits(id: string, ctx: Ctx): boolean {
+    switch (violationWhere(id)) {
+      case undefined:
+        return true;
+      case "choreography":
+        return ctx.kind === "choreography";
+      case "local":
+        return ctx.kind === "local";
+      case "topLevel":
+        return ctx.kind === "choreography" && this.enclosing.length === 0;
+    }
+  }
 
   /**
    * Some violations can only be built against a particular shape of program:
@@ -892,10 +913,9 @@ class Generator {
       // the injection site can call it from a local body.
       return this.fns.length > 0;
     }
-    if (
-      violation === "crossEndpointLocalCall" ||
-      Generator.LOCAL_ONLY_VIOLATIONS.has(violation)
-    ) {
+    // A violation only a local function body can hold needs one to exist
+    // (spec §local-function-strict-location-rule).
+    if (violationWhere(violation) === "local") {
       return true;
     }
     return this.chance(0.5);
@@ -935,6 +955,8 @@ class Generator {
         depth: 0,
       });
     }
+    // Drawn here, before the return type, and not where the header is built:
+    // moving it would change what every later draw of a seed produces.
     const paramTypes = params.map((p) => this.formatOmissibleType(p.ty, p.loc));
 
     const returnsValue = this.chance(0.6);
@@ -953,17 +975,18 @@ class Generator {
     // `function f(): T { … }` writes the base only; the location is inferred
     // from the return, like an omitted return type's (spec §partial-return-annotations).
     const partialReturnType =
-      this.dyn && ctx.kind === "choreography" && ret !== undefined && !omitReturnType &&
-      this.chance(0.25);
+      this.dynAllowedIn(ctx) && ret !== undefined && !omitReturnType && this.chance(0.25);
     if (partialReturnType) {
       this.features.add("dyn:partial return type");
     }
+    // Whether the return location comes from the `return` below.
+    const inferredReturnLocation = omitReturnType || partialReturnType;
     const annotation = omitReturnType
       ? ""
       : ret === undefined
         ? ": void"
         : partialReturnType
-          ? `: ${ret.ty.base}${ret.ty.isArray ? "[]" : ""}`
+          ? `: ${this.formatBase(ret.ty)}`
           : `: ${this.formatType(ret.ty, ret.loc)}`;
     const header =
       `function ${name}${at === undefined ? "" : `@${at}`}` +
@@ -992,7 +1015,7 @@ class Generator {
         };
       } else if (ret === undefined) {
         this.emit("    ", `return;`);
-      } else if (omitReturnType || partialReturnType) {
+      } else if (inferredReturnLocation) {
         // The return location is inferred from this, so it must be `ret.loc` exactly.
         const value = this.exactly(() => this.genExpr(ret.ty, ret.loc, scope, ctx, 1));
         this.emit("    ", `return ${value};`);
@@ -1049,18 +1072,20 @@ class Generator {
     const here = this.ctxLocation(ctx);
     const n = this.fresh("bad");
     const lines: string[] = [];
+    // Only after the draws above, which every attempt makes, so that a seed
+    // names the same program whether or not the violation fits here.
+    if (!this.violationFits(id, ctx)) {
+      return false;
+    }
 
     switch (id) {
       case "binaryMixedLocation":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer@${p} = 1@${p} + 2@${q};`);
         break;
       case "binaryEveryWithIndividual":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer@every = 1@every + 2@${p};`);
         break;
       case "assignAcrossLocations":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer@${p} = 1@${p};`);
         lines.push(`let ${n}b: integer@${q} = ${n};`);
         break;
@@ -1108,11 +1133,9 @@ class Generator {
         );
         break;
       case "everyValueInLocalFunction":
-        if (choreography) return false;
         lines.push(`let ${n}: integer@every = 1@every;`);
         break;
       case "otherLocationInLocalFunction":
-        if (choreography) return false;
         lines.push(`let ${n}: integer@${q} = 1@${q};`);
         break;
       case "arrayInvariance":
@@ -1123,7 +1146,6 @@ class Generator {
         lines.push(`let ${n}: float[]@${p} = [1, 2]@${p};`);
         break;
       case "everyArrayToIndividual":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer[]@every = [1, 2]@every;`);
         lines.push(`let ${n}b: integer[]@${p} = ${n};`);
         break;
@@ -1132,7 +1154,6 @@ class Generator {
         lines.push(`let ${n}b: boolean@${p} = ${n} === ${n};`);
         break;
       case "arrayIndexWrongLocation":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer[]@${p} = [1, 2]@${p};`);
         lines.push(`${n}[0@${q}] = 1@${p};`);
         break;
@@ -1161,10 +1182,7 @@ class Generator {
             (choreography ? f.at === undefined : f.at === ctx.endpoint),
         );
         if (target === undefined) return false;
-        const args = target.params.map((param) =>
-          this.genExpr(param.ty, param.loc, scope, ctx, 2),
-        );
-        lines.push(`let ${n} = ${target.name}(${args.join(", ")});`);
+        lines.push(`let ${n} = ${this.genCall(target, scope, ctx, 2)};`);
         break;
       }
       case "reservedCompilerPrefix":
@@ -1205,7 +1223,6 @@ class Generator {
       case "transferDestinationInLocalFunction":
         // Legal in a choreography context; inside `function@p` the destination
         // is a variable of that body and must be at `p` (spec §local-function-strict-location-rule).
-        if (choreography) return false;
         lines.push(`let ${n}: integer@${q} <- 1@${p};`);
         break;
       case "unknownEndpoint":
@@ -1235,7 +1252,10 @@ class Generator {
         lines.push(`let ${taken.name}: integer@${p} = 1@${p};`);
         break;
       }
+      // An omission is an error in strict mode, and in a local function in either
+      // mode (spec §strict-mode, §local-function-strict-location-rule, §omitted-locations).
       case "arrayLiteralWithoutLocation":
+      case "arrayLiteralWithoutLocationInLocal":
         lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
         break;
       case "nestedArray":
@@ -1247,8 +1267,11 @@ class Generator {
       case "uninitializedLet":
         lines.push(`let ${n}: integer@${p};`);
         break;
+      // Locations are never inferred from the expected type (spec §explicit-location-annotations); an
+      // omission is an error in strict mode, and in a local function in either
+      // mode (spec §strict-mode, §local-function-strict-location-rule).
       case "literalWithoutLocation":
-        // Locations are never inferred from the expected type (spec §explicit-location-annotations).
+      case "literalWithoutLocationInLocal":
         lines.push(`let ${n}: integer@${p} = 1;`);
         break;
       case "emptyArrayWithoutType":
@@ -1282,7 +1305,6 @@ class Generator {
         break;
       }
       case "everyArrayArgumentToIndividual": {
-        if (!choreography) return false;
         const target = this.fns.find(
           (f) =>
             this.callableFrom(f, ctx) &&
@@ -1303,96 +1325,65 @@ class Generator {
         break;
       }
       case "crossEndpointLocalCall": {
-        if (choreography) return false;
         const target = this.fns.find(
-          (f) => f.at !== undefined && f.at !== ctx.endpoint,
+          (f) => f.at !== undefined && f.at !== here,
         );
         if (target === undefined) return false;
-        const args = target.params.map((param) =>
-          this.genExpr(param.ty, param.loc, scope, ctx, 2),
-        );
-        lines.push(`${target.name}(${args.join(", ")});`);
+        lines.push(`${this.genCall(target, scope, ctx, 2)};`);
         break;
       }
       case "choreographyCallFromLocal": {
-        if (choreography) return false;
         const target = this.fns.find((f) => f.at === undefined);
         if (target === undefined) return false;
-        const args = target.params.map((param) =>
-          this.genExpr(param.ty, param.loc, scope, ctx, 2),
-        );
-        lines.push(`${target.name}(${args.join(", ")});`);
+        lines.push(`${this.genCall(target, scope, ctx, 2)};`);
         break;
       }
-      // Omission is `dyn` only in a choreography context; a local function
-      // must still write every location (spec §local-function-strict-location-rule, §omitted-locations).
-      case "literalWithoutLocationInLocal":
-        if (choreography) return false;
-        lines.push(`let ${n}: integer@${p} = 1;`);
-        break;
-      case "arrayLiteralWithoutLocationInLocal":
-        if (choreography) return false;
-        lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
-        break;
       // `dyn` has no place in a local function (spec §local-function-strict-location-rule).
       case "dynValueInLocalFunction":
-        if (choreography) return false;
         lines.push(`let ${n}: integer@${p} = 1@dyn;`);
         break;
       case "dynVariableInLocalFunction":
-        if (choreography) return false;
         lines.push(`let ${n}: integer@dyn = 1@${p};`);
         break;
       case "dynArrayLiteralInLocalFunction":
-        if (choreography) return false;
         lines.push(`[1, 2]@dyn;`);
         break;
       case "dynFunctionLocation":
         // A function declaration is a top-level item.
-        if (!choreography || this.enclosing.length > 0) return false;
         lines.push(`function ${n}@dyn(): void {`, `    return;`, `}`);
         break;
       // `dyn` defers the location check only; base types are as static as ever
       // (spec §subtyping).
       case "dynNumericAssignMismatch":
-        if (!choreography) return false;
         lines.push(`let ${n}: float@dyn = 1@${p};`);
         break;
       case "dynTransferNumericWidening":
-        if (!choreography) return false;
         lines.push(`let ${n}: float@${q} <- 1@dyn;`);
         break;
       case "dynMixedNumericArithmetic":
-        if (!choreography) return false;
         lines.push(`let ${n} = 1@dyn + 1.5@dyn;`);
         break;
       case "dynArrayInvariance":
-        if (!choreography) return false;
         lines.push(`let ${n}: float[]@dyn = [1, 2]@dyn;`);
         break;
       // `~` is not transitive: two different concrete locations in one
       // construct are an error even with `dyn` among them (spec §location-consistency-and-join).
       case "dynIndexAssignMixedConcrete":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer[]@dyn = [1]@dyn;`);
         lines.push(`${n}[0@${p}] = 1@${q};`);
         break;
       case "dynArrayLiteralMixedConcrete":
-        if (!choreography) return false;
         lines.push(`let ${n} = [1@${p}, 2@${q}]@dyn;`);
         break;
       // Strict mode: an omission that would be `dyn` is an error (spec §strict-mode).
       case "transferLetOmittedDestinationStrict":
-        if (!choreography) return false;
         lines.push(`let ${n}: integer <- 1@${p};`);
         break;
       case "omittedParameterLocationStrict":
-        if (!choreography || this.enclosing.length > 0) return false;
         lines.push(`function ${n}(a: integer): void {`, `    return;`, `}`);
         break;
       case "incompatibleInferredReturnLocationsStrict":
       case "partialReturnIncompatibleStrict": {
-        if (!choreography || this.enclosing.length > 0) return false;
         const annotation = id === "partialReturnIncompatibleStrict" ? ": integer" : "";
         lines.push(
           `function ${n}(c: boolean@every)${annotation} {`,
@@ -1441,12 +1432,17 @@ export interface ViolationInfo {
    * the citation is the whole test.
    */
   readonly expect: readonly string[];
+  /**
+   * Where the violation can be built: in a choreography context, in a local
+   * function body, or at top level only. Anywhere when absent.
+   */
+  readonly where?: "choreography" | "local" | "topLevel";
 }
 
 export const VIOLATIONS: readonly ViolationInfo[] = [
-  { id: "binaryMixedLocation", spec: "operators", expect: ["same location"] },
-  { id: "binaryEveryWithIndividual", spec: "operators", expect: ["same location"] },
-  { id: "assignAcrossLocations", spec: "invalid-assignment-across-locations", expect: ["transfer instead"] },
+  { id: "binaryMixedLocation", where: "choreography", spec: "operators", expect: ["same location"] },
+  { id: "binaryEveryWithIndividual", where: "choreography", spec: "operators", expect: ["same location"] },
+  { id: "assignAcrossLocations", where: "choreography", spec: "invalid-assignment-across-locations", expect: ["transfer instead"] },
   { id: "transferBaseMismatch", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
   { id: "transferArrayElementMismatch", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
   { id: "numericAssignMismatch", spec: "type-mismatch", expect: ["cannot assign integer"] },
@@ -1459,13 +1455,13 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "ifConditionWrongLocation", spec: "invalid-if-condition", expect: ["condition", "not usable in local function"] },
   { id: "whileConditionWrongLocation", spec: "invalid-while-condition", expect: ["condition", "not usable in local function"] },
   { id: "forConditionWrongLocation", spec: "invalid-for-condition", expect: ["condition", "not usable in local function"] },
-  { id: "everyValueInLocalFunction", spec: "invalid-value-used-inside-local-function", expect: ["local function", "every"] },
-  { id: "otherLocationInLocalFunction", spec: "invalid-value-used-inside-local-function", expect: ["local function", "location"] },
+  { id: "everyValueInLocalFunction", where: "local", spec: "invalid-value-used-inside-local-function", expect: ["local function", "every"] },
+  { id: "otherLocationInLocalFunction", where: "local", spec: "invalid-value-used-inside-local-function", expect: ["local function", "location"] },
   { id: "arrayInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]", "invarian"] },
   { id: "arrayLiteralInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
-  { id: "everyArrayToIndividual", spec: "err-every-array-assignment", expect: ["use a transfer instead", "cannot assign"] },
+  { id: "everyArrayToIndividual", where: "choreography", spec: "err-every-array-assignment", expect: ["use a transfer instead", "cannot assign"] },
   { id: "arrayEquality", spec: "invalid-array-equality", expect: ["array", "equal"] },
-  { id: "arrayIndexWrongLocation", spec: "invalid-array-index-location", expect: ["index"] },
+  { id: "arrayIndexWrongLocation", where: "choreography", spec: "invalid-array-index-location", expect: ["index"] },
   { id: "pushWrongElementType", spec: "invalid-push-element-type", expect: ["cannot assign float", "push", "element"] },
   { id: "voidVariable", spec: "invalid-use-of-void", expect: ["void"] },
   { id: "reservedRuntimeName", spec: "function-names", expect: ["reserved runtime name"] },
@@ -1486,7 +1482,7 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "reservedCompilerPrefix", spec: "function-names", expect: ["reserved runtime name"] },
   { id: "voidValue", spec: "invalid-use-of-void", expect: ["produces no value"] },
   { id: "arrayLiteralWithLocatedElements", spec: "array-literal-without-required-location", expect: ["location annotation required"], strict: true },
-  { id: "transferDestinationInLocalFunction", spec: "local-function-strict-location-rule", expect: ["variable type must be located at"] },
+  { id: "transferDestinationInLocalFunction", where: "local", spec: "local-function-strict-location-rule", expect: ["variable type must be located at"] },
   { id: "missingReturnValue", spec: "missing-return-in-a-non-void-function", expect: [] },
   { id: "unknownEndpoint", spec: "unknown-endpoint", expect: ["nosuchendpoint"] },
   { id: "unsupportedEquality", spec: "unsupported-equality-operators", expect: ["'=='"] },
@@ -1512,27 +1508,31 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "transferLetWithoutAnnotation", spec: "transfer-let-without-type-annotation", expect: ["type annotation required for transfer let"] },
   // Call sites: argument checking and the two call-legality rules.
   { id: "argumentLocationMismatch", spec: "invalid-function-argument-location", expect: ["argument", "not usable in local function"] },
-  { id: "everyArrayArgumentToIndividual", spec: "err-every-array-argument", expect: ["argument", "every", "cannot"] },
-  { id: "crossEndpointLocalCall", spec: "calling-another-endpoints-local-function", expect: ["cannot call"] },
-  { id: "choreographyCallFromLocal", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
+  { id: "everyArrayArgumentToIndividual", where: "choreography", spec: "err-every-array-argument", expect: ["argument", "every", "cannot"] },
+  { id: "crossEndpointLocalCall", where: "local", spec: "calling-another-endpoints-local-function", expect: ["cannot call"] },
+  { id: "choreographyCallFromLocal", where: "local", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
   // Gradual locating (spec §dyn). None of these needs the generator's own
   // `dyn` mode: each writes its `dyn` out.
-  { id: "literalWithoutLocationInLocal", spec: "location-annotation-omission", expect: ["location annotation required"] },
-  { id: "arrayLiteralWithoutLocationInLocal", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
-  { id: "dynValueInLocalFunction", spec: "dyn-in-a-local-function", expect: [] },
-  { id: "dynVariableInLocalFunction", spec: "dyn-in-a-local-function", expect: [] },
-  { id: "dynArrayLiteralInLocalFunction", spec: "dyn-in-a-local-function", expect: [] },
-  { id: "dynFunctionLocation", spec: "dyn-on-a-function-declaration", expect: [] },
-  { id: "dynNumericAssignMismatch", spec: "type-mismatch", expect: ["cannot assign integer"] },
-  { id: "dynTransferNumericWidening", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
-  { id: "dynMixedNumericArithmetic", spec: "invalid-arithmetic-or-logical-operand", expect: ["same numeric type"] },
-  { id: "dynArrayInvariance", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
-  { id: "dynIndexAssignMixedConcrete", spec: "element-assignment-across-locations", expect: [] },
-  { id: "dynArrayLiteralMixedConcrete", spec: "array-literal-elements-across-locations", expect: [] },
-  { id: "transferLetOmittedDestinationStrict", spec: "transfer-let-does-not-infer-destination-type", expect: [], strict: true },
-  { id: "omittedParameterLocationStrict", spec: "location-annotation-omission", expect: ["location annotation required"], strict: true },
-  { id: "incompatibleInferredReturnLocationsStrict", spec: "incompatible-inferred-return-locations", expect: [], strict: true },
-  { id: "partialReturnIncompatibleStrict", spec: "incompatible-inferred-return-locations", expect: [], strict: true },
+  { id: "literalWithoutLocationInLocal", where: "local", spec: "location-annotation-omission", expect: ["location annotation required"] },
+  { id: "arrayLiteralWithoutLocationInLocal", where: "local", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
+  { id: "dynValueInLocalFunction", where: "local", spec: "dyn-in-a-local-function", expect: [] },
+  { id: "dynVariableInLocalFunction", where: "local", spec: "dyn-in-a-local-function", expect: [] },
+  { id: "dynArrayLiteralInLocalFunction", where: "local", spec: "dyn-in-a-local-function", expect: [] },
+  { id: "dynFunctionLocation", where: "topLevel", spec: "dyn-on-a-function-declaration", expect: [] },
+  { id: "dynNumericAssignMismatch", where: "choreography", spec: "type-mismatch", expect: ["cannot assign integer"] },
+  { id: "dynTransferNumericWidening", where: "choreography", spec: "invalid-transfer-base-type", expect: ["transfer type mismatch"] },
+  { id: "dynMixedNumericArithmetic", where: "choreography", spec: "invalid-arithmetic-or-logical-operand", expect: ["same numeric type"] },
+  { id: "dynArrayInvariance", where: "choreography", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
+  { id: "dynIndexAssignMixedConcrete", where: "choreography", spec: "element-assignment-across-locations", expect: [] },
+  { id: "dynArrayLiteralMixedConcrete", where: "choreography", spec: "array-literal-elements-across-locations", expect: [] },
+  { id: "transferLetOmittedDestinationStrict", where: "choreography", spec: "transfer-let-does-not-infer-destination-type", expect: [], strict: true },
+  { id: "omittedParameterLocationStrict", where: "topLevel", spec: "location-annotation-omission", expect: ["location annotation required"], strict: true },
+  { id: "incompatibleInferredReturnLocationsStrict", where: "topLevel", spec: "incompatible-inferred-return-locations", expect: [], strict: true },
+  { id: "partialReturnIncompatibleStrict", where: "topLevel", spec: "incompatible-inferred-return-locations", expect: [], strict: true },
 ];
 
 export const VIOLATION_IDS: readonly string[] = VIOLATIONS.map((v) => v.id);
+
+function violationWhere(id: string): ViolationInfo["where"] {
+  return VIOLATIONS.find((v) => v.id === id)?.where;
+}

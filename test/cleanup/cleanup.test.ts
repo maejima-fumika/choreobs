@@ -27,8 +27,9 @@ import {
   exprStmt,
 } from "../support/ir.js";
 
+/** The cleaned statements as BlueScript, without the runtime import line (spec §runtime-import). */
 function emitCleaned(body: ProjectedStatement[]): string {
-  return emit(cleanupProgram(finalizeAbsentProgram(program(body)))).trimEnd();
+  return emit(cleanupProgram(finalizeAbsentProgram(program(body))), []).trimEnd();
 }
 
 describe("Projected AST cleanup (spec §projected-ast-cleanup)", () => {
@@ -139,7 +140,7 @@ describe("Projected AST cleanup (spec §projected-ast-cleanup)", () => {
     it("preserves compiler-generated nothing(choose(c));", () => {
       assert.equal(
         emitCleaned([exprStmt(nothingExpr(ident("c")))]),
-        "nothing(c);",
+        "__nothing1(c);",
       );
     });
 
@@ -233,28 +234,33 @@ describe("Projected AST cleanup (spec §projected-ast-cleanup)", () => {
     });
   });
 
-  describe("integration — `nothing` is a reserved runtime name", () => {
-    // The IR-level tests above still exercise a *call* named `nothing` that is
-    // not the compiler's artifact, because the distinction has to survive
-    // inside cleanup. Source programs may no longer introduce that name: the
-    // emitted BlueScript keeps the source name (spec §codegen-function-names), so a user
-    // `nothing` would capture the compiler's own `nothing(...)` calls
-    // (spec §function-names, §nothing).
-    it("rejects a user function named nothing (spec §function-names, §codegen-function-names)", () => {
+  describe("integration — `nothing` is an ordinary name (spec §reserved-runtime-names)", () => {
+    // The IR-level tests above exercise a *call* named `nothing` that is not
+    // the compiler's artifact, because the distinction has to survive inside
+    // cleanup. A source program may introduce that name too: the artifact is
+    // emitted as the `__nothing…` helpers (spec §nothing-code-generation), which
+    // the program's own `nothing` cannot capture.
+    it("keeps a user function named nothing apart from the artifact", () => {
       const result = compile(
         `
-function nothing@alice(a: null@alice): null@alice {
-    return null@alice;
+function ping(): boolean@alice {
+    let b: integer@bob = 1@bob;
+    let c: integer@alice <- b;
+    return true@alice;
 }
-nothing(null@alice);
+function nothing@alice(a: boolean@alice): void {}
+nothing(ping());
 `,
         aliceBob,
       );
-      assert.equal(result.success, false);
-      assert.ok(
-        result.errors.some((e) => e.message.includes("reserved runtime name")),
-        JSON.stringify(result.errors),
-      );
+      assert.equal(result.success, true, JSON.stringify(result.errors));
+      const [alice, bob] = result.outputs.map((o) => o.source);
+      assert.match(alice!, /^function nothing\(a: boolean\): void \{$/m);
+      assert.match(alice!, /^nothing\(ping\(\)\);$/m);
+      assert.doesNotMatch(alice!, /__nothing/);
+      // `bob` does not generate the local function, so the call leaves the artifact.
+      assert.match(bob!, /^__nothing1\(ping\(\)\);$/m);
+      assert.doesNotMatch(bob!, /^function nothing/m);
     });
   });
 });

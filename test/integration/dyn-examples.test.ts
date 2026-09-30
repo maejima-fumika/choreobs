@@ -8,11 +8,34 @@ import { aliceBobCarol } from "../support/config.js";
  * expectation is the example's EPP output in the emitter's own layout, with the
  * runtime import the spec leaves out (spec §runtime-import).
  */
-function expectEndpoints(source: string, alice: string, bob: string): void {
+function expectEndpoints(
+  source: string,
+  expected: {
+    /**
+     * What the programs import from the runtime, in import order: the same for
+     * both, or each its own where only one of them calls a core helper.
+     */
+    readonly runtime: readonly string[] | Readonly<Record<"alice" | "bob", readonly string[]>>;
+    readonly alice: string;
+    readonly bob: string;
+  },
+): void {
   const result = compile(source);
   expectSuccess(result);
-  assert.equal(bs(result, "alice"), alice);
-  assert.equal(bs(result, "bob"), bob);
+  for (const endpoint of ["alice", "bob"] as const) {
+    const names = "alice" in expected.runtime ? expected.runtime[endpoint] : expected.runtime;
+    assert.equal(
+      bs(result, endpoint),
+      `import { ${names.join(", ")} } from "./__runtime_${endpoint}";\n\n${expected[endpoint]}`,
+    );
+  }
+}
+
+/** `text` without its runtime import and the blank line after it, which must be there (spec §runtime-import). */
+function withoutRuntimeImport(text: string): string {
+  const header = /^import \{ [^}]* \} from "\.\/__runtime_\w+";\n\n/.exec(text);
+  assert.ok(header, `no runtime import in:\n${text}`);
+  return text.slice(header[0].length);
 }
 
 describe("spec.md gradual-locating examples — generated .bs output", () => {
@@ -27,23 +50,22 @@ let f3: float@dyn = iDyn as float;
 let f4: float@dyn = 3 as float;
 let i1: integer@dyn = iDyn as integer;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __cast, __dynIntegerToFloat } from "./__runtime_alice";
-
-let valAlice: integer = 1;
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__cast", "__dynIntegerToFloat"],
+        alice: `let valAlice: integer = 1;
 let iDyn: __DynVal = __dynUnbound(2);
 let f1: __DynVal = __inject((valAlice as float), "alice");
 let f2: float = __cast(__dynIntegerToFloat(iDyn), "alice");
 let f3: __DynVal = __dynIntegerToFloat(iDyn);
 let f4: __DynVal = __dynIntegerToFloat(__dynUnbound(3));
 let i1: __DynVal = iDyn;`,
-      `import { __DynVal, __dynUnbound, __inject, __cast, __dynIntegerToFloat } from "./__runtime_bob";
-
-let iDyn: __DynVal = __dynUnbound(2);
+        bob: `let iDyn: __DynVal = __dynUnbound(2);
 let f1: __DynVal = __inject(null, "alice");
 __cast(__dynIntegerToFloat(iDyn), "alice");
 let f3: __DynVal = __dynIntegerToFloat(iDyn);
 let f4: __DynVal = __dynIntegerToFloat(__dynUnbound(3));
 let i1: __DynVal = iDyn;`,
+      },
     );
   });
 
@@ -62,9 +84,9 @@ function bar(): integer {
     return 3@alice;
 }
 `,
-      `import { __DynVal, __dynUnbound, __inject, __dynTransfer } from "./__runtime_alice";
-
-function foo(a: __DynVal): void {
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynTransfer"],
+        alice: `function foo(a: __DynVal): void {
 }
 
 function boo(flag: boolean): __DynVal {
@@ -81,9 +103,7 @@ function bar(): integer {
 __dynUnbound(3);
 let a: __DynVal = __dynUnbound(32);
 let b: __DynVal = __dynTransfer("__top_0", "integer", "dyn", __inject(32, "alice"));`,
-      `import { __DynVal, __dynUnbound, __inject, __dynTransfer } from "./__runtime_bob";
-
-function foo(a: __DynVal): void {
+        bob: `function foo(a: __DynVal): void {
 }
 
 function boo(flag: boolean): __DynVal {
@@ -100,6 +120,7 @@ function bar(): null {
 __dynUnbound(3);
 let a: __DynVal = __dynUnbound(32);
 let b: __DynVal = __dynTransfer("__top_0", "integer", "dyn", __inject(null, "alice"));`,
+      },
     );
   });
 
@@ -112,20 +133,19 @@ true@dyn;
 "Hello"@dyn;
 null@dyn;
 `,
-      `import { __dynUnbound } from "./__runtime_alice";
-
-__dynUnbound(3);
+      {
+        runtime: ["__dynUnbound"],
+        alice: `__dynUnbound(3);
 __dynUnbound(4.5);
 __dynUnbound(true);
 __dynUnbound("Hello");
 __dynUnbound(null);`,
-      `import { __dynUnbound } from "./__runtime_bob";
-
-__dynUnbound(3);
+        bob: `__dynUnbound(3);
 __dynUnbound(4.5);
 __dynUnbound(true);
 __dynUnbound("Hello");
 __dynUnbound(null);`,
+      },
     );
   });
 
@@ -142,9 +162,12 @@ let e: integer[]@dyn = []@dyn;
 [a, b];
 let xs: integer[]@alice = [d]@alice;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __cast, __dynArrayNew, __dynArrayAppend } from "./__runtime_alice";
-
-let a: integer = 1;
+      {
+        runtime: {
+          alice: ["__DynVal", "__dynUnbound", "__inject", "__cast", "__dynArrayNew", "__dynArrayAppend"],
+          bob: ["__nothing1", "__DynVal", "__dynUnbound", "__inject", "__cast", "__dynArrayNew", "__dynArrayAppend"],
+        },
+        alice: `let a: integer = 1;
 let b: integer = 2;
 let d: __DynVal = __dynUnbound(3);
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
@@ -153,15 +176,14 @@ __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)
 let e: __DynVal = __dynArrayNew("integerArray");
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(a, "alice")), __inject(b, "alice"));
 let xs: integer[] = [__cast(d, "alice")];`,
-      `import { __DynVal, __dynUnbound, __inject, __cast, __dynArrayNew, __dynArrayAppend } from "./__runtime_bob";
-
-let d: __DynVal = __dynUnbound(3);
+        bob: `let d: __DynVal = __dynUnbound(3);
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
 let e: __DynVal = __dynArrayNew("integerArray");
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(null, "alice")), __inject(null, "alice"));
-nothing(__cast(d, "alice"));`,
+__nothing1(__cast(d, "alice"));`,
+      },
     );
   });
 
@@ -172,15 +194,14 @@ let fs: float[]@alice = [1.0]@alice;
 fs = [];
 let ys: boolean[]@dyn <- [];
 `,
-      `import { __DynVal, __cast, __dynArrayNew, __dynTransfer } from "./__runtime_alice";
-
-let fs: float[] = [1.0];
+      {
+        runtime: ["__DynVal", "__cast", "__dynArrayNew", "__dynTransfer"],
+        alice: `let fs: float[] = [1.0];
 fs = __cast(__dynArrayNew("floatArray"), "alice");
 let ys: __DynVal = __dynTransfer("__top_0", "booleanArray", "dyn", __dynArrayNew("booleanArray"));`,
-      `import { __DynVal, __cast, __dynArrayNew, __dynTransfer } from "./__runtime_bob";
-
-__cast(__dynArrayNew("floatArray"), "alice");
+        bob: `__cast(__dynArrayNew("floatArray"), "alice");
 let ys: __DynVal = __dynTransfer("__top_0", "booleanArray", "dyn", __dynArrayNew("booleanArray"));`,
+      },
     );
   });
 
@@ -195,22 +216,21 @@ valDyn + valAlice;
 valAlice + valAlice;
 valDyn + valEvery;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __dynPlus } from "./__runtime_alice";
-
-let valDyn: __DynVal = __dynUnbound(3);
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynPlus"],
+        alice: `let valDyn: __DynVal = __dynUnbound(3);
 let valAlice: integer = 5;
 let valEvery: integer = 6;
 __dynPlus(valDyn, valDyn);
 __dynPlus(valDyn, __inject(valAlice, "alice"));
 valAlice + valAlice;
 __dynPlus(valDyn, __inject(valEvery, "every"));`,
-      `import { __DynVal, __dynUnbound, __inject, __dynPlus } from "./__runtime_bob";
-
-let valDyn: __DynVal = __dynUnbound(3);
+        bob: `let valDyn: __DynVal = __dynUnbound(3);
 let valEvery: integer = 6;
 __dynPlus(valDyn, valDyn);
 __dynPlus(valDyn, __inject(null, "alice"));
 __dynPlus(valDyn, __inject(valEvery, "every"));`,
+      },
     );
   });
 
@@ -222,18 +242,17 @@ let n: integer@dyn = 1@dyn;
 a = !a;
 n = -n;
 `,
-      `import { __DynVal, __dynUnbound, __dynNot, __dynNeg } from "./__runtime_alice";
-
-let a: __DynVal = __dynUnbound(false);
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__dynNot", "__dynNeg"],
+        alice: `let a: __DynVal = __dynUnbound(false);
 let n: __DynVal = __dynUnbound(1);
 a = __dynNot(a);
 n = __dynNeg(n);`,
-      `import { __DynVal, __dynUnbound, __dynNot, __dynNeg } from "./__runtime_bob";
-
-let a: __DynVal = __dynUnbound(false);
+        bob: `let a: __DynVal = __dynUnbound(false);
 let n: __DynVal = __dynUnbound(1);
 a = __dynNot(a);
 n = __dynNeg(n);`,
+      },
     );
   });
 
@@ -246,20 +265,19 @@ let a: float@dyn = n as float;
 let b: integer@dyn = x as integer;
 let c: integer@dyn = n as integer;
 `,
-      `import { __DynVal, __dynUnbound, __dynIntegerToFloat, __dynFloatToInteger } from "./__runtime_alice";
-
-let n: __DynVal = __dynUnbound(3);
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__dynIntegerToFloat", "__dynFloatToInteger"],
+        alice: `let n: __DynVal = __dynUnbound(3);
 let x: __DynVal = __dynUnbound(1.5);
 let a: __DynVal = __dynIntegerToFloat(n);
 let b: __DynVal = __dynFloatToInteger(x);
 let c: __DynVal = n;`,
-      `import { __DynVal, __dynUnbound, __dynIntegerToFloat, __dynFloatToInteger } from "./__runtime_bob";
-
-let n: __DynVal = __dynUnbound(3);
+        bob: `let n: __DynVal = __dynUnbound(3);
 let x: __DynVal = __dynUnbound(1.5);
 let a: __DynVal = __dynIntegerToFloat(n);
 let b: __DynVal = __dynFloatToInteger(x);
 let c: __DynVal = n;`,
+      },
     );
   });
 
@@ -282,9 +300,9 @@ valBob1 <- valAlice;
 let x: integer@dyn <- f() + g();
 let fb: float@bob <- valDyn1 as float;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __cast, __dynIntegerToFloat, __dynPlus, __dynTransfer } from "./__runtime_alice";
-
-function f(): __DynVal {
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__cast", "__dynIntegerToFloat", "__dynPlus", "__dynTransfer"],
+        alice: `function f(): __DynVal {
   return __dynUnbound(3);
 }
 
@@ -304,9 +322,7 @@ __cast(__dynTransfer("__top_6", "integer", "bob", valDyn1), "bob");
 sendInteger("bob", "__top_7", valAlice);
 let x: __DynVal = __dynTransfer("__top_8", "integer", "dyn", __dynPlus(f(), g()));
 __cast(__dynTransfer("__top_9", "float", "bob", __dynIntegerToFloat(valDyn1)), "bob");`,
-      `import { __DynVal, __dynUnbound, __inject, __cast, __dynIntegerToFloat, __dynPlus, __dynTransfer } from "./__runtime_bob";
-
-function f(): __DynVal {
+        bob: `function f(): __DynVal {
   return __dynUnbound(3);
 }
 
@@ -325,6 +341,7 @@ valBob1 = __cast(__dynTransfer("__top_6", "integer", "bob", valDyn1), "bob");
 valBob1 = receiveInteger("alice", "__top_7");
 let x: __DynVal = __dynTransfer("__top_8", "integer", "dyn", __dynPlus(f(), g()));
 let fb: float = __cast(__dynTransfer("__top_9", "float", "bob", __dynIntegerToFloat(valDyn1)), "bob");`,
+      },
     );
   });
 
@@ -340,9 +357,9 @@ arrAlice[iDyn];
 arrDyn[iAlice];
 arrAlice[iAlice];
 `,
-      `import { __DynVal, __dynUnbound, __inject, __dynArrayGet, __dynArrayNew, __dynArrayAppend } from "./__runtime_alice";
-
-let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynArrayGet", "__dynArrayNew", "__dynArrayAppend"],
+        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let arrAlice: integer[] = [1, 3, 4];
 let iDyn: __DynVal = __dynUnbound(0);
 let iAlice: integer = 0;
@@ -350,13 +367,12 @@ __dynArrayGet(arrDyn, iDyn);
 __dynArrayGet(__inject(arrAlice, "alice"), iDyn);
 __dynArrayGet(arrDyn, __inject(iAlice, "alice"));
 arrAlice[iAlice];`,
-      `import { __DynVal, __dynUnbound, __inject, __dynArrayGet, __dynArrayNew, __dynArrayAppend } from "./__runtime_bob";
-
-let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let iDyn: __DynVal = __dynUnbound(0);
 __dynArrayGet(arrDyn, iDyn);
 __dynArrayGet(__inject(null, "alice"), iDyn);
 __dynArrayGet(arrDyn, __inject(null, "alice"));`,
+      },
     );
   });
 
@@ -378,9 +394,9 @@ arrDyn[iAlice] = valAlice;
 arrAlice[iAlice] = valDyn;
 arrAlice[iAlice] = valAlice;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __dynArraySet, __dynArrayNew, __dynArrayAppend } from "./__runtime_alice";
-
-let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynArraySet", "__dynArrayNew", "__dynArrayAppend"],
+        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let arrAlice: integer[] = [1, 3, 4];
 let iDyn: __DynVal = __dynUnbound(0);
 let iAlice: integer = 0;
@@ -394,9 +410,7 @@ __dynArraySet(arrDyn, __inject(iAlice, "alice"), valDyn);
 __dynArraySet(arrDyn, __inject(iAlice, "alice"), __inject(valAlice, "alice"));
 __dynArraySet(__inject(arrAlice, "alice"), __inject(iAlice, "alice"), valDyn);
 arrAlice[iAlice] = valAlice;`,
-      `import { __DynVal, __dynUnbound, __inject, __dynArraySet, __dynArrayNew, __dynArrayAppend } from "./__runtime_bob";
-
-let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let iDyn: __DynVal = __dynUnbound(0);
 let valDyn: __DynVal = __dynUnbound(5);
 __dynArraySet(arrDyn, iDyn, valDyn);
@@ -406,6 +420,7 @@ __dynArraySet(__inject(null, "alice"), iDyn, __inject(null, "alice"));
 __dynArraySet(arrDyn, __inject(null, "alice"), valDyn);
 __dynArraySet(arrDyn, __inject(null, "alice"), __inject(null, "alice"));
 __dynArraySet(__inject(null, "alice"), __inject(null, "alice"), valDyn);`,
+      },
     );
   });
 
@@ -423,9 +438,9 @@ arrAlice.push(valAlice);
 arrDyn.length;
 arrAlice.length;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __dynArrayPush, __dynArrayLength, __dynArrayNew, __dynArrayAppend } from "./__runtime_alice";
-
-let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynArrayPush", "__dynArrayLength", "__dynArrayNew", "__dynArrayAppend"],
+        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let arrAlice: integer[] = [1, 3, 4];
 let valDyn: __DynVal = __dynUnbound(5);
 let valAlice: integer = 5;
@@ -435,14 +450,13 @@ __dynArrayPush(__inject(arrAlice, "alice"), valDyn);
 arrAlice.push(valAlice);
 __dynArrayLength(arrDyn);
 arrAlice.length;`,
-      `import { __DynVal, __dynUnbound, __inject, __dynArrayPush, __dynArrayLength, __dynArrayNew, __dynArrayAppend } from "./__runtime_bob";
-
-let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let valDyn: __DynVal = __dynUnbound(5);
 __dynArrayPush(arrDyn, valDyn);
 __dynArrayPush(arrDyn, __inject(null, "alice"));
 __dynArrayPush(__inject(null, "alice"), valDyn);
 __dynArrayLength(arrDyn);`,
+      },
     );
   });
 
@@ -460,9 +474,12 @@ funcAlice(valDyn);
 funcAlice(valAlice);
 useAlice(valDyn);
 `,
-      `import { __DynVal, __dynUnbound, __inject, __cast } from "./__runtime_alice";
-
-function funcDyn(a: __DynVal): void {
+      {
+        runtime: {
+          alice: ["__DynVal", "__dynUnbound", "__inject", "__cast"],
+          bob: ["__nothing1", "__DynVal", "__dynUnbound", "__inject", "__cast"],
+        },
+        alice: `function funcDyn(a: __DynVal): void {
 }
 
 function funcAlice(a: integer): void {
@@ -477,9 +494,7 @@ funcDyn(__inject(valAlice, "alice"));
 funcAlice(__cast(valDyn, "alice"));
 funcAlice(valAlice);
 useAlice(__cast(valDyn, "alice"));`,
-      `import { __DynVal, __dynUnbound, __inject, __cast } from "./__runtime_bob";
-
-function funcDyn(a: __DynVal): void {
+        bob: `function funcDyn(a: __DynVal): void {
 }
 
 function funcAlice(a: null): void {
@@ -489,7 +504,8 @@ funcDyn(valDyn);
 funcDyn(__inject(null, "alice"));
 funcAlice(__cast(valDyn, "alice"));
 funcAlice(null);
-nothing(__cast(valDyn, "alice"));`,
+__nothing1(__cast(valDyn, "alice"));`,
+      },
     );
   });
 
@@ -504,9 +520,9 @@ function toAlice(a: integer@dyn): integer@alice {
     return a;
 }
 `,
-      `import { __DynVal, __inject, __cast } from "./__runtime_alice";
-
-function boo(flag: boolean): __DynVal {
+      {
+        runtime: ["__DynVal", "__inject", "__cast"],
+        alice: `function boo(flag: boolean): __DynVal {
   if (flag) {
     return __inject(3, "alice");
   } else {
@@ -517,9 +533,7 @@ function boo(flag: boolean): __DynVal {
 function toAlice(a: __DynVal): integer {
   return __cast(a, "alice");
 }`,
-      `import { __DynVal, __inject, __cast } from "./__runtime_bob";
-
-function boo(flag: boolean): __DynVal {
+        bob: `function boo(flag: boolean): __DynVal {
   if (flag) {
     return __inject(null, "alice");
   } else {
@@ -530,6 +544,7 @@ function boo(flag: boolean): __DynVal {
 function toAlice(a: __DynVal): null {
   return __cast(a, "alice");
 }`,
+      },
     );
   });
 
@@ -541,17 +556,16 @@ let valDyn2: integer@dyn = 3@alice;
 let valAlice1: integer@alice = 3@dyn;
 let valAlice2: integer@alice = 3@alice;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __cast } from "./__runtime_alice";
-
-let valDyn1: __DynVal = __dynUnbound(3);
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__cast"],
+        alice: `let valDyn1: __DynVal = __dynUnbound(3);
 let valDyn2: __DynVal = __inject(3, "alice");
 let valAlice1: integer = __cast(__dynUnbound(3), "alice");
 let valAlice2: integer = 3;`,
-      `import { __DynVal, __dynUnbound, __inject, __cast } from "./__runtime_bob";
-
-let valDyn1: __DynVal = __dynUnbound(3);
+        bob: `let valDyn1: __DynVal = __dynUnbound(3);
 let valDyn2: __DynVal = __inject(null, "alice");
 __cast(__dynUnbound(3), "alice");`,
+      },
     );
   });
 
@@ -565,20 +579,19 @@ valDyn = 4@alice;
 valAlice = 5@dyn;
 valAlice = 5@alice;
 `,
-      `import { __DynVal, __dynUnbound, __inject, __cast } from "./__runtime_alice";
-
-let valDyn: __DynVal = __dynUnbound(3);
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__inject", "__cast"],
+        alice: `let valDyn: __DynVal = __dynUnbound(3);
 let valAlice: integer = 3;
 valDyn = __dynUnbound(4);
 valDyn = __inject(4, "alice");
 valAlice = __cast(__dynUnbound(5), "alice");
 valAlice = 5;`,
-      `import { __DynVal, __dynUnbound, __inject, __cast } from "./__runtime_bob";
-
-let valDyn: __DynVal = __dynUnbound(3);
+        bob: `let valDyn: __DynVal = __dynUnbound(3);
 valDyn = __dynUnbound(4);
 valDyn = __inject(null, "alice");
 __cast(__dynUnbound(5), "alice");`,
+      },
     );
   });
 
@@ -590,24 +603,23 @@ if (boolDyn) {}
 while (boolDyn) {}
 for (let i = 0; i < 10; i = i + 1) {}
 `,
-      `import { __DynVal, __dynUnbound, __cast, __dynPlus, __dynLt } from "./__runtime_alice";
-
-let boolDyn: __DynVal = __dynUnbound(true);
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__cast", "__dynPlus", "__dynLt"],
+        alice: `let boolDyn: __DynVal = __dynUnbound(true);
 if (__cast(boolDyn, "every")) {
 }
 while (__cast(boolDyn, "every")) {
 }
 for (let i: __DynVal = __dynUnbound(0); __cast(__dynLt(i, __dynUnbound(10)), "every"); i = __dynPlus(i, __dynUnbound(1))) {
 }`,
-      `import { __DynVal, __dynUnbound, __cast, __dynPlus, __dynLt } from "./__runtime_bob";
-
-let boolDyn: __DynVal = __dynUnbound(true);
+        bob: `let boolDyn: __DynVal = __dynUnbound(true);
 if (__cast(boolDyn, "every")) {
 }
 while (__cast(boolDyn, "every")) {
 }
 for (let i: __DynVal = __dynUnbound(0); __cast(__dynLt(i, __dynUnbound(10)), "every"); i = __dynPlus(i, __dynUnbound(1))) {
 }`,
+      },
     );
   });
 });
@@ -636,22 +648,25 @@ let y: integer@bob <- g(d);
       aliceBobCarol,
     );
     expectSuccess(result);
-    const body = (endpoint: string) => bs(result, endpoint).split("\n").slice(2).join("\n");
+    const body = (endpoint: string) => withoutRuntimeImport(bs(result, endpoint));
     assert.equal(
-      body("alice").split("\n").slice(3).join("\n"),
-      `let d: __DynVal = __dynUnbound(1);
+      body("alice"),
+      `function g(a: integer): integer {
+  return a;
+}
+let d: __DynVal = __dynUnbound(1);
 sendInteger("bob", "__top_0", g(__cast(d, "alice")));`,
     );
     assert.equal(
       body("bob"),
       `let d: __DynVal = __dynUnbound(1);
-nothing(__cast(d, "alice"));
+__nothing1(__cast(d, "alice"));
 let y: integer = receiveInteger("alice", "__top_0");`,
     );
     assert.equal(
       body("carol"),
       `let d: __DynVal = __dynUnbound(1);
-nothing(__cast(d, "alice"));`,
+__nothing1(__cast(d, "alice"));`,
     );
   });
 });

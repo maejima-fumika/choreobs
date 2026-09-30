@@ -285,7 +285,9 @@ export interface ProjectedForAssignmentInit {
  * A for-header has no room for a statement, so when the assignment target is
  * absent at this endpoint the slot either disappears or — if the discarded
  * value still contains a call this endpoint must make (spec §expression-projection) — becomes
- * the bare expression that keeps that call.
+ * the bare expression that keeps that call. A dynamic element assignment is
+ * one too: it is the `void` call `__dynArraySet(xs, i, v)`, which every endpoint
+ * makes (spec §dyn-lowering).
  */
 export interface ProjectedForExpressionInit {
   readonly kind: "ForExpressionInit";

@@ -1,7 +1,12 @@
 import type { BaseType } from "../ast/syntax-types.js";
-import type { Location } from "../ast/location.js";
+import type {
+  ConcreteLocation,
+  DynLocation,
+  EveryLocation,
+  Location,
+} from "../ast/location.js";
 import type { ExecutionContext } from "../ast/context.js";
-import type { LocatedType } from "../ast/typed.js";
+import type { LocatedType, TransferMode } from "../ast/typed.js";
 
 /**
  * Base type subtyping (spec §subtyping). The relation is reflexivity alone:
@@ -19,12 +24,11 @@ export function isArraySubtype(source: LocatedType, target: LocatedType): boolea
 }
 
 /**
- * Location matching (spec §location-matching-and-residency).
- *
- * A value located at `a` may be used where `b` is required only when the two
- * locations are the same. `every` and the individual locations are independent:
- * neither subsumes the other, so moving a value between them needs an explicit
- * `<-` transfer.
+ * Whether `a` and `b` are the same location. On concrete locations this is
+ * matching (spec §location-matching-and-residency): `every` and the individual
+ * locations are independent, and neither subsumes the other. The typing rules
+ * use consistency instead, {@link locationsCompatible}, which extends matching
+ * to `dyn`; equality is what is left once `dyn` has been lowered away.
  */
 export function locationsEqual(a: Location, b: Location): boolean {
   if (a.kind === "individual") {
@@ -42,7 +46,7 @@ export function locationsEqual(a: Location, b: Location): boolean {
  * construct with more than two locations uses {@link concreteLocationsAgree}.
  */
 export function locationsCompatible(a: Location, b: Location): boolean {
-  return a.kind === "dyn" || b.kind === "dyn" || locationsEqual(a, b);
+  return isDyn(a) || isDyn(b) || locationsEqual(a, b);
 }
 
 /**
@@ -51,7 +55,7 @@ export function locationsCompatible(a: Location, b: Location): boolean {
  * may be involved; `dyn` is compatible with it.
  */
 export function concreteLocationsAgree(locations: readonly Location[]): boolean {
-  const concrete = locations.filter((l) => l.kind !== "dyn");
+  const concrete = locations.filter(isConcrete);
   return concrete.every((l) => locationsEqual(l, concrete[0]!));
 }
 
@@ -60,17 +64,25 @@ export function concreteLocationsAgree(locations: readonly Location[]): boolean 
  * location itself when the two are equal, `dyn` when either is `dyn`.
  */
 export function joinLocations(a: Location, b: Location): Location {
-  if (a.kind === "dyn" || b.kind === "dyn") {
+  if (isDyn(a) || isDyn(b)) {
     return DYN;
   }
   return a;
 }
 
 /** The one dynamic location (spec §dyn). */
-export const DYN: Location = { kind: "dyn" };
+export const DYN: DynLocation = { kind: "dyn" };
 
-export function isDyn(location: Location): boolean {
+/** The location of every endpoint at once (spec §every). */
+export const EVERY: EveryLocation = { kind: "every" };
+
+export function isDyn(location: Location): location is DynLocation {
   return location.kind === "dyn";
+}
+
+/** An individual location or `every` (spec §locations). */
+export function isConcrete(location: Location): location is ConcreteLocation {
+  return location.kind !== "dyn";
 }
 
 /** `every`, `dyn` or the endpoint name — how a location is written after `@`. */
@@ -101,9 +113,9 @@ export function residesAt(location: Location, endpoint: string): boolean {
 }
 
 /** Execution context as the location that its statements must be located at. */
-export function contextAsLocation(ctx: ExecutionContext): Location {
+export function contextAsLocation(ctx: ExecutionContext): ConcreteLocation {
   if (ctx.kind === "choreography") {
-    return { kind: "every" };
+    return EVERY;
   }
   return { kind: "individual", name: ctx.endpoint };
 }
@@ -122,4 +134,28 @@ export function locatedType(
   isArray?: boolean,
 ): LocatedType {
   return { base, location, isArray };
+}
+
+/**
+ * How a transfer from `source` to `destination` is carried out
+ * (spec §transfer-semantics). Any two locations may be transferred between
+ * (spec §transfer-typing); only the way differs.
+ */
+export function transferModeOf(source: Location, destination: Location): TransferMode {
+  // Checked first: `dyn -> dyn` is also equal, and a local copy would get no
+  // tag, where a dynamic transfer always has one (spec §communication-tags).
+  if (isDyn(source) || isDyn(destination)) {
+    return "dynamic";
+  }
+  // A local copy exactly when every endpoint the destination resides at
+  // already holds the source payload: the source is `@every`, or the two
+  // locations are the same (spec §local-copy).
+  if (source.kind === "every" || locationsEqual(source, destination)) {
+    return "localCopy";
+  }
+  // The source is an individual location from here on.
+  if (destination.kind === "every") {
+    return "broadcast";
+  }
+  return "direct";
 }

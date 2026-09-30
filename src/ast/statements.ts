@@ -26,7 +26,8 @@ export interface LetStatement extends AstNode {
 
 /**
  * Transfer `let` (spec §let-statement, §transfer-let-does-not-infer-destination-type).
- * `type` is always required; destination type/location are not inferred.
+ * `type` is always required; destination type/location are not inferred from the
+ * source. A destination written without its location is `dyn` (spec §omitted-locations).
  */
 export interface LetTransferStatement extends AstNode {
   readonly kind: "LetTransferStatement";

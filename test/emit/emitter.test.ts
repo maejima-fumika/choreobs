@@ -77,7 +77,10 @@ let x: integer@alice = add(1@alice, 2@alice);
     // `nothing(null, null);`, which cleanup removes — see the next test, since
     // `pipeline` deliberately stops before cleanup.
     assert.doesNotMatch(bob, /add/);
-    assert.equal(bob.trim(), "nothing(null, null);");
+    assert.equal(
+      bob.trim(),
+      'import { __nothing2 } from "./__runtime_bob";\n\n__nothing2(null, null);',
+    );
   });
 
   it("removes bob output after cleanup when top level calls alice (spec §calling-local-from-choreography, §projected-ast-cleanup)", () => {
@@ -237,5 +240,64 @@ let d: boolean@alice = a && (b || a);
     assert.match(alice, /let c: boolean = __or\(__and\(a, b\), !a\);/);
     assert.match(alice, /let d: boolean = __and\(a, \(__or\(b, a\)\)\);/);
     assert.doesNotMatch(alice, /&&|\|\|/);
+    // Imported from the runtime file like any other helper (spec §runtime-import).
+    assert.match(alice, /^import \{ __and, __or \} from "\.\/__runtime_alice";\n\n/);
+  });
+
+  describe("nothing(...) as the fixed-arity helpers (spec §nothing-code-generation)", () => {
+    // `f` is local to alice, so at bob each call leaves `nothing(...)` over
+    // its arguments, which call the choreography function `g` and survive cleanup.
+    function bobCalling(arity: number): string {
+      const params = Array.from({ length: arity }, (_, i) => `p${i}: integer@alice`).join(", ");
+      const args = Array.from({ length: arity }, () => "g()").join(", ");
+      const result = compile(`
+function g(): integer@alice {
+    let b: integer@bob = 1@bob;
+    let c: integer@alice <- b;
+    return c;
+}
+function f@alice(${params}): void {}
+f(${args});
+`);
+      expectSuccess(result);
+      return bs(result, "bob");
+    }
+
+    it("uses the helper of the argument count, up to five", () => {
+      for (let arity = 1; arity <= 5; arity++) {
+        const args = Array.from({ length: arity }, () => "g()").join(", ");
+        assert.match(bobCalling(arity), new RegExp(`^__nothing${arity}\\(${args.replace(/[()]/g, "\\$&")}\\);$`, "m"));
+      }
+    });
+
+    it("nests beyond five, the first five innermost and then up to four at a time", () => {
+      const g = (n: number) => Array.from({ length: n }, () => "g()").join(", ");
+      const statement = (arity: number) =>
+        bobCalling(arity).split("\n").find((line) => line.startsWith("__nothing"));
+      assert.equal(statement(6), `__nothing2(__nothing5(${g(5)}), g());`);
+      assert.equal(statement(9), `__nothing5(__nothing5(${g(5)}), ${g(4)});`);
+      assert.equal(
+        statement(10),
+        `__nothing2(__nothing5(__nothing5(${g(5)}), ${g(4)}), g());`,
+      );
+    });
+
+    it("imports exactly the helpers the nesting uses", () => {
+      assert.match(bobCalling(6), /^import \{ __nothing2, __nothing5 \} from "\.\/__runtime_bob";$/m);
+      assert.match(bobCalling(10), /^import \{ __nothing2, __nothing5 \} from "\.\/__runtime_bob";$/m);
+    });
+
+    it("keeps the IR's own nesting, level by level", () => {
+      const result = compile(`
+function g(): integer@alice {
+    let b: integer@bob = 1@bob;
+    let c: integer@alice <- b;
+    return c;
+}
+let x: integer@alice = g() + g() * g();
+`);
+      expectSuccess(result);
+      assert.match(bs(result, "bob"), /^__nothing2\(g\(\), __nothing2\(g\(\), g\(\)\)\);$/m);
+    });
   });
 });

@@ -5,11 +5,18 @@
  * specification calls well typed. So is any communication-consistency error,
  * because those are only reachable once the checker has accepted the program.
  *
- *   npx tsx scripts/fuzz/run.ts [--runs N] [--seed S] [--endpoints a,b,c] [-v]
+ * Programs use `@dyn` unless `--no-dyn` is given, and every other seed is
+ * written for strict mode and compiled with `"implicitDyn": false`
+ * (spec §strict-mode); `dump.ts` takes the same flags and reproduces a seed.
+ *
+ *   npx tsx scripts/fuzz/run.ts [--runs N] [--seed S] [--endpoints a,b,c]
+ *     [--vary] [--no-dyn] [--depth N] [--maxfn N] [--maxstmt N] [--out DIR] [-v]
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { compileSource } from "../../src/driver/index.js";
 import { assertUsableEndpoints, generate } from "./generator.js";
+import { describeMode, fuzzGenOptions, parseFuzzArgs } from "./options.js";
+import { inspectOutputs, outputsKey } from "./inspect.js";
 
 type Verdict = "ok" | "crash" | "commConsistency" | "rejected" | "badOutput";
 
@@ -17,65 +24,21 @@ interface Finding {
   readonly verdict: Verdict;
   readonly seed: number;
   readonly endpoints: readonly string[];
+  /** The mode the program was generated and compiled in (see `describeMode`). */
+  readonly mode: string;
   readonly detail: string;
   readonly source: string;
 }
 
 function parseArgs(argv: readonly string[]) {
-  const get = (flag: string, fallback: string): string => {
-    const i = argv.indexOf(flag);
-    return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1]! : fallback;
-  };
+  const fuzz = parseFuzzArgs(argv);
   return {
-    runs: Number(get("--runs", "2000")),
-    seed: Number(get("--seed", "1")),
-    endpoints: get("--endpoints", "alice,bob,carol").split(","),
+    ...fuzz,
+    runs: Number(fuzz.get("--runs", "2000")),
+    seed: Number(fuzz.get("--seed", "1")),
     verbose: argv.includes("-v"),
-    outDir: get("--out", "scratchpad/fuzz-findings"),
-    blockDepth: Number(get("--depth", "2")),
-    maxFunctions: Number(get("--maxfn", "3")),
-    maxTopStatements: Number(get("--maxstmt", "8")),
-    /** Draw a random endpoint subset per seed instead of using the whole list. */
-    vary: argv.includes("--vary"),
-    /** Leave `@dyn` out of the generated programs (spec §dyn). */
-    noDyn: argv.includes("--no-dyn"),
+    outDir: fuzz.get("--out", "scratchpad/fuzz-findings"),
   };
-}
-
-/** Checks the emitted BlueScript carries no choreographic residue (spec §location-annotation-removal). */
-function inspectOutputs(
-  result: ReturnType<typeof compileSource>,
-  endpoints: readonly string[],
-): string | undefined {
-  if (result.outputs.length !== endpoints.length) {
-    return `expected ${endpoints.length} outputs, got ${result.outputs.length}`;
-  }
-  // The runtime comes for every endpoint or for none, and exactly when some
-  // endpoint's program imports from it (spec §runtime-files, §runtime-import).
-  const imports = result.outputs.some((o) => o.source.startsWith("import "));
-  const expectedRuntime = imports ? endpoints.length : 0;
-  if (result.runtimeOutputs.length !== expectedRuntime) {
-    return `expected ${expectedRuntime} runtime files, got ${result.runtimeOutputs.length}`;
-  }
-  for (const out of [...result.outputs, ...result.runtimeOutputs]) {
-    if (/@/.test(out.source)) {
-      return `${out.endpoint}: location annotation survived projection`;
-    }
-    if (/<-/.test(out.source)) {
-      return `${out.endpoint}: transfer operator survived projection`;
-    }
-    if (/\babsent\b/.test(out.source)) {
-      return `${out.endpoint}: 'absent' survived projection`;
-    }
-    let depth = 0;
-    for (const ch of out.source) {
-      if (ch === "{") depth += 1;
-      else if (ch === "}") depth -= 1;
-      if (depth < 0) return `${out.endpoint}: unbalanced braces`;
-    }
-    if (depth !== 0) return `${out.endpoint}: unbalanced braces`;
-  }
-  return undefined;
 }
 
 /** Collapses identifiers and numbers so equivalent errors group together. */
@@ -103,21 +66,9 @@ function run(): void {
 
   for (let i = 0; i < args.runs; i += 1) {
     const seed = args.seed + i;
-    const endpoints = args.vary
-      ? args.endpoints.slice(0, 2 + (seed % (args.endpoints.length - 1)))
-      : args.endpoints;
-    // Every other seed is written for strict mode: its `dyn` is all spelled
-    // out (spec §strict-mode), which is checked below.
-    const strict = !args.noDyn && seed % 2 === 0;
-    const program = generate({
-      seed,
-      endpoints,
-      maxBlockDepth: args.blockDepth,
-      maxFunctions: args.maxFunctions,
-      maxTopStatements: args.maxTopStatements,
-      dyn: !args.noDyn,
-      implicitDyn: !strict,
-    });
+    const program = generate(fuzzGenOptions(seed, args));
+    const { endpoints, implicitDyn } = program;
+    const config = { endpoints, implicitDyn };
     for (const feature of program.features) {
       featureCounts.set(feature, (featureCounts.get(feature) ?? 0) + 1);
     }
@@ -127,6 +78,7 @@ function run(): void {
         verdict,
         seed,
         endpoints,
+        mode: describeMode(program, args),
         detail,
         source: program.source,
       });
@@ -134,10 +86,7 @@ function run(): void {
 
     let result: ReturnType<typeof compileSource>;
     try {
-      result = compileSource(program.source, "index.cbs", {
-        endpoints,
-        implicitDyn: !strict,
-      });
+      result = compileSource(program.source, "index.cbs", config);
     } catch (e) {
       record("crash", e instanceof Error ? `${e.name}: ${e.message}` : String(e));
       continue;
@@ -170,13 +119,9 @@ function run(): void {
       continue;
     }
 
-    const again = compileSource(program.source, "index.cbs", {
-      endpoints,
-      implicitDyn: !strict,
-    });
-    const before = JSON.stringify(result.outputs.map((o) => o.source));
-    const after = JSON.stringify(again.outputs.map((o) => o.source));
-    if (before !== after) {
+    const again = compileSource(program.source, "index.cbs", config);
+    const before = outputsKey(result);
+    if (before !== outputsKey(again)) {
       record("badOutput", "compilation is not deterministic");
       continue;
     }
@@ -184,8 +129,8 @@ function run(): void {
     // Metamorphic: the order endpoints are declared in is not part of the
     // program's meaning, so each endpoint's output must be unaffected by it.
     const reversed = compileSource(program.source, "index.cbs", {
+      ...config,
       endpoints: [...endpoints].reverse(),
-      implicitDyn: !strict,
     });
     if (!reversed.success) {
       record(
@@ -209,11 +154,9 @@ function run(): void {
 
     // Metamorphic: a program that writes all its `dyn` out means the same in
     // either mode (spec §strict-mode).
-    if (strict) {
+    if (!implicitDyn) {
       const implicit = compileSource(program.source, "index.cbs", { endpoints });
-      const same =
-        implicit.success &&
-        JSON.stringify(implicit.outputs.map((o) => o.source)) === before;
+      const same = implicit.success && outputsKey(implicit) === before;
       if (!same) {
         record("badOutput", "a program with explicit locations only compiles differently without strict mode");
         continue;
@@ -264,7 +207,8 @@ function run(): void {
       writeFileSync(
         `${args.outDir}/${finding.verdict}-${finding.seed}.cbs`,
         `// ${finding.verdict}: ${finding.detail}\n` +
-          `// endpoints: ${finding.endpoints.join(", ")}\n\n` +
+          `// endpoints: ${finding.endpoints.join(", ")}\n` +
+          `// mode: ${finding.mode}\n\n` +
           finding.source,
         "utf8",
       );
@@ -275,7 +219,7 @@ function run(): void {
   }
 
   if (args.verbose) {
-    const sample = generate({ seed: args.seed, endpoints: args.endpoints });
+    const sample = generate(fuzzGenOptions(args.seed, args));
     console.log("\n--- sample program (first seed) ---");
     console.log(sample.source);
   }

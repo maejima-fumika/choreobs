@@ -15,19 +15,32 @@ npm run fuzz -- --runs 5000 --seed 1 --endpoints alice,bob,carol
 | `--depth N` | maximum control-flow nesting | 2 |
 | `--maxfn N` / `--maxstmt N` | function and top-level statement budget | 3 / 8 |
 | `--vary` | draw a random endpoint subset per seed | off |
+| `--no-dyn` | generate no `@dyn` (spec §dyn) | off |
 | `--out DIR` | where failing programs are written | `scratchpad/fuzz-findings` |
 | `-v` | also print the first generated program | off |
 
+Programs use `@dyn` unless `--no-dyn` is given: dynamic variables, literals,
+arrays, parameters, return types and transfers, and `dyn` values meeting
+concrete ones. Every other seed (the even ones) is written for strict mode —
+all of its `dyn` spelled out — and compiled with `"implicitDyn": false`; the
+odd ones may also leave locations out and have them be `dyn`
+(spec §omitted-locations, §strict-mode).
+
 Reproduce one program with `npx tsx scripts/fuzz/dump.ts SEED [endpoints]`,
-which prints the source, the verdict, and the projection for each endpoint.
+giving it the flags the run had (`--no-dyn`, `--vary`, `--depth`, …). It
+generates and compiles exactly as `run.ts` did for that seed, and prints the
+source, its mode, the verdict, and the projection for each endpoint. Finding
+files record the endpoints and the mode too.
 
 ## Why a rejection is a finding
 
 [`generator.ts`](generator.ts) is written to emit **only** programs the
-specification calls well typed: locations are matched exactly rather than
+specification calls well typed: locations are consistent (`~`, spec
+§location-consistency-and-join) — equal, or with `dyn` on one side — and never
 subsumed, binary operands share a location, conditions sit at the context's
-location, transfers respect `T2 <: T1` with arrays invariant, local function
-bodies mention nothing but their own endpoint, and no function is recursive.
+location, transfers keep their base type with arrays invariant, local function
+bodies mention nothing but their own endpoint and no `dyn`, and no function is
+recursive.
 
 So the driver treats every outcome other than success as something to look at:
 
@@ -38,8 +51,16 @@ So the driver treats every outcome other than success as something to look at:
 - **comm inconsistency** — only reachable once the checker has accepted the
   program, so the projection contradicts itself. Always a compiler bug.
 - **bad output** — choreographic residue (`@`, `<-`, `absent`) survived
-  projection, braces are unbalanced, compilation is not deterministic, or the
-  output depends on the order endpoints are declared in.
+  projection, braces are unbalanced, the runtime files are not written for
+  every endpoint exactly when a program imports them, or hold the
+  dynamic-location runtime when no program imports from it or lack it when one
+  does (spec §runtime-files),
+  compilation is not deterministic, the output depends on the order endpoints
+  are declared in, or a program written for strict mode compiles differently
+  without it (spec §strict-mode).
+
+These output checks live in [`inspect.ts`](inspect.ts), which the fixed corpus in
+`test/integration/fuzz.test.ts` uses too.
 
 A clean run reports feature coverage, because "no findings" only means something
 if the corpus reached the interesting constructs — communication inside loops

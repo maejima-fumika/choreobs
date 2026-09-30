@@ -66,7 +66,13 @@ function run(): void {
     });
   }
 
-  const misses: { id: string; seed: number; context: string; source: string }[] = [];
+  const misses: {
+    id: string;
+    seed: number;
+    context: string;
+    source: string;
+    implicitDyn: boolean;
+  }[] = [];
 
   for (let i = 0; i < args.runs; i += 1) {
     const seed = args.seed + i;
@@ -88,7 +94,7 @@ function run(): void {
     try {
       result = compileSource(program.source, "index.cbs", {
         endpoints: args.endpoints,
-        implicitDyn: violation.strict !== true,
+        implicitDyn: program.implicitDyn,
       });
     } catch (e) {
       tally.wrongReason += 1;
@@ -106,6 +112,7 @@ function run(): void {
           seed,
           context: program.injected.context,
           source: program.source,
+          implicitDyn: program.implicitDyn,
         });
       }
       continue;
@@ -153,7 +160,7 @@ function run(): void {
     for (const miss of misses) {
       writeFileSync(
         `${args.outDir}/${miss.id}-${miss.seed}.cbs`,
-        `// ACCEPTED but violates ${miss.id}\n// injected in: ${miss.context}\n// endpoints: ${args.endpoints.join(", ")}\n\n${miss.source}`,
+        `// ACCEPTED but violates ${miss.id}\n// injected in: ${miss.context}\n// endpoints: ${args.endpoints.join(", ")}\n// implicitDyn: ${miss.implicitDyn}\n\n${miss.source}`,
         "utf8",
       );
     }

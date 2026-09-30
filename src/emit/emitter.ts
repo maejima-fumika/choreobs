@@ -12,22 +12,26 @@ import { emitType } from "./types.js";
 import { runtimeImports } from "../runtime/imports.js";
 import { runtimeModuleName } from "../runtime/dyn.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
-import {
-  ARRAY_SENTINEL,
-  LOGICAL_HELPERS,
-  NOTHING_HELPER,
-  PUSH_SENTINEL,
-} from "../runtime/names.js";
+import { ARRAY_SENTINEL, PUSH_SENTINEL } from "../runtime/names.js";
+import { LOGICAL_HELPERS, nestNothing } from "../runtime/core.js";
 
-export function emit(program: ProjectedProgram): string {
-  return new BlueScriptEmitter().emitProgram(program);
+/**
+ * The BlueScript text of one endpoint's program. `imports` are the runtime
+ * names it uses (spec §runtime-import); a caller that has already collected them
+ * passes them in.
+ */
+export function emit(
+  program: ProjectedProgram,
+  imports: readonly string[] = runtimeImports(program),
+): string {
+  return new BlueScriptEmitter().emitProgram(program, imports);
 }
 
 class BlueScriptEmitter {
   private readonly lines: string[] = [];
   private indent = 0;
 
-  emitProgram(program: ProjectedProgram): string {
+  emitProgram(program: ProjectedProgram, imports: readonly string[]): string {
     this.lines.length = 0;
     this.indent = 0;
     for (const fn of program.functions) {
@@ -41,7 +45,7 @@ class BlueScriptEmitter {
       this.emitStatement(stmt);
     }
     const code = this.lines.join("\n") + (this.lines.length > 0 ? "\n" : "");
-    return runtimeImportLine(program) + code;
+    return runtimeImportLine(program, imports) + code;
   }
 
   private emitFunction(fn: ProjectedFunction): void {
@@ -200,7 +204,11 @@ class BlueScriptEmitter {
       case "PropertyLengthExpression":
         return `${this.emitExpr(expr.target)}.length`;
       case "NothingExpression":
-        return `${NOTHING_HELPER}(${expr.parts.map((p) => this.emitExpr(p)).join(", ")})`;
+        // BlueScript has no rest parameters (spec §nothing-code-generation).
+        return nestNothing(
+          expr.parts.map((p) => this.emitExpr(p)),
+          (helper, args) => `${helper}(${args.join(", ")})`,
+        );
       case "ParenthesizedExpression":
         // A conversion brings its own parentheses; the source's would double them.
         return expr.expression.kind === "ConversionExpression"
@@ -227,12 +235,11 @@ class BlueScriptEmitter {
 
 /**
  * `import { … } from "./__runtime_<endpoint>";` and a blank line, for a program
- * that uses the dynamic-location runtime (spec §runtime-import); nothing
- * otherwise, so a static program's output is unchanged (spec §runtime-files). The
- * module name has no extension because BlueScript appends `.bs` itself.
+ * that uses anything from the runtime file (spec §runtime-import); nothing
+ * otherwise. The module name has no extension because BlueScript appends `.bs`
+ * itself.
  */
-function runtimeImportLine(program: ProjectedProgram): string {
-  const names = runtimeImports(program);
+function runtimeImportLine(program: ProjectedProgram, names: readonly string[]): string {
   if (names.length === 0) {
     return "";
   }

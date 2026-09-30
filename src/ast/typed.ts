@@ -146,7 +146,11 @@ export interface TypedIndexAssignmentTarget {
   readonly target: AssignmentTarget & { readonly kind: "IndexAssignmentTarget" };
   readonly arrayType: LocatedType;
   readonly index: TypedExpression;
-  readonly elementType: LocatedType;
+  /**
+   * The join of the array's, the index's and the value's locations
+   * (spec §location-consistency-and-join): `dyn` exactly when the assignment is dynamic.
+   */
+  readonly location: Location;
 }
 
 export type TypedAssignmentTarget =
@@ -311,9 +315,10 @@ export interface TypedLengthExpression {
 export interface TypedPushExpression {
   readonly expr: PushExpression;
   /**
-   * Always `void` (spec §array-typing). The location is the array's, and is never
-   * written or shown (spec §void): it is what tells endpoint projection which
-   * endpoints perform the append.
+   * Always `void` (spec §array-typing). The location is the join of the array's
+   * and the value's, and is never written or shown (spec §void): it is what tells
+   * lowering whether the push is dynamic, and endpoint projection which endpoints
+   * perform the append.
    */
   readonly choreoType: LocatedType;
   readonly target: TypedExpression;

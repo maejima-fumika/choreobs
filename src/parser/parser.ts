@@ -496,8 +496,9 @@ class Parser {
     }
     this.consume(TokenKind.Semicolon, "expected ';' after for initializer");
     // The condition is required (spec §for-statement). An omitted one would have to mean
-    // an implicit `true`, and a literal has no location to take from context
-    // (spec §explicit-location-annotations); `while (true@every)` says the same thing explicitly.
+    // an implicit `true`, and a literal takes no location from its context
+    // (spec §explicit-location-annotations): it would be `true@dyn`, checked at run time on every
+    // iteration. `while (true@every)` says the same thing explicitly.
     const condition = this.parseExpression();
     this.consume(TokenKind.Semicolon, "expected ';' after for condition");
     let update: ForAssignmentInit | undefined;

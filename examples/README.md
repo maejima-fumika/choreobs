@@ -9,8 +9,9 @@ Compile one with:
 npx tsx src/cli/main.ts compile examples/<name>/index.cbs
 ```
 
-This writes `index_<endpoint>.bs` next to the source, one per endpoint. Those
-outputs are build artifacts and are not committed.
+This writes `index_<endpoint>.bs` next to the source, one per endpoint, and
+`__runtime_<endpoint>.bs` beside them when the programs call a runtime helper
+(spec §runtime-files). Those outputs are build artifacts and are not committed.
 
 `test/integration/examples.test.ts` compiles every directory here as part of
 `npm test`, so an example that stops compiling fails the suite.

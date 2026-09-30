@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compileSource } from "../../src/driver/index.js";
 import { generate } from "../../scripts/fuzz/generator.js";
-import { assertNoChoreoResidue } from "../support/compile.js";
+import { inspectOutputs } from "../../scripts/fuzz/inspect.js";
 
 /**
  * A small, fixed slice of the fuzz corpus (see `scripts/fuzz/run.ts`).
@@ -45,17 +45,15 @@ describe("generated programs compile (fuzz corpus)", () => {
         });
         const result = compileSource(program.source, "index.cbs", {
           endpoints: config.endpoints,
-          implicitDyn: config.strict !== true,
+          implicitDyn: program.implicitDyn,
         });
         assert.equal(
           result.success,
           true,
           `seed ${seed}:\n${result.errors.map((e) => e.message).join("\n")}\n\n${program.source}`,
         );
-        assert.equal(result.outputs.length, config.endpoints.length);
-        for (const out of result.outputs) {
-          assertNoChoreoResidue(out.source, `seed ${seed}, ${out.endpoint}`);
-        }
+        // The checks `run.ts` makes of every output (scripts/fuzz/inspect.ts).
+        assert.equal(inspectOutputs(result, config.endpoints), undefined, `seed ${seed}`);
       }
     });
   }

@@ -12,10 +12,11 @@ import { childExpressions } from "../ir/traverse.js";
 import type { SpecCited, SpecRefs } from "../spec/ref.js";
 import { TOP_SCOPE } from "./tags.js";
 import { ALL_COMM_KINDS } from "../runtime/names.js";
-import { DYN_LOCATION_NAME } from "../runtime/dyn.js";
-
-/** The runtime function a dynamic transfer is lowered to (spec §dynamic-transfer). */
-const DYN_TRANSFER = "__dynTransfer";
+import {
+  DYN_LOCATION_NAME,
+  DYN_TRANSFER,
+  EVERY_LOCATION_NAME,
+} from "../runtime/dyn.js";
 
 /** Scope key for communication tags (spec §communication-tags): top-level or function name. */
 export type CommScopeId = string;
@@ -297,7 +298,7 @@ class CommConsistencyChecker {
       );
       return;
     }
-    if (to !== DYN_LOCATION_NAME && to !== "every" && !this.endpoints.includes(to)) {
+    if (to !== DYN_LOCATION_NAME && to !== EVERY_LOCATION_NAME && !this.endpoints.includes(to)) {
       this.error(
         `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} transfers to unknown location '${to}' (scope ${ctx.scope})`,
         call.span,

@@ -48,18 +48,21 @@ import type {
 } from "../ast/typed.js";
 import {
   DYN,
+  EVERY,
   contextAsLocation,
   formatLocatedType,
   formatLocation,
   isDyn,
-  joinLocations,
   locatedType,
   locationsEqual,
 } from "../types/located.js";
 import { commKindForType } from "../comm/kind.js";
 import {
   DYN_BINARY,
+  DYN_CONVERSION,
+  DYN_TRANSFER,
   DYN_UNARY,
+  runtimeLocationName,
   type DynRuntimeFunction,
 } from "../runtime/dyn.js";
 
@@ -102,8 +105,6 @@ interface Scope {
   /** The enclosing function's return type; absent at top level. */
   readonly returnType?: LocatedType;
 }
-
-const EVERY: Location = { kind: "every" };
 
 class DynLowerer {
   item(item: TypedTopLevelItem): TypedTopLevelItem {
@@ -257,11 +258,11 @@ class DynLowerer {
       );
     }
     const transferred = this.call(
-      "__dynTransfer",
+      DYN_TRANSFER,
       [
         this.constant(tag, span),
         this.constant(commKindForType(destination), span),
-        this.constant(formatLocation(destination.location), span),
+        this.constant(runtimeLocationName(destination.location), span),
         this.coerced(source, DYN),
       ],
       { ...destination, location: DYN },
@@ -272,42 +273,29 @@ class DynLowerer {
 
   private assignment(stmt: TypedAssignmentStatement): TypedStatement {
     const span = stmt.stmt.span;
-    if (this.isDynamicElementAssignment(stmt.target, stmt.value)) {
+    const set = this.dynamicElementSet(stmt.target, stmt.value, span);
+    if (set !== undefined) {
       const expressionStatement: ExpressionStatement = {
         kind: "ExpressionStatement",
         expression: stmt.stmt.value,
         span,
       };
-      const lowered: TypedExpressionStatement = {
-        stmt: expressionStatement,
-        expression: this.dynamicElementSet(
-          stmt.target as TypedIndexAssignmentTarget,
-          stmt.value,
-          span,
-        ),
-      };
+      const lowered: TypedExpressionStatement = { stmt: expressionStatement, expression: set };
       return lowered;
     }
-    const { target, value } = this.assignmentParts(stmt.target, stmt.value);
-    return { ...stmt, target, value };
+    return { ...stmt, ...this.assignmentParts(stmt.target, stmt.value) };
   }
 
   private forInit(init: TypedForInit): TypedForInit {
-    switch (init.init.kind) {
-      case "ForLetInit": {
-        const letInit = init as TypedForLetInit;
-        return {
-          ...letInit,
-          initializer: this.coerced(letInit.initializer, letInit.choreoType.location),
-        };
-      }
-      case "ForAssignmentInit":
-        return this.forAssignment(init as TypedForAssignmentInit);
-      case "ForExpressionInit": {
-        const exprInit = init as TypedForExpressionInit;
-        return { ...exprInit, expression: this.expr(exprInit.expression) };
-      }
+    if (init.init.kind === "ForLetInit") {
+      const letInit = init as TypedForLetInit;
+      return {
+        ...letInit,
+        initializer: this.coerced(letInit.initializer, letInit.choreoType.location),
+      };
     }
+    // Any other initializer takes the same shapes as an update.
+    return this.forUpdate(init as TypedForUpdate);
   }
 
   private forUpdate(update: TypedForUpdate): TypedForUpdate {
@@ -325,18 +313,12 @@ class DynLowerer {
   private forAssignment(
     init: TypedForAssignmentInit,
   ): TypedForAssignmentInit | TypedForExpressionInit {
-    if (this.isDynamicElementAssignment(init.target, init.value)) {
-      return {
-        init: { kind: "ForExpressionInit", span: init.init.span },
-        expression: this.dynamicElementSet(
-          init.target as TypedIndexAssignmentTarget,
-          init.value,
-          init.init.span,
-        ),
-      };
+    const span = init.init.span;
+    const set = this.dynamicElementSet(init.target, init.value, span);
+    if (set !== undefined) {
+      return { init: { kind: "ForExpressionInit", span }, expression: set };
     }
-    const { target, value } = this.assignmentParts(init.target, init.value);
-    return { ...init, target, value };
+    return { ...init, ...this.assignmentParts(init.target, init.value) };
   }
 
   /** The target and value of an assignment that stays one. */
@@ -359,30 +341,28 @@ class DynLowerer {
   }
 
   /**
-   * `xs[i] = v` is dynamic when the array, the index or the value is `dyn`
-   * (spec §location-consistency-and-join): `arrAlice[iAlice] = valDyn` included.
-   */
-  private isDynamicElementAssignment(
-    target: TypedAssignmentTarget,
-    value: TypedExpression,
-  ): boolean {
-    if (target.target.kind !== "IndexAssignmentTarget") {
-      return false;
-    }
-    const index = target as TypedIndexAssignmentTarget;
-    return isDyn(
-      joinLocations(
-        joinLocations(index.arrayType.location, index.index.choreoType.location),
-        value.choreoType.location,
-      ),
-    );
-  }
-
-  /**
-   * `__dynArraySet(xs, i, v)`, arguments in the order the assignment evaluates
-   * them (spec §dyn-array-operations, §evaluation-order).
+   * `__dynArraySet(xs, i, v)` for a dynamic element assignment, arguments in the
+   * order the assignment evaluates them (spec §dyn-array-operations, §evaluation-order);
+   * `undefined` for any other assignment. `xs[i] = v` is dynamic when the array,
+   * the index or the value is `dyn` (spec §location-consistency-and-join):
+   * `arrAlice[iAlice] = valDyn` included.
    */
   private dynamicElementSet(
+    target: TypedAssignmentTarget,
+    value: TypedExpression,
+    span: Span,
+  ): TypedExpression | undefined {
+    if (target.target.kind !== "IndexAssignmentTarget") {
+      return undefined;
+    }
+    const index = target as TypedIndexAssignmentTarget;
+    if (!isDyn(index.location)) {
+      return undefined;
+    }
+    return this.elementSet(index, value, span);
+  }
+
+  private elementSet(
     target: TypedIndexAssignmentTarget,
     value: TypedExpression,
     span: Span,
@@ -428,7 +408,7 @@ class DynLowerer {
     if (isDyn(location)) {
       return this.call(
         "__inject",
-        [expr, this.constant(formatLocation(from), span)],
+        [expr, this.constant(runtimeLocationName(from), span)],
         { ...expr.choreoType, location: DYN },
         span,
       );
@@ -436,7 +416,7 @@ class DynLowerer {
     if (isDyn(from)) {
       return this.call(
         "__cast",
-        [expr, this.constant(formatLocation(location), span)],
+        [expr, this.constant(runtimeLocationName(location), span)],
         { ...expr.choreoType, location },
         span,
       );
@@ -474,13 +454,7 @@ class DynLowerer {
         if (!isDyn(binary.choreoType.location)) {
           return { ...binary, left, right };
         }
-        // A static operand is injected first (spec §coercion).
-        return this.call(
-          DYN_BINARY[binary.expr.operator],
-          [this.coerce(left, DYN), this.coerce(right, DYN)],
-          binary.choreoType,
-          span,
-        );
+        return this.dynamic(DYN_BINARY[binary.expr.operator], [left, right], binary.choreoType, span);
       }
       case "UnaryExpression": {
         const unary = expr as TypedUnaryExpression;
@@ -488,7 +462,7 @@ class DynLowerer {
         if (!isDyn(unary.choreoType.location)) {
           return { ...unary, operand };
         }
-        return this.call(DYN_UNARY[unary.expr.operator], [operand], unary.choreoType, span);
+        return this.dynamic(DYN_UNARY[unary.expr.operator], [operand], unary.choreoType, span);
       }
       case "ConversionExpression":
         return this.conversion(expr as TypedConversionExpression);
@@ -508,12 +482,7 @@ class DynLowerer {
         if (!isDyn(index.choreoType.location)) {
           return { ...index, target, index: position };
         }
-        return this.call(
-          "__dynArrayGet",
-          [this.coerce(target, DYN), this.coerce(position, DYN)],
-          index.choreoType,
-          span,
-        );
+        return this.dynamic("__dynArrayGet", [target, position], index.choreoType, span);
       }
       case "LengthExpression": {
         const length = expr as TypedLengthExpression;
@@ -521,7 +490,7 @@ class DynLowerer {
         if (!isDyn(length.choreoType.location)) {
           return { ...length, target };
         }
-        return this.call("__dynArrayLength", [target], length.choreoType, span);
+        return this.dynamic("__dynArrayLength", [target], length.choreoType, span);
       }
       case "PushExpression": {
         const push = expr as TypedPushExpression;
@@ -530,12 +499,7 @@ class DynLowerer {
         if (!isDyn(push.choreoType.location)) {
           return { ...push, target, value };
         }
-        return this.call(
-          "__dynArrayPush",
-          [this.coerce(target, DYN), this.coerce(value, DYN)],
-          push.choreoType,
-          span,
-        );
+        return this.dynamic("__dynArrayPush", [target, value], push.choreoType, span);
       }
       case "ParenthesizedExpression": {
         const paren = expr as TypedParenthesizedExpression;
@@ -591,7 +555,7 @@ class DynLowerer {
       return operand;
     }
     return this.call(
-      conversion.choreoType.base === "float" ? "__dynIntegerToFloat" : "__dynFloatToInteger",
+      DYN_CONVERSION[conversion.expr.target],
       [operand],
       conversion.choreoType,
       conversion.expr.span,
@@ -599,6 +563,20 @@ class DynLowerer {
   }
 
   // --- construction -------------------------------------------------------
+
+  /**
+   * A dynamic operation on already lowered operands: its runtime function,
+   * with every static operand injected first (spec §coercion, §dyn-lowering).
+   * An operand already at `dyn` is passed as it is.
+   */
+  private dynamic(
+    callee: DynRuntimeFunction,
+    operands: readonly TypedExpression[],
+    choreoType: LocatedType,
+    span: Span,
+  ): TypedRuntimeCallExpression {
+    return this.call(callee, operands.map((operand) => this.coerce(operand, DYN)), choreoType, span);
+  }
 
   private call(
     callee: DynRuntimeFunction,

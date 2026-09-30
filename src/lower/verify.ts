@@ -36,13 +36,19 @@ import type {
   TypedWhileStatement,
 } from "../ast/typed.js";
 import {
+  DYN,
   contextAsLocation,
   formatLocatedType,
   formatLocation,
   isDyn,
   locationsEqual,
 } from "../types/located.js";
-import type { DynRuntimeFunction } from "../runtime/dyn.js";
+import {
+  DYN_RUNTIME,
+  runtimeLocationName,
+  type ArgumentShape,
+  type DynRuntimeFunction,
+} from "../runtime/dyn.js";
 
 /**
  * Checks what `lowerDyn` promises (spec §dyn-lowering): the lowered
@@ -70,58 +76,6 @@ export function verifyLowered(program: LoweredProgram): void {
     }
   }
 }
-
-/** How a runtime function's argument is typed (spec §dyn-lowering). */
-type ArgumentShape =
-  /** A `T@dyn` value. */
-  | "dyn"
-  /** A value at a concrete location. */
-  | "concrete"
-  /** A compiler-supplied `string@every` literal: a location, a kind or a tag. */
-  | "constant"
-  /** A literal at `every`: the payload of an unbound value. */
-  | "payload";
-
-/** The result: a `T@dyn` value, a value at the location named by the second argument, or none. */
-type ResultShape = "dyn" | "named" | "void";
-
-interface Signature {
-  readonly args: readonly ArgumentShape[];
-  readonly result: ResultShape;
-}
-
-const BINARY: Signature = { args: ["dyn", "dyn"], result: "dyn" };
-const UNARY: Signature = { args: ["dyn"], result: "dyn" };
-
-const SIGNATURES: Readonly<Record<DynRuntimeFunction, Signature>> = {
-  __dynUnbound: { args: ["payload"], result: "dyn" },
-  __inject: { args: ["concrete", "constant"], result: "dyn" },
-  __cast: { args: ["dyn", "constant"], result: "named" },
-  __dynIntegerToFloat: UNARY,
-  __dynFloatToInteger: UNARY,
-  __dynPlus: BINARY,
-  __dynSub: BINARY,
-  __dynMul: BINARY,
-  __dynDiv: BINARY,
-  __dynMod: BINARY,
-  __dynAnd: BINARY,
-  __dynOr: BINARY,
-  __dynLt: BINARY,
-  __dynLe: BINARY,
-  __dynGt: BINARY,
-  __dynGe: BINARY,
-  __dynEq: BINARY,
-  __dynNeq: BINARY,
-  __dynNot: UNARY,
-  __dynNeg: UNARY,
-  __dynArrayGet: BINARY,
-  __dynArraySet: { args: ["dyn", "dyn", "dyn"], result: "void" },
-  __dynArrayPush: { args: ["dyn", "dyn"], result: "void" },
-  __dynArrayLength: UNARY,
-  __dynArrayNew: { args: ["constant"], result: "dyn" },
-  __dynArrayAppend: BINARY,
-  __dynTransfer: { args: ["constant", "constant", "constant", "dyn"], result: "dyn" },
-};
 
 class LoweredVerifier {
   /**
@@ -325,7 +279,7 @@ class LoweredVerifier {
   }
 
   private runtimeCall(call: TypedRuntimeCallExpression): void {
-    const signature = SIGNATURES[call.callee];
+    const signature = DYN_RUNTIME[call.callee];
     const span = call.expr.span;
     if (this.context.kind === "local") {
       this.fail(`a call to ${call.callee} in a local function`, span);
@@ -354,7 +308,7 @@ class LoweredVerifier {
       case "named": {
         const named = this.constantValue(call.args[1]!);
         this.concrete(result.location, call.callee, span);
-        if (formatLocation(result.location) !== named) {
+        if (runtimeLocationName(result.location) !== named) {
           this.fail(
             `${call.callee}(…, "${named}") must yield a value at ${named}, not ${formatLocatedType(result)}`,
             span,
@@ -373,7 +327,7 @@ class LoweredVerifier {
     const span = arg.expr.span;
     switch (shape) {
       case "dyn":
-        this.placed(arg, { kind: "dyn" }, `${callee} argument`);
+        this.placed(arg, DYN, `${callee} argument`);
         return;
       case "concrete":
         this.expr(arg);

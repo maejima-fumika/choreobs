@@ -6,6 +6,7 @@ import {
 } from "../../src/driver/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 import { aliceBob } from "./config.js";
+import { choreoResidue } from "../../scripts/fuzz/inspect.js";
 
 /** Runs the whole pipeline: parse, check, project, finalize, clean, emit. */
 export function compile(
@@ -44,7 +45,6 @@ export function expectFailure(result: CompileResult): void {
  * §absent-finalization).
  */
 export function assertNoChoreoResidue(source: string, label?: string): void {
-  assert.doesNotMatch(source, /@/, label);
-  assert.doesNotMatch(source, /<-/, label);
-  assert.doesNotMatch(source, /\babsent\b/, label);
+  const residue = choreoResidue(source);
+  assert.equal(residue, undefined, label === undefined ? residue : `${label}: ${residue}`);
 }

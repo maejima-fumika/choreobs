@@ -3,7 +3,8 @@ import { describe, it } from "node:test";
 import type { FunctionDeclaration } from "../../src/ast/declarations.js";
 import type { Block } from "../../src/ast/statements.js";
 import { parse } from "../../src/parser/index.js";
-import { locatedType } from "../../src/types/located.js";
+import { DYN, locatedType } from "../../src/types/located.js";
+import { alice, bob, dyn, every } from "../support/check.js";
 import {
   checkReturnCoverage,
   inferReturnTypeFromCandidates,
@@ -13,8 +14,6 @@ import {
   type ReturnCandidate,
 } from "../../src/check/inference.js";
 
-const alice = { kind: "individual" as const, name: "alice" };
-const every = { kind: "every" as const };
 
 function parseFunctionBody(bodySource: string): Block {
   const { program, errors } = parse(`function f@alice() { ${bodySource} }`);
@@ -57,7 +56,6 @@ describe("return inference utilities (spec §function-return-type-inference)", (
     });
 
     it("rejects different individual locations", () => {
-      const bob = { kind: "individual" as const, name: "bob" };
       assert.equal(lubLocation(alice, bob).ok, false);
     });
 
@@ -66,7 +64,6 @@ describe("return inference utilities (spec §function-return-type-inference)", (
     });
 
     it("is ⊔ with dyn: dyn absorbs any location (spec §location-consistency-and-join)", () => {
-      const dyn = { kind: "dyn" as const };
       for (const other of [alice, every, dyn]) {
         const r = lubLocation(other, dyn);
         assert.equal(r.ok, true);
@@ -77,12 +74,12 @@ describe("return inference utilities (spec §function-return-type-inference)", (
     });
 
     it("gives dyn for two concrete locations only when asked to (spec §function-return-type-inference)", () => {
-      const r = lubLocation(every, alice, "dyn");
+      const r = lubLocation(every, alice, DYN);
       assert.equal(r.ok, true);
       if (r.ok) {
         assert.equal(r.value.kind, "dyn");
       }
-      const strict = lubLocation(every, alice, "error");
+      const strict = lubLocation(every, alice, undefined);
       assert.equal(strict.ok, false);
       if (!strict.ok) {
         assert.ok(strict.spec.includes("incompatible-inferred-return-locations"));
@@ -100,7 +97,6 @@ describe("return inference utilities (spec §function-return-type-inference)", (
     });
 
     it("fails when locations differ", () => {
-      const bob = { kind: "individual" as const, name: "bob" };
       assert.equal(
         lubLocatedType(locatedType("integer", alice), locatedType("integer", bob)).ok,
         false,

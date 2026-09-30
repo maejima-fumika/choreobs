@@ -1,5 +1,4 @@
 import type { Span } from "../ast/span.js";
-import { specRef } from "../spec/ref.js";
 import type { Location } from "../ast/location.js";
 import type { CommTag, LocatedType, TransferMode } from "../ast/typed.js";
 import type { FunctionDeclaration } from "../ast/declarations.js";
@@ -36,8 +35,8 @@ import type {
   TypedParenthesizedExpression,
   TypedRuntimeCallExpression,
 } from "../ast/typed.js";
-import { residesAt } from "../types/located.js";
-import { commKindForType } from "../comm/kind.js";
+import { isConcrete, isDyn, residesAt } from "../types/located.js";
+import { commKindForType, supportedArrayBase } from "../comm/kind.js";
 import { DYN_VALUE_TYPE } from "../runtime/dyn.js";
 import type {
   ProjectedProgram,
@@ -303,7 +302,7 @@ class Projector {
       );
     }
     const comm = commKindForType(parts.type);
-    if (dst.kind === "dyn" || src.kind === "dyn") {
+    if (!isConcrete(dst) || !isConcrete(src)) {
       throw new Error(
         `internal error: static transfer '${parts.name}' has a \`dyn\` side`,
       );
@@ -475,7 +474,7 @@ class Projector {
 
   private projectForInit(
     init: TypedForInit,
-  ): import("../ir/projected.js").ProjectedForInit | undefined {
+  ): import("../ir/projected.js").ProjectedForInit {
     switch (init.init.kind) {
       case "ForLetInit":
         return this.projectForLetInit(init as TypedForLetInit);
@@ -516,7 +515,7 @@ class Projector {
    */
   private projectForAssignmentInit(
     init: TypedForAssignmentInit,
-  ): import("../ir/projected.js").ProjectedForInit | undefined {
+  ): import("../ir/projected.js").ProjectedForUpdate {
     const span = init.init.span;
     if (!this.residesHere(this.assignmentTargetLocation(init.target))) {
       return {
@@ -538,15 +537,11 @@ class Projector {
 
   private projectForUpdate(
     update: TypedForUpdate,
-  ): import("../ir/projected.js").ProjectedForUpdate | undefined {
+  ): import("../ir/projected.js").ProjectedForUpdate {
     if (update.init.kind === "ForExpressionInit") {
       return this.projectForExpressionInit(update as TypedForExpressionInit);
     }
-    const projected = this.projectForAssignmentInit(update as TypedForAssignmentInit);
-    if (projected === undefined || projected.kind === "ForLetInit") {
-      return undefined;
-    }
-    return projected;
+    return this.projectForAssignmentInit(update as TypedForAssignmentInit);
   }
 
   private projectReturn(stmt: TypedReturnStatement): ProjectedStatement {
@@ -578,6 +573,15 @@ class Projector {
    * still owe this endpoint, in source order.
    */
   private projectExpression(expr: TypedExpression): ProjectedExpression {
+    // A call is made wherever its callee is generated, whether or not its
+    // result lives here (spec §calls-survive-an-absent-result), and a runtime call is made
+    // everywhere (spec §dyn-lowering): the callee decides, not the result.
+    if (expr.expr.kind === "CallExpression") {
+      return this.projectCall(expr as TypedCallExpression);
+    }
+    if (expr.expr.kind === "RuntimeCallExpression") {
+      return this.projectRuntimeCall(expr as TypedRuntimeCallExpression);
+    }
     if (!this.residesHere(expr.choreoType.location)) {
       return this.projectDiscarded(expr);
     }
@@ -628,8 +632,6 @@ class Projector {
           span: expr.expr.span,
         };
       }
-      case "CallExpression":
-        return this.projectCall(expr as TypedCallExpression);
       case "IndexExpression": {
         const indexExpr = expr as TypedIndexExpression;
         return {
@@ -648,9 +650,10 @@ class Projector {
         };
       }
       case "PushExpression": {
-        // `xs.push(v)` is emitted unchanged (spec §array-operation-code-generation). The `void` result
-        // carries the array's location, so this arm is reached exactly at the
-        // endpoints that hold the array.
+        // `xs.push(v)` is emitted unchanged (spec §array-operation-code-generation). A push left in
+        // the lowered program is static, so its `void` result carries the
+        // array's location, and this arm is reached exactly at the endpoints
+        // that hold the array.
         const push = expr as TypedPushExpression;
         return {
           kind: "CallExpression",
@@ -671,8 +674,6 @@ class Projector {
           span: expr.expr.span,
         };
       }
-      case "RuntimeCallExpression":
-        return this.projectRuntimeCall(expr as TypedRuntimeCallExpression);
     }
   }
 
@@ -831,7 +832,7 @@ class Projector {
       return { kind: "AbsentType" };
     }
     // `T@dyn` and `T[]@dyn` are `__DynVal` at every endpoint (spec §type-projection).
-    if (type.location.kind === "dyn") {
+    if (isDyn(type.location)) {
       return { kind: "PresentType", base: DYN_VALUE_TYPE };
     }
     return { kind: "PresentType", base: this.projectedBase(type) };
@@ -840,27 +841,15 @@ class Projector {
   /**
    * BlueScript type name for a resident located type (spec §type-mapping).
    *
-   * Exhaustive on purpose: the array arm used to fall back to `boolean[]` for
-   * anything that was not `integer` or `float`, which quietly rendered an
-   * unsupported element type as a supported one. The checker rejects those
-   * (spec §array-types, §unsupported-array-element-type), so reaching the throw is an internal bug.
+   * The array arm used to fall back to `boolean[]` for anything that was not
+   * `integer` or `float`, which quietly rendered an unsupported element type as
+   * a supported one; `supportedArrayBase` throws instead.
    */
   private projectedBase(
     type: LocatedType,
   ): import("../ir/projected.js").ProjectedBaseType {
     if (type.isArray === true) {
-      switch (type.base) {
-        case "integer":
-          return "integer[]";
-        case "float":
-          return "float[]";
-        case "boolean":
-          return "boolean[]";
-        default:
-          throw new Error(
-            `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
-          );
-      }
+      return `${supportedArrayBase(type)}[]`;
     }
     return type.base;
   }

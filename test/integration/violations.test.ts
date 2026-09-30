@@ -33,7 +33,7 @@ describe("injected rule violations are rejected (mutation fuzz corpus)", () => {
         checked += 1;
         const result = compileSource(program.source, "index.cbs", {
           endpoints: ENDPOINTS,
-          implicitDyn: violation.strict !== true,
+          implicitDyn: program.implicitDyn,
         });
         assert.equal(
           result.success,

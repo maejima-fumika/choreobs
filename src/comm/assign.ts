@@ -28,9 +28,10 @@ import { CommTagGenerator, TOP_SCOPE } from "./tags.js";
  * of a body — return type inference does exactly that — risked minting tags
  * that no statement would keep.
  *
- * Only `direct` and `broadcast` transfers get a tag; a `localCopy` sends
- * nothing (spec §transfer-typing), and EPP relies on the absence of a tag to mean exactly
- * that.
+ * `direct` and `broadcast` transfers get a tag, and so does every `dynamic`
+ * one, whether or not it turns out to communicate (spec §communication-tags). A
+ * `localCopy` sends nothing (spec §transfer-typing), and EPP relies on the
+ * absence of a tag to mean exactly that.
  */
 export function assignCommTags(typed: TypedProgram): TypedProgram {
   const tags = new CommTagGenerator();

@@ -4,7 +4,7 @@ import { typeCheck, type TypeCheckResult } from "../../src/check/index.js";
 import type { TypedProgram } from "../../src/ast/typed.js";
 import { assignCommTags } from "../../src/comm/index.js";
 import { projectAll } from "../../src/epp/index.js";
-import { lowerDyn, verifyLowered } from "../../src/lower/index.js";
+import { lowerProgram } from "../../src/lower/index.js";
 import type { ProjectedProgram } from "../../src/ir/projected.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 import { aliceBob } from "./config.js";
@@ -40,21 +40,13 @@ export function tagSource(
 }
 
 /**
- * Parses, type-checks and projects every endpoint, asserting the first two
- * stages are clean. For tests that work on the projected IR rather than on
- * emitted text.
+ * Parses, type-checks, lowers and projects every endpoint, as the driver does
+ * (spec §dyn-lowering), asserting the first two stages are clean. For tests that
+ * work on the projected IR rather than on emitted text.
  */
 export function projectSource(
   source: string,
   config: ChoreoBSConfig = aliceBob,
 ): readonly ProjectedProgram[] {
-  const { program, errors: parseErrors } = parse(source);
-  assert.equal(parseErrors.length, 0, JSON.stringify(parseErrors));
-  assert.ok(program);
-  const { typed, errors: typeErrors } = typeCheck(program, config);
-  assert.equal(typeErrors.length, 0, JSON.stringify(typeErrors));
-  assert.ok(typed);
-  const lowered = lowerDyn(assignCommTags(typed));
-  verifyLowered(lowered);
-  return projectAll(lowered, config.endpoints);
+  return projectAll(lowerProgram(tagSource(source, config)), config.endpoints);
 }

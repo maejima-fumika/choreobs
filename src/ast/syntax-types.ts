@@ -21,8 +21,10 @@ export function isNumericType(base: BaseType): base is NumericType {
 /**
  * Type syntax: `BaseType` or `BaseType @ Location` (spec §types).
  *
- * Syntactically optional, but the checker requires it: locations are never
- * inferred from context (spec §explicit-location-annotations).
+ * The location is optional. An omitted one comes from an initializer or from
+ * the `return` statements where there is one, and is otherwise `dyn`, or an
+ * error in strict mode and in a local function (spec §types, §omitted-locations).
+ * It is never taken from the context (spec §explicit-location-annotations).
  */
 export interface TypeAnnotation extends AstNode {
   readonly kind: "TypeAnnotation";

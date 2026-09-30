@@ -5,7 +5,6 @@ import type { Block, Statement } from "../ast/statements.js";
 import type { LocatedType } from "../ast/typed.js";
 import type { SpecRefs } from "../spec/ref.js";
 import {
-  DYN,
   formatLocation,
   joinLocations,
   locatedType,
@@ -55,28 +54,24 @@ export function lubBase(a: BaseType, b: BaseType): InferResult<BaseType> {
 }
 
 /**
- * What return inference does with two different concrete locations
- * (spec §strict-mode, §function-return-type-inference): make the result `dyn`, or report it.
- */
-export type IncompatibleLocations = "dyn" | "error";
-
-/**
  * Least upper bound on locations for return inference (spec §function-return-type-inference).
  *
  * This is `⊔` (spec §location-consistency-and-join): a location with itself, and `dyn`
- * with anything. Two different concrete locations have none; what happens
- * then is the caller's choice, because it depends on the mode.
+ * with anything. Two different concrete locations have none. What they give
+ * then depends on the mode (spec §strict-mode), so the caller says: `onIncompatible`
+ * is the location to use instead — `dyn` exactly where an omission would be —
+ * and without one it is an error.
  */
 export function lubLocation(
   a: Location,
   b: Location,
-  onIncompatible: IncompatibleLocations = "error",
+  onIncompatible?: Location,
 ): InferResult<Location> {
   if (locationsCompatible(a, b)) {
     return inferenceOk(joinLocations(a, b));
   }
-  if (onIncompatible === "dyn") {
-    return inferenceOk(DYN);
+  if (onIncompatible !== undefined) {
+    return inferenceOk(onIncompatible);
   }
   return inferenceError(
     `incompatible return locations: cannot compute least upper bound of ${formatLocation(a)} and ${formatLocation(b)}`,
@@ -84,26 +79,16 @@ export function lubLocation(
   );
 }
 
-/** Least upper bound on located types for return inference (spec §function-return-type-inference). */
+/**
+ * Least upper bound on located types for return inference (spec §function-return-type-inference):
+ * the base first, then the location.
+ */
 export function lubLocatedType(
   a: LocatedType,
   b: LocatedType,
-  onIncompatible: IncompatibleLocations = "error",
+  onIncompatible?: Location,
 ): InferResult<LocatedType> {
-  if (a.isArray || b.isArray) {
-    if (a.isArray !== true || b.isArray !== true || a.base !== b.base) {
-      return inferenceError(
-        `incompatible return types: cannot compute least upper bound of ${a.isArray ? `${a.base}[]` : a.base} and ${b.isArray ? `${b.base}[]` : b.base} (array invariance)`,
-        ["array-typing"],
-      );
-    }
-    const location = lubLocation(a.location, b.location, onIncompatible);
-    if (!location.ok) {
-      return location;
-    }
-    return inferenceOk(locatedType(a.base, location.value, true));
-  }
-  const base = lubBase(a.base, b.base);
+  const base = lubValueBase(a, b);
   if (!base.ok) {
     return base;
   }
@@ -111,7 +96,37 @@ export function lubLocatedType(
   if (!location.ok) {
     return location;
   }
-  return inferenceOk(locatedType(base.value, location.value));
+  return inferenceOk(locatedType(base.value, location.value, a.isArray === true ? true : undefined));
+}
+
+/** The shared base of two return types; arrays are invariant (spec §array-invariance). */
+function lubValueBase(a: LocatedType, b: LocatedType): InferResult<BaseType> {
+  if (a.isArray || b.isArray) {
+    if (a.isArray !== true || b.isArray !== true || a.base !== b.base) {
+      return inferenceError(
+        `incompatible return types: cannot compute least upper bound of ${a.isArray ? `${a.base}[]` : a.base} and ${b.isArray ? `${b.base}[]` : b.base} (array invariance)`,
+        ["array-typing"],
+      );
+    }
+    return inferenceOk(a.base);
+  }
+  return lubBase(a.base, b.base);
+}
+
+/** `items` joined from the left with `lub`, stopping at the first failure. */
+function foldLub<T>(
+  items: readonly T[],
+  lub: (a: T, b: T) => InferResult<T>,
+): InferResult<T> {
+  let merged: T = items[0]!;
+  for (let i = 1; i < items.length; i++) {
+    const next = lub(merged, items[i]!);
+    if (!next.ok) {
+      return next;
+    }
+    merged = next.value;
+  }
+  return inferenceOk(merged);
 }
 
 /**
@@ -150,7 +165,7 @@ export function inferReturnTypeFromCandidates(
   body: Block,
   functionLocation: Location,
   candidates: readonly ReturnCandidate[],
-  onIncompatible: IncompatibleLocations = "error",
+  onIncompatible?: Location,
 ): InferResult<LocatedType> {
   if (candidates.length === 0) {
     return inferenceOk(locatedType("void", functionLocation));
@@ -172,13 +187,12 @@ export function inferReturnTypeFromCandidates(
     return inferenceOk(locatedType("void", functionLocation));
   }
 
-  let merged = valueCandidates[0]!.type;
-  for (let i = 1; i < valueCandidates.length; i++) {
-    const lub = lubLocatedType(merged, valueCandidates[i]!.type, onIncompatible);
-    if (!lub.ok) {
-      return lub;
-    }
-    merged = lub.value;
+  const merged = foldLub(
+    valueCandidates.map((c) => c.type),
+    (a, b) => lubLocatedType(a, b, onIncompatible),
+  );
+  if (!merged.ok) {
+    return merged;
   }
 
   if (!checkReturnCoverage(body)) {
@@ -188,7 +202,7 @@ export function inferReturnTypeFromCandidates(
     );
   }
 
-  return inferenceOk(merged);
+  return merged;
 }
 
 /**
@@ -204,7 +218,7 @@ export function inferReturnTypeFromCandidates(
 export function inferReturnLocation(
   candidates: readonly ReturnCandidate[],
   fallback: Location,
-  onIncompatible: IncompatibleLocations,
+  onIncompatible: Location | undefined,
 ): InferResult<Location> {
   const locations = candidates.flatMap((c) =>
     c.kind === "value" ? [c.type.location] : [],
@@ -212,13 +226,5 @@ export function inferReturnLocation(
   if (locations.length === 0) {
     return inferenceOk(fallback);
   }
-  let merged = locations[0]!;
-  for (let i = 1; i < locations.length; i++) {
-    const lub = lubLocation(merged, locations[i]!, onIncompatible);
-    if (!lub.ok) {
-      return lub;
-    }
-    merged = lub.value;
-  }
-  return inferenceOk(merged);
+  return foldLub(locations, (a, b) => lubLocation(a, b, onIncompatible));
 }

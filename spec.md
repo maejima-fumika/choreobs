@@ -105,7 +105,7 @@ omitted location is `dyn` (spec [§8.3](#strict-mode)).
 * Each name is held in the value namespace for the whole program (spec [§6.1](#namespaces)): no function, variable or parameter may take an endpoint's name, whether or not the source ever writes `@` with it.
 * Each name must be an identifier (spec [§4.3](#identifiers)) and must not be a reserved word (spec [§4.4](#keywords)). An endpoint name is written after `@` in the source (spec [§5.2](#types)) and is also pasted into the output file name (spec [§2.3](#output-files)): a name that is not an identifier would name an endpoint no program could refer to, and would still name a file — `../x` would place that file outside the output directory.
 * A name must not begin with `__`, which is reserved for the compiler (spec [§4.3](#identifiers), [§6.2](#function-names)), on the same terms as every other identifier the source writes.
-* The **reserved runtime names** of spec [§6.2](#function-names) — `nothing`, the communication API and clone helper names, `__array`, `__push`, `__and` and `__or` — are *not* reserved here, apart from the `__` prefix above. An endpoint name reaches the generated code only as a string literal (spec [§13.13](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
+* The **reserved runtime names** of spec [§6.2](#function-names) that do not begin with `__` — the communication API and clone helper names — are *not* reserved here. An endpoint name reaches the generated code only as a string literal (spec [§13.14](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
 * The names must be distinct. A repeated name is an error: it would give two output files the same name, and make one endpoint both the sender and the receiver of the same communication.
 * `every` and `dyn` are reserved words and must not appear in `endpoints` (spec [§16.2](#using-every-as-an-endpoint)). This is a special case of the reserved-word rule above, called out separately because `every` and `dyn` name the two locations that are deliberately never listed (spec [§3.4](#every), [§3.5](#dyn)).
 * Every individual location used in a `.cbs` source file must be listed in `endpoints`. The locations `every` and `dyn` are never listed.
@@ -128,8 +128,8 @@ choreobs compile index.cbs --config path/to/choreobs.json
 
 ### 2.3 Output Files <a id="output-files"></a>
 
-The compiler emits one `.bs` file per endpoint. A program that uses `dyn` also
-gets one runtime file per endpoint (see below).
+The compiler emits one `.bs` file per endpoint. A program whose endpoint programs
+use anything from the runtime also gets one runtime file per endpoint (see below).
 
 Input:
 
@@ -154,9 +154,10 @@ index_bob.bs
 
 #### Runtime Files <a id="runtime-files"></a>
 
-A program that uses `dyn` — whether written or produced by an omission
-(spec [§8.2](#omitted-locations)) — is also given the dynamic-location runtime (spec [§14.4](#dyn-runtime)), one file
-per endpoint:
+The generated code relies on names the compiler defines itself — helper
+functions and, for `dyn`, the class `__DynVal`. The compiler writes them into
+one runtime file per endpoint, and each endpoint program imports what it uses
+from there (spec [§13.10](#runtime-import)):
 
 ```text
 index_alice.bs
@@ -165,16 +166,33 @@ __runtime_alice.bs
 __runtime_bob.bs
 ```
 
+A runtime file has two parts, in this order:
+
+1. the **core helpers** — `__nothing1` to `__nothing5` (spec [§14.1](#nothing)), and `__and`
+   and `__or` (spec [§14.3](#and-or-helpers)). They are in every runtime file;
+2. the **dynamic-location runtime** (spec [§14.4](#dyn-runtime)). It is there only for a program
+   that uses `dyn` — whether written or produced by an omission (spec [§8.2](#omitted-locations)).
+
 * A runtime file is written for **every** endpoint as soon as any endpoint
-  program uses the runtime: a `dyn` value lives at all of them.
-* The files differ only in the constant `__here`, which names their endpoint
-  (spec [§14.8](#location-functions)), and in the comment at the top of the file, which names it too.
-* A program without `dyn` gets no runtime file, and its endpoint programs import
-  nothing (spec [§13.9](#runtime-import)). Its output is exactly what it would be without
-  gradual locating.
-* `nothing`, `__and`, `__or`, the communication API and the clone helpers are
-  not in the runtime file. They are supplied from outside for every program,
-  with or without `dyn` (spec [§14](#runtime-support-functions)).
+  program imports from it, and for none otherwise: a program that uses nothing
+  from it gets no runtime file. A program can import from it without calling
+  anything — `function f(a: integer@dyn): void {}` imports `__DynVal` alone.
+* Every endpoint's file has the same parts. Whether the dynamic-location runtime
+  is there is decided for the program, not for each endpoint: a `dyn` value lives
+  at all of them.
+* The files differ only in the comment at the top of the file, which names their
+  endpoint, and, where the dynamic-location runtime is there, in the constant
+  `__here`, which names it too (spec [§14.8](#location-functions)).
+* Every function, class and constant the generated code uses is exported, and
+  imported by name (spec [§13.10](#runtime-import)).
+* Every name in the file begins with `__`, the internal helpers included
+  (`__root`, `__copyPayload`, `__sendAny`, …), so that nothing depends on how
+  BlueScript scopes a module's names (spec [§6.2](#function-names)).
+* A program without `dyn` gets the core helpers alone: nothing in its output
+  depends on gradual locating.
+* The communication API and the clone helpers are not in the runtime file. They
+  are supplied from outside for every program, with or without `dyn`
+  (spec [§14](#runtime-support-functions)).
 
 ***
 
@@ -1126,7 +1144,7 @@ ChoreoBS has two namespaces:
   be written as an identifier at all.
 
 There is one value namespace rather than three because the generated code has
-one. BlueScript keeps the source name (spec [§13.7](#codegen-function-names)), so a variable emitted
+one. BlueScript keeps the source name (spec [§13.8](#codegen-function-names)), so a variable emitted
 beside a function of the same name shadows it, and the call the program meant
 to make would reach the variable instead. This is the same reasoning that
 reserves the runtime names in spec [§6.2](#function-names), applied to the program's own names.
@@ -1192,13 +1210,12 @@ let aliceCount: integer@alice = alice2();
 
 #### Reserved Runtime Names <a id="reserved-runtime-names"></a>
 
-Generated BlueScript keeps the original ChoreoBS name (spec [§13.7](#codegen-function-names)), so a user
+Generated BlueScript keeps the original ChoreoBS name (spec [§13.8](#codegen-function-names)), so a user
 identifier that matches a name the generated code itself calls would capture
 that call. The following are therefore reserved in every one of the three
 positions:
 
-* `nothing` — the compiler-generated placeholder helper (spec [§14.1](#nothing));
-* every communication and clone API name (spec [§13.13](#communication-api)). These are
+* every communication and clone API name (spec [§13.14](#communication-api)). These are
   `sendInteger`, `receiveInteger` and `broadcastInteger`, and the corresponding
   names for `Float`, `Boolean`, `String`, `Null`, `IntegerArray`, `FloatArray`
   and `BooleanArray`; plus the three clone helpers, which exist for the array
@@ -1206,9 +1223,7 @@ positions:
   There is no `cloneInteger` and no scalar clone of any type, so none is
   reserved;
 * `__array` and `__push` — compiler-internal call sentinels;
-* `__and` and `__or` — the runtime helpers that `&&` and `||` are emitted as
-  (spec [§14.3](#and-or-helpers));
-* every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.11](#transfer-typing), [§12.10](#transfer-projection)), and reserving the prefix lets it do so without consulting the program. The names of the dynamic-location runtime — `__DynVal`, `__LocVar`, `__inject`, `__cast`, the `__dyn…` operations, `__here` and the runtime's internal helpers — are covered by the same prefix (spec [§14.4](#dyn-runtime)).
+* every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.11](#transfer-typing), [§12.10](#transfer-projection)), and reserving the prefix lets it do so without consulting the program. Every name in the runtime file is covered by the same prefix (spec [§2.3](#output-files)): the core helpers `__nothing1` to `__nothing5`, `__and` and `__or` (spec [§14.1](#nothing), [§14.3](#and-or-helpers)), and the names of the dynamic-location runtime — `__DynVal`, `__LocVar`, `__inject`, `__cast`, the `__dyn…` operations, `__here` and the runtime's internal helpers (spec [§14.4](#dyn-runtime)).
 
 These are reserved for variables and parameters too, not only for functions: a
 variable emitted into the same BlueScript scope shadows the runtime function
@@ -1224,10 +1239,14 @@ function length@alice(xs: integer[]@alice): integer@alice {
 }
 ```
 
+`nothing` is **not** reserved either. The compiler's `nothing(...)` artifact is
+emitted as the `__nothing…` helpers (spec [§13.7](#nothing-code-generation)), so a program's own `nothing` cannot
+capture it.
+
 Disallowed:
 
 ```ts
-function nothing@alice(): void { return; }   // captures the compiler's helper
+function __and@alice(): void { return; }     // takes the compiler's prefix
 let sendInteger: integer@alice = 1@alice;    // shadows the runtime API
 function f@alice(receiveFloat: integer@alice): void { return; }
 ```
@@ -1906,7 +1925,7 @@ types must be the same. Locations play no part in this rule.
 
 Every value type may be transferred: `integer`, `float`, `boolean`, `string`,
 `null`, and the array types. Each has its own entry in the communication API
-(spec [§13.13](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
+(spec [§13.14](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
 `null` transfer carries no data — it is a synchronisation signal — but it is an
 ordinary transfer in every other respect. `void` is not a value type at all and
 cannot appear on either side (spec [§7.3](#void), [§16.44](#invalid-use-of-void)).
@@ -3590,7 +3609,7 @@ is never removed: it creates a location variable at every endpoint
 
 After EPP, expressions unrelated to the current endpoint may be transformed into `nothing(...)` or `null`.
 
-These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in [Section 13.14](#projected-ast-cleanup).
+These compiler-generated artifacts are cleaned up by the Projected AST Cleanup pass defined in [Section 13.15](#projected-ast-cleanup).
 
 `xs.push(v);` is an expression statement like any other. Its expression is a
 void computation (spec [§7.2](#located-types), [§7.16](#array-typing)), so this is the only position it may
@@ -3673,7 +3692,7 @@ function f@alice(...) {
 
 ### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
-A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec [§12.12](#function-projection)). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec [§13.14](#projected-ast-cleanup)).
+A choreography context may call local functions. At endpoints where the function's location does not match, the callee is not generated and the call projects to `nothing(...)` over its arguments (spec [§12.12](#function-projection)). It is removed by cleanup when none of those arguments holds a computation this endpoint owes (spec [§13.15](#projected-ast-cleanup)).
 
 ```ts
 function add@alice(a: integer@alice, b: integer@alice): integer@alice {
@@ -3712,16 +3731,16 @@ let valDyn: integer@dyn = 5@dyn;
 useAlice(valDyn);
 ```
 
-The call is projected, at `alice`, to:
+EPP at `alice`:
 
 ```ts
 useAlice(__cast(valDyn, "alice"));
 ```
 
-and at `bob`, which does not generate `useAlice`, to:
+EPP at `bob`, which does not generate `useAlice`:
 
 ```ts
-nothing(__cast(valDyn, "alice"));
+__nothing1(__cast(valDyn, "alice"));
 ```
 
 ```ts
@@ -3998,7 +4017,7 @@ transfer declaration or the `=` of a transfer assignment.
 * `kind(T)` is the payload kind of the destination base type, one of the eight
   names of the communication API: `"integer"`, `"float"`, `"boolean"`,
   `"string"`, `"null"`, `"integerArray"`, `"floatArray"` and `"booleanArray"`
-  (spec [§13.13](#communication-api)). A receiver has no payload to look at, so the kind cannot be
+  (spec [§13.14](#communication-api)). A receiver has no payload to look at, so the kind cannot be
   read off the value: the compiler passes it, just as it picks the API by the
   destination type for a static transfer. The source has the same base type
   (spec [§7.11](#transfer-typing)), so the sender and the receivers choose the same API.
@@ -4316,7 +4335,7 @@ operands left to hold — `xs.length`, `[]`, and a call to an absent function wi
 no arguments — leaves `nothing()`.
 
 A call whose callee `P` does generate is kept as a call, not wrapped: the
-projected callee returns `null` at `P` (spec [§12.3](#type-projection), [§13.12](#absent-finalization)), so the call already stands
+projected callee returns `null` at `P` (spec [§12.3](#type-projection), [§13.13](#absent-finalization)), so the call already stands
 in for the absent value wherever one is needed. A call of a runtime function
 (spec [§12.2](#dyn-lowering)) is always of this kind, since every endpoint generates the callee.
 Where its result is at an individual location that `P` is not — `__cast(v, "alice")`
@@ -4324,7 +4343,7 @@ at `bob` — the runtime itself returns `null` (spec [§14.9](#inject-and-cast))
 not generate — a local function at another endpoint — disappears, but its
 arguments do not: they are ordinary expressions that may contain choreography
 calls of their own. With no arguments that leaves `nothing()`, which cleanup
-removes (spec [§13.14](#projected-ast-cleanup)).
+removes (spec [§13.15](#projected-ast-cleanup)).
 
 The binary row covers `&&` and `||` as well. They do not short-circuit
 (spec [§5.17](#evaluation-order)), so hoisting both operands into one `nothing(...)` runs
@@ -4333,7 +4352,7 @@ exactly what the original runs.
 `.length` drops its receiver where `xs[i]` keeps its own, because the two are
 not the same kind of operand. The receiver of `.length` must be a variable
 (spec [§5.14](#expressions)), so reading it cannot call anything and there is nothing to
-preserve; that leaves `nothing()`, which cleanup removes (spec [§13.14](#projected-ast-cleanup)). The
+preserve; that leaves `nothing()`, which cleanup removes (spec [§13.15](#projected-ast-cleanup)). The
 receiver of `[]` is an arbitrary expression — `f()[i]` is well-formed — and may
 hold a choreography call, so it is reproduced like any other operand.
 
@@ -4346,7 +4365,7 @@ statement rule [§12.11](#assignment-projection) states. It drops its receiver f
 the same reason `.length` does.
 
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
-v1 (spec [§13.14](#projected-ast-cleanup), [§17.7](#future-cleanup-optimizations)).
+v1 (spec [§13.15](#projected-ast-cleanup), [§17.7](#future-cleanup-optimizations)).
 
 #### Why the Operands Are Enough <a id="why-the-operands-are-enough"></a>
 
@@ -4369,7 +4388,7 @@ so the rules below hold throughout:
 So a `nothing(...)` built this way holds only `absent` leaves and calls `P`
 must make. Nothing resident is discarded, and cleanup's deliberately blunt rule
 — fold only when every argument is syntactically `null` — loses nothing
-(spec [§13.14](#projected-ast-cleanup)).
+(spec [§13.15](#projected-ast-cleanup)).
 
 A transfer is the one place a location boundary is crossed on purpose, so its
 source needs the rule stated separately; see [§12.10](#transfer-projection).
@@ -4385,7 +4404,7 @@ location variables, and every endpoint has to add the same constraints in the sa
 order (spec [§3.5](#dyn)). Were `bob` to drop `__cast(valDyn, "alice")` because its result
 is at `alice`, `bob` would not bind `valDyn`'s class to `alice`, and the endpoints'
 location dispatch would diverge from there on. So `nothing(__cast(valDyn, "alice"))`
-and even a bare `__dynUnbound(3);` stay (spec [§13.14.6](#what-this-cleanup-pass-must-not-remove)).
+and even a bare `__dynUnbound(3);` stay (spec [§13.15.6](#what-this-cleanup-pass-must-not-remove)).
 
 ```ts
 function relay(a: integer@alice): integer@alice {
@@ -4407,14 +4426,16 @@ function relay(a: null): null {
     return null;
 }
 
-nothing(relay(null));
+__nothing1(relay(null));
 ```
 
 Erasing that statement at `bob` would leave `alice` blocked forever on the
 matching receive.
 
 Order is preserved along with the calls, because the `nothing(...)` tree mirrors
-the source tree and both evaluate left to right:
+the source tree and both evaluate left to right. The helper calls code generation
+turns it into keep its arguments in that order, even where more than five of them
+are split up (spec [§13.7](#nothing-code-generation)):
 
 ```ts
 get3() + get3() * get4();
@@ -4423,10 +4444,7 @@ get3() + get3() * get4();
 at an endpoint where the result is absent:
 
 ```ts
-nothing(
-    get3(),
-    nothing(get3(), get4())
-);
+__nothing2(get3(), __nothing2(get3(), get4()));
 ```
 
 `get3`, `get3`, `get4` — the same order as the source, and each called once.
@@ -4466,7 +4484,7 @@ choose(c);
 ```
 
 When such a statement holds nothing `P` must run, it simplifies to `null` and
-disappears entirely (spec [§13.14](#projected-ast-cleanup)).
+disappears entirely (spec [§13.15](#projected-ast-cleanup)).
 
 #### Positions With No Room for a Statement <a id="positions-with-no-room-for-a-statement"></a>
 
@@ -4517,13 +4535,13 @@ runs against the matching send. Projecting the argument `get3()` to a bare
 * It is distinct from source-level `null`.
 * It is never emitted to final BlueScript output.
 * It is turned into `null` by absent finalization, a stage of its own that runs
-  after EPP and before cleanup (spec [§13.12](#absent-finalization)).
+  after EPP and before cleanup (spec [§13.13](#absent-finalization)).
 
 `absent` and the compiler-generated `nothing(...)` (spec [§14.1](#nothing)) are different
 artifacts and are kept apart. `absent` marks a value that does not exist here;
 `nothing(...)` preserves computations whose result is discarded. EPP produces
 both, finalization rewrites the first, and cleanup folds the second
-(spec [§13.14](#projected-ast-cleanup)).
+(spec [§13.15](#projected-ast-cleanup)).
 
 ### 12.6 Literal Projection <a id="literal-projection"></a>
 
@@ -4610,7 +4628,7 @@ discard_P(op e)     = nothing(discard_P(e))
 ```
 
 EPP at `bob` — both operands are variables absent there, so the statement simplifies to
-`null` and disappears (spec [§13.14](#projected-ast-cleanup)):
+`null` and disappears (spec [§13.15](#projected-ast-cleanup)):
 
 ```ts
 // removed
@@ -4625,7 +4643,7 @@ let y: integer@alice = -relay(x);
 EPP at `bob`:
 
 ```ts
-nothing(relay(null));
+__nothing1(relay(null));
 ```
 
 An operator whose result is at `dyn` is a runtime call by the time EPP sees it
@@ -4687,18 +4705,20 @@ n = __dynNeg(n);
 
 `&&` and `||` follow the rule above with no exception. Since they do not
 short-circuit, hoisting both operands into `nothing(...)` where the result is
-absent runs exactly what the original runs. Written out, with the residing side
-in the spelling code generation gives it (spec [§13.4](#logical-operator-code-generation)):
+absent runs exactly what the original runs. Written out:
 
 ```text
 project_P(e1 && e2 : boolean@L) =
-    if residesAt(L, P):  __and(project_P(e1), project_P(e2))
+    if residesAt(L, P):  project_P(e1) && project_P(e2)
     else:                nothing(discard_P(e1), discard_P(e2))
 
 project_P(e1 || e2 : boolean@L) =
-    if residesAt(L, P):  __or(project_P(e1), project_P(e2))
+    if residesAt(L, P):  project_P(e1) || project_P(e2)
     else:                nothing(discard_P(e1), discard_P(e2))
 ```
+
+The projected IR keeps the operator; code generation spells it `__and` or `__or`
+(spec [§13.4](#logical-operator-code-generation)), as the examples below show.
 
 There is one rule for every context. In a local function body every value
 resides at the function's own endpoint (spec [§8.4](#local-function-strict-location-rule)), so the first
@@ -4728,7 +4748,7 @@ EPP at `bob` — the binding is absent, but `ping()` still runs, so `bob` takes
 part in the communication inside it:
 
 ```ts
-nothing(null, ping());
+__nothing2(null, ping());
 ```
 
 With a `dyn` operand, `&&` and `||` are the runtime calls `__dynAnd` and `__dynOr`
@@ -4869,7 +4889,7 @@ endpoint, because the name has to stay declared for the rest of the header
 (spec [§12.15](#for-projection)).
 
 EPP at `bob` — the initializer is a literal, so the statement simplifies to
-`null` and disappears (spec [§13.14](#projected-ast-cleanup)):
+`null` and disappears (spec [§13.15](#projected-ast-cleanup)):
 
 ```ts
 // removed
@@ -4973,7 +4993,7 @@ altogether.
 
 Where `discard_P` of the source yields `null` — that is, where the source holds
 no call this endpoint has to make — the statement disappears in cleanup
-(spec [§13.14](#projected-ast-cleanup)), which is why the ordinary cases below
+(spec [§13.15](#projected-ast-cleanup)), which is why the ordinary cases below
 show no extra statement. A bare identifier or literal source is the common
 case: it discards to `absent`, and so to `null`.
 
@@ -5172,7 +5192,7 @@ xs[indexCall()] = valueCall();
 EPP at `bob`, where both calls are choreography functions:
 
 ```ts
-nothing(indexCall(), valueCall());
+__nothing2(indexCall(), valueCall());
 ```
 
 The compiler must not generate invalid code such as `null[null] = null`.
@@ -5190,7 +5210,7 @@ nothing else as an assignment target or as the receiver of `.length` and
 `.push` (spec [§5.14](#expressions)) — so reading it cannot call anything, and there is no
 evaluation to preserve. Reproducing it would leave a `null` argument that
 carries no computation and that cleanup cannot fold away once a sibling
-argument holds one (spec [§13.14.2](#expression-simplification)).
+argument holds one (spec [§13.15.2](#expression-simplification)).
 
 An element assignment or a push whose join is `dyn` is not an assignment at all by
 the time EPP sees it, but the `void` runtime call `__dynArraySet(xs, i, v)` or
@@ -5280,11 +5300,11 @@ add(get3Mcu(), get4Mcu());
 EPP at `server`, where `get3Mcu` and `get4Mcu` are choreography functions:
 
 ```ts
-nothing(get3Mcu(), get4Mcu());
+__nothing2(get3Mcu(), get4Mcu());
 ```
 
 With no arguments there is nothing left to evaluate, and `nothing()` is removed
-by cleanup (spec [§13.14](#projected-ast-cleanup)). A call names no location
+by cleanup (spec [§13.15](#projected-ast-cleanup)). A call names no location
 (spec [§7.17](#function-call-typing)), so this is an ordinary call to a
 `localFunction` declared at `mcu`, projected at `server`:
 
@@ -5486,7 +5506,7 @@ exist at this endpoint at all, and a header slot holds an expression, not the
 *statement* that [§12.11](#assignment-projection) would produce. The clause therefore keeps just
 `discard_P` of the expressions it evaluated — the same `nothing(...)` [§12.11](#assignment-projection)
 builds, sitting in the slot as an expression. Once that simplifies to `null`,
-the slot is **omitted** entirely (spec [§13.14](#projected-ast-cleanup)). The compiler must not emit an
+the slot is **omitted** entirely (spec [§13.15](#projected-ast-cleanup)). The compiler must not emit an
 assignment to a name that is absent here, nor `null[null] = null` for an absent
 array.
 
@@ -5574,7 +5594,7 @@ let n: integer = xs.length;
 EPP at `bob` — the array is absent there, so none of these operations is
 performed. Each statement keeps only the evaluation of its subexpressions
 (spec [§12.4](#expression-projection), [§12.11](#assignment-projection)), and since all of them are literals here, everything
-simplifies to `null` and disappears (spec [§13.14](#projected-ast-cleanup)):
+simplifies to `null` and disappears (spec [§13.15](#projected-ast-cleanup)):
 
 ```ts
 // all removed
@@ -5672,7 +5692,7 @@ __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
 let e: __DynVal = __dynArrayNew("integerArray");
 __dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(null, "alice")), __inject(null, "alice"));
-nothing(__cast(d, "alice"));
+__nothing1(__cast(d, "alice"));
 ```
 
 `[a, b]` is bound to `alice` at run time, by its first `__dynArrayAppend`.
@@ -5829,7 +5849,7 @@ ChoreoBS T[]@dyn   -> BlueScript __DynVal
 ```
 
 `__DynVal` is the class of the dynamic-location runtime (spec [§14.7](#dyn-val)), imported from
-the runtime file (spec [§13.9](#runtime-import)).
+the runtime file (spec [§13.10](#runtime-import)).
 
 ### 13.2 Location Annotation Removal <a id="location-annotation-removal"></a>
 
@@ -5847,7 +5867,7 @@ let x: integer = 1;
 
 A location does reach the output as data, in the arguments of runtime calls: the
 string literals `"alice"`, `"every"` and `"dyn"`, written as in the communication
-API (spec [§13.13](#communication-api)). An endpoint name is an identifier other than `every` and `dyn`
+API (spec [§13.14](#communication-api)). An endpoint name is an identifier other than `every` and `dyn`
 (spec [§2.2](#choreobs-json)), so it is never one of those two strings, nor the empty string that
 marks an unbound location variable (spec [§14.5](#location-variables)): these strings cannot collide.
 
@@ -5869,7 +5889,7 @@ field or call a method on anything else (spec [§17.2](#typescript-javascript-fe
 
 The projected IR keeps `&&` and `||` as binary operations. Code generation
 spells them as calls to the runtime helpers `__and` and `__or`
-(spec [§14.3](#and-or-helpers)):
+(spec [§14.3](#and-or-helpers)), imported from the runtime file (spec [§13.10](#runtime-import)):
 
 ```text
 e1 && e2  =>  __and(e1, e2)
@@ -5917,7 +5937,54 @@ written, since `!!c` means the same in BlueScript.
 A unary operator on a `dyn` operand is the runtime call `__dynNeg` or `__dynNot`
 instead (spec [§12.2](#dyn-lowering)).
 
-### 13.7 Function Names <a id="codegen-function-names"></a>
+### 13.7 `nothing` Code Generation <a id="nothing-code-generation"></a>
+
+A `nothing(e1, ..., en)` that survives cleanup (spec [§13.15](#projected-ast-cleanup)) is emitted as calls
+to the fixed-arity helpers `__nothing1` to `__nothing5` (spec [§14.1](#nothing)). BlueScript has
+no rest parameters, so no single helper could take any number of arguments.
+
+With at most five arguments, it is one call to the helper of that arity:
+
+```text
+nothing(e1)            =>  __nothing1(e1)
+nothing(e1, e2)        =>  __nothing2(e1, e2)
+...
+nothing(e1, ..., e5)   =>  __nothing5(e1, ..., e5)
+```
+
+With more, the first five arguments go to `__nothing5`, and the rest follow in
+order, up to four at a time. Each group makes a call whose first argument is the
+call built so far:
+
+```text
+nothing(e1, ..., e6)   =>  __nothing2(__nothing5(e1, ..., e5), e6)
+nothing(e1, ..., e9)   =>  __nothing5(__nothing5(e1, ..., e5), e6, e7, e8, e9)
+nothing(e1, ..., e10)  =>  __nothing2(__nothing5(__nothing5(e1, ..., e5), e6, e7, e8, e9), e10)
+```
+
+* The arguments keep their order, and a call evaluates its arguments left to
+  right before the helper runs (spec [§5.17](#evaluation-order)). Each `ei` is therefore evaluated
+  exactly once, in the order `nothing(...)` prescribes, and the whole call yields
+  `null` (spec [§14.1](#nothing)).
+* The arguments are split here and nowhere else. The projected IR keeps one
+  `nothing(...)` with all its arguments, and cleanup sees it as one node
+  (spec [§13.15](#projected-ast-cleanup)).
+* A `nothing(...)` nested in the IR is emitted level by level, as it stands:
+  `nothing(a, nothing(b, c))` becomes `__nothing2(a, __nothing2(b, c))`. Code
+  generation neither flattens it (spec [§13.15.3](#nested-nothing-is-not-flattened)) nor nests anything more than the
+  split above.
+* There is no `__nothing0`. Cleanup folds every `nothing()` into `null`
+  (spec [§13.15.2](#expression-simplification)), so none reaches code generation.
+
+This specification writes the artifact as `nothing(...)` wherever it shows the
+projected IR: in the rules of EPP (spec [§12](#endpoint-projection)), absent finalization
+(spec [§13.13](#absent-finalization)) and cleanup (spec [§13.15](#projected-ast-cleanup)), and in the examples of those stages, such as
+the steps of spec [§15.7](#example-cleanup-of-nothing). The "EPP at `P`" examples show an endpoint's program as
+the compiler writes it, after cleanup and code generation, so they spell the
+helpers out — and `__and` and `__or` too (spec [§13.4](#logical-operator-code-generation)) — leaving only the `import`
+line out (spec [§13.10](#runtime-import)).
+
+### 13.8 Function Names <a id="codegen-function-names"></a>
 
 Generated function names are the same as the original ChoreoBS function names.
 Because there is no renaming, the names the generated code relies on are
@@ -5936,7 +6003,7 @@ function add(...)
 The dynamic-location runtime's names (spec [§14.4](#dyn-runtime)) all begin with `__`, so no user
 function can share one (spec [§6.2](#function-names)).
 
-### 13.8 Output File Naming <a id="output-file-naming"></a>
+### 13.9 Output File Naming <a id="output-file-naming"></a>
 
 Input:
 
@@ -5959,8 +6026,8 @@ index_alice.bs
 index_bob.bs
 ```
 
-For a program that uses `dyn`, the runtime files are added, one per endpoint
-(spec [§2.3](#output-files)):
+For a program whose endpoint programs import from the runtime, the runtime files
+are added, one per endpoint (spec [§2.3](#output-files)):
 
 ```text
 index_alice.bs
@@ -5969,38 +6036,40 @@ __runtime_alice.bs
 __runtime_bob.bs
 ```
 
-### 13.9 Runtime Import <a id="runtime-import"></a>
+### 13.10 Runtime Import <a id="runtime-import"></a>
 
-An endpoint program that uses the dynamic-location runtime imports what it uses
-from its endpoint's runtime file, in one `import` at the top, followed by a blank
-line:
+An endpoint program that uses anything from the runtime file (spec [§2.3](#output-files)) imports
+what it uses from its endpoint's runtime file, in one `import` at the top,
+followed by a blank line:
 
 ```ts
 // index_alice.bs
-import { __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime_alice";
+import { __nothing2, __and, __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime_alice";
 ```
 
-* Only the names the program uses are imported: `__DynVal` when a type is
-  `__DynVal`, and each runtime function it calls.
-* They are listed in a fixed order: `__DynVal` first, then the runtime functions
-  in the order of the table of spec [§12.2](#dyn-lowering).
+* Only the names the program uses are imported: each core helper it calls —
+  the `__nothing…` helpers its `nothing(...)` artifacts are emitted as
+  (spec [§13.7](#nothing-code-generation)), `__and` and `__or` — then `__DynVal` when a type is `__DynVal`,
+  and each runtime function it calls.
+* They are listed in a fixed order: the core helpers first, as `__nothing1` to
+  `__nothing5`, `__and`, `__or`; then `__DynVal`; then the runtime functions in
+  the order of the table of spec [§12.2](#dyn-lowering).
 * The module name has no extension. BlueScript resolves a relative import by
   appending `.bs` itself, so `"./__runtime_alice.bs"` would look for
   `__runtime_alice.bs.bs`.
-* A program that uses nothing from the runtime has no `import` at all, so the
-  output of a program without `dyn` is unchanged.
+* A program that uses nothing from the runtime file has no `import` at all.
 
 The examples in this specification leave the `import` line out.
 
-### 13.10 Local Functions <a id="codegen-local-functions"></a>
+### 13.11 Local Functions <a id="codegen-local-functions"></a>
 
 A local function is emitted only for the corresponding endpoint.
 
-### 13.11 Choreography Functions <a id="codegen-choreography-functions"></a>
+### 13.12 Choreography Functions <a id="codegen-choreography-functions"></a>
 
 A choreography function is emitted for all endpoints.
 
-### 13.12 Absent Finalization <a id="absent-finalization"></a>
+### 13.13 Absent Finalization <a id="absent-finalization"></a>
 
 Absent finalization is a stage of its own, between endpoint projection and
 cleanup:
@@ -6014,7 +6083,7 @@ Typed AST
   -> Absent finalization
   -> Projected IR containing null and nothing(...)
   -> Bottom-up cleanup (spec §projected-ast-cleanup)
-  -> BlueScript emission, and the runtime files if dyn is used (spec §output-files)
+  -> BlueScript emission, and the runtime files if it imports from them (spec §output-files)
 ```
 
 It does exactly one thing: every remaining `absent` leaf becomes `null`
@@ -6046,9 +6115,9 @@ something to paper over with a `null`.
 
 After finalization the output contains no `absent`. The remaining `null;`
 statements and `nothing(...)` artifacts are removed where possible by the
-cleanup pass in [Section 13.14](#projected-ast-cleanup).
+cleanup pass in [Section 13.15](#projected-ast-cleanup).
 
-### 13.13 Communication API <a id="communication-api"></a>
+### 13.14 Communication API <a id="communication-api"></a>
 
 The generated BlueScript code uses type-specific communication APIs.
 
@@ -6118,15 +6187,15 @@ cloneFloatArray(value: float[]): float[];
 cloneBooleanArray(value: boolean[]): boolean[];
 ```
 
-### 13.14 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
+### 13.15 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
 
-After absent finalization (spec [§13.12](#absent-finalization)) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
+After absent finalization (spec [§13.13](#absent-finalization)) and before BlueScript code generation, the compiler performs a cleanup pass over the projected AST.
 
 The purpose of this pass is to remove or simplify compiler-generated artifacts such as unnecessary `null` statements and `nothing(...)` expressions.
 
 This cleanup pass must operate on the projected AST or projected IR. It must not be implemented as string-based post-processing over generated BlueScript code.
 
-#### 13.14.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
+#### 13.15.1 A Single Bottom-Up Pass <a id="a-single-bottom-up-pass"></a>
 
 Cleanup is one pass in post order: every subexpression is simplified before its
 parent is considered, and statements are handled after their expressions.
@@ -6148,9 +6217,9 @@ slot is visited, including ones that are easy to overlook: the index of an
 array element assignment target, and the initializer, condition and update of a
 `for` header.
 
-An `absent` reaching this pass is an internal error (spec [§13.12](#absent-finalization)).
+An `absent` reaching this pass is an internal error (spec [§13.13](#absent-finalization)).
 
-#### 13.14.2 Expression Simplification <a id="expression-simplification"></a>
+#### 13.15.2 Expression Simplification <a id="expression-simplification"></a>
 
 The only rule is:
 
@@ -6201,7 +6270,7 @@ nothing(nothing(null), null, null)
 => null
 ```
 
-#### 13.14.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
+#### 13.15.3 Nested `nothing(...)` Is Not Flattened <a id="nested-nothing-is-not-flattened"></a>
 
 ChoreoBS v1 does not rewrite
 
@@ -6220,7 +6289,7 @@ boundaries, which keeps EPP a plain structural recursion. Run-time location
 checks live in runtime calls (spec [§12.2](#dyn-lowering)), which are never inside a `nothing(...)`
 that cleanup could fold. Flattening is listed under [§17.7](#future-cleanup-optimizations).
 
-#### 13.14.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
+#### 13.15.4 Simplification Inside Function Arguments <a id="simplification-inside-function-arguments"></a>
 
 Expression simplification must also be applied recursively inside ordinary function call arguments.
 
@@ -6238,7 +6307,7 @@ foo(null, null)
 
 The function call itself must not be removed by this cleanup rule.
 
-#### 13.14.5 Statement Cleanup <a id="statement-cleanup"></a>
+#### 13.15.5 Statement Cleanup <a id="statement-cleanup"></a>
 
 After expression simplification, the compiler removes expression statements
 whose expression is exactly `null`, and only those.
@@ -6268,7 +6337,7 @@ x = null;
 f(null);
 ```
 
-#### 13.14.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
+#### 13.15.6 What This Cleanup Pass Must Not Remove <a id="what-this-cleanup-pass-must-not-remove"></a>
 
 This cleanup pass is intentionally conservative.
 
@@ -6325,7 +6394,7 @@ them without revisiting [§12.4](#expression-projection):
 * general dead-code elimination;
 * removal of ordinary function calls.
 
-#### 13.14.7 Source-Level `null` <a id="source-level-null"></a>
+#### 13.15.7 Source-Level `null` <a id="source-level-null"></a>
 
 A `null` that came from a source-level `null` literal and a `null` produced by
 absent finalization are the same node by the time cleanup runs, and are treated
@@ -6338,11 +6407,17 @@ removing it is sound.
 
 The generated code relies on two groups of functions:
 
-* supplied from outside, for every program, with or without `dyn`: `nothing`
-  ([§14.1](#nothing)), `__and` and `__or` ([§14.3](#and-or-helpers)), and the communication API and clone
-  helpers (spec [§13.13](#communication-api));
-* generated by the compiler, for a program that uses `dyn` only: the
-  dynamic-location runtime ([§14.4](#dyn-runtime)–[§14.13](#dyn-array-operations)).
+* supplied from outside, for every program, with or without `dyn`: the
+  communication API and the clone helpers (spec [§13.14](#communication-api));
+* generated by the compiler into the runtime file (spec [§2.3](#output-files)), and imported from
+  it (spec [§13.10](#runtime-import)):
+  * the core helpers, for every program that calls them: `__nothing1` to
+    `__nothing5` ([§14.1](#nothing)), and `__and` and `__or` ([§14.3](#and-or-helpers));
+  * the dynamic-location runtime, for a program that uses `dyn` only
+    ([§14.4](#dyn-runtime)–[§14.13](#dyn-array-operations)).
+
+The `ts` blocks of this chapter are the runtime file itself, in the order they
+appear in it.
 
 ### 14.1 `nothing` <a id="nothing"></a>
 
@@ -6374,12 +6449,39 @@ return null;
 The compiler must distinguish this artifact from an ordinary call, including
 from a user-defined function that happens to be named `nothing`. In the
 projected IR it is a node of its own; only that node is subject to the
-simplification rule in [§13.14](#projected-ast-cleanup).
+simplification rule in [§13.15](#projected-ast-cleanup).
 
-The BlueScript backend may choose a concrete implementation depending on what
-BlueScript supports. If rest parameters are unavailable, it may emit
-fixed-arity helpers instead. Whatever it emits, the artifacts that can be
-removed are removed first (spec [§13.14](#projected-ast-cleanup)).
+Code generation emits what cleanup leaves as calls to fixed-arity helpers, one
+for each number of arguments from one to five (spec [§13.7](#nothing-code-generation)). They open the
+runtime file:
+
+```ts
+export function __nothing1(a1: any): null {
+  return null;
+}
+
+export function __nothing2(a1: any, a2: any): null {
+  return null;
+}
+
+export function __nothing3(a1: any, a2: any, a3: any): null {
+  return null;
+}
+
+export function __nothing4(a1: any, a2: any, a3: any, a4: any): null {
+  return null;
+}
+
+export function __nothing5(a1: any, a2: any, a3: any, a4: any, a5: any): null {
+  return null;
+}
+```
+
+* A helper's body only returns `null`. The call has already evaluated its
+  arguments, left to right (spec [§5.17](#evaluation-order)), which is all the evaluation
+  `nothing(...)` asks for, and the values are discarded.
+* Every parameter is `any`, so that one helper takes arguments of every type:
+  BlueScript has neither rest parameters nor type parameters.
 
 ### 14.2 Where It Appears <a id="nothing-where-it-appears"></a>
 
@@ -6396,38 +6498,39 @@ endpoint does not perform, as in `nothing(relay(null))` for `-relay(x)`.
 
 `__and(a, b)` and `__or(a, b)` are the runtime helpers that code generation
 emits for `&&` and `||` (spec [§13.4](#logical-operator-code-generation)). Each takes two `boolean` arguments and
-returns a `boolean`:
+returns a `boolean`. They follow the `nothing` helpers in the runtime file:
 
-```text
-__and(a, b) = a and b
-__or(a, b)  = a or b
+```ts
+export function __and(a: boolean, b: boolean): boolean {
+  return a && b;
+}
+
+export function __or(a: boolean, b: boolean): boolean {
+  return a || b;
+}
 ```
 
 Unlike `nothing(...)`, they are ordinary calls. Their arguments are evaluated
 left to right, both before the helper runs, as for any call
 (spec [§5.17](#evaluation-order)); the helper itself only combines the two values, and has no
 effect of its own. They produce a value that the program uses, so cleanup
-never touches them (spec [§13.14](#projected-ast-cleanup)).
+never touches them (spec [§13.15](#projected-ast-cleanup)).
 
-Like `nothing`, they are supplied by the BlueScript runtime rather than
-generated into each endpoint program.
+BlueScript's own `&&` and `||` in their bodies are harmless: both operands are
+evaluated by then, so the short circuit has nothing left to skip.
 
 ### 14.4 Dynamic Location Runtime <a id="dyn-runtime"></a>
 
 The dynamic-location runtime represents dynamically located values and performs
-the dynamic operations (spec [§7.9](#dynamic-operations)). The compiler writes it, as
-`__runtime_<endpoint>.bs`, for each endpoint of a program that uses `dyn`
-(spec [§2.3](#output-files)).
+the dynamic operations (spec [§7.9](#dynamic-operations)). The compiler writes it into
+`__runtime_<endpoint>.bs`, after the core helpers, for each endpoint of a
+program that uses `dyn`. What holds for the whole file — what differs between
+endpoints, what is exported, and why every name begins with `__` — is stated
+with the file (spec [§2.3](#output-files)).
 
-* Every endpoint's copy is the same, apart from the constant `__here`
-  ([§14.8](#location-functions)) and the comment naming the endpoint at the top of the file.
-* Every function and constant the generated code uses is exported, and imported
-  by name (spec [§13.9](#runtime-import)).
-* Every name in it begins with `__`, the internal helpers included (`__root`,
-  `__copyPayload`, `__sendAny`, …), so that nothing depends on how BlueScript
-  scopes a module's names (spec [§6.2](#function-names)).
+* Its one endpoint-specific part is the constant `__here` ([§14.8](#location-functions)).
 * It calls the communication API and the clone helpers, which are supplied from
-  outside like everywhere else (spec [§13.13](#communication-api)).
+  outside like everywhere else (spec [§13.14](#communication-api)). The core helpers call neither.
 
 The following sections give its content, in the order it appears in the file.
 The runtime assumes some BlueScript behaviour that has not yet been verified;
@@ -6769,7 +6872,7 @@ function __receiveAny(from: string, tag: string, kind: string): any {
 
 `__broadcastAny(tag, kind, v)` dispatches to `broadcastInteger(tag, v)` and the
 other broadcast functions in the same way. Every kind is named: as in the
-communication API itself (spec [§13.13](#communication-api)), there is no default.
+communication API itself (spec [§13.14](#communication-api)), there is no default.
 
 ```ts
 export function __dynTransfer(tag: string, kind: string, to: string, v: __DynVal): __DynVal {
@@ -6957,7 +7060,7 @@ Each branch declares a variable at `bob`, so `alice` keeps only the
 initializer's evaluation (spec [§12.9](#let-projection)). That is a single
 expression, and a single discarded expression takes no `nothing(...)` wrapper
 (spec [§12.4](#expression-projection)); the literal projects to `absent`, which
-finalization turns into `null` (spec [§13.12](#absent-finalization)).
+finalization turns into `null` (spec [§13.13](#absent-finalization)).
 
 EPP at `alice` after cleanup:
 
@@ -7220,7 +7323,7 @@ foo(null, null);
 
 Ordinary function calls are not removed by the v1 cleanup pass, and neither are
 runtime calls: `nothing(__cast(valDyn, "alice"));` stays as it is
-(spec [§13.14.6](#what-this-cleanup-pass-must-not-remove)).
+(spec [§13.15.6](#what-this-cleanup-pass-must-not-remove)).
 
 ***
 
@@ -7236,7 +7339,7 @@ After cleanup:
 nothing(get3Mcu(), null);
 ```
 
-Unchanged — one argument is a call, so the rule of [§13.14.2](#expression-simplification) does not apply, and
+Unchanged — one argument is a call, so the rule of [§13.15.2](#expression-simplification) does not apply, and
 its `null` argument is not dropped either.
 
 ***
@@ -8808,11 +8911,11 @@ The following optimizations are not required in v1:
 * removal of empty loops;
 * side-effect analysis for ordinary function calls;
 * effect analysis that would let cleanup drop a call it can prove inert;
-* flattening nested `nothing(...)` (spec [§13.14.3](#nested-nothing-is-not-flattened)).
+* flattening nested `nothing(...)` (spec [§13.15.3](#nested-nothing-is-not-flattened)).
 
 ### 17.8 Unverified BlueScript Assumptions <a id="unverified-bluescript-assumptions"></a>
 
-This section is not normative. The dynamic-location runtime (spec [§14.4](#dyn-runtime)) depends
+This section is not normative. The runtime file (spec [§14](#runtime-support-functions)) depends
 on BlueScript behaviour that has not yet been confirmed. Each point should be
 settled by running a small `.bs` program on BlueScript, and the runtime changed
 where it does not hold.
@@ -8843,3 +8946,8 @@ where it does not hold.
    reachable.
 5. **How `__locationError` stops** (spec [§14.6](#location-errors)): whether `throw` is available,
    and what the platform's halt function is if it is not.
+6. **Passing a static value to an `any` parameter.** `__inject` (spec [§14.9](#inject-and-cast)) and
+   the `__nothing…` helpers (spec [§14.1](#nothing)) take `any` parameters, and the generated
+   code passes them values of every static type — `null`, strings and arrays
+   included. If a type is not converted to `any` implicitly at a call, the
+   compiler would emit BlueScript's `as any` on that argument.

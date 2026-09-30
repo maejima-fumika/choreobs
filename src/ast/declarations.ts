@@ -17,8 +17,8 @@ export interface FunctionDeclaration extends AstNode {
    * at every endpoint, so no single location names it and this is absent
    * (spec §function-kinds).
    *
-   * `every` can be written here syntactically, but the checker rejects it
-   * (spec §every-on-a-function-declaration).
+   * `every` and `dyn` can be written here syntactically, but the checker
+   * rejects them (spec §every-on-a-function-declaration, §dyn-on-a-function-declaration).
    */
   readonly at?: Location;
   /**

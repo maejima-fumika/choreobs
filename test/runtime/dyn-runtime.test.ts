@@ -1,57 +1,120 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { compile, expectSuccess, assertNoChoreoResidue } from "../support/compile.js";
-import { dynRuntimeSource } from "../../src/runtime/source.js";
-import { DYN_RUNTIME_EXPORTS } from "../../src/runtime/dyn.js";
+import { runtimeSource } from "../../src/runtime/source.js";
+import { CORE_RUNTIME_EXPORTS } from "../../src/runtime/core.js";
+import {
+  DYN_RUNTIME,
+  DYN_RUNTIME_EXPORTS,
+  type ArgumentShape,
+  type ResultShape,
+} from "../../src/runtime/dyn.js";
+import { parseSpec } from "../../scripts/spec/parse.js";
 import { aliceBobCarol } from "../support/config.js";
 
-/** The runtime file and its import (spec §runtime-files, §runtime-import, §dyn-runtime–§dyn-array-operations). */
-describe("dynamic-location runtime (spec §runtime-files)", () => {
+/** `source` declares `name` as an export of its own. */
+function exports(source: string, name: string): boolean {
+  return new RegExp(`^export (?:class|function|const) ${name}\\b`, "m").test(source);
+}
+
+/** The runtime file and its import (spec §runtime-files, §runtime-import, §runtime-support-functions). */
+describe("runtime file (spec §runtime-files)", () => {
   it("exports every name a generated program may import", () => {
-    const source = dynRuntimeSource("alice");
-    for (const name of DYN_RUNTIME_EXPORTS) {
-      assert.match(
-        source,
-        new RegExp(`^export (?:class|function|const) ${name}\\b`, "m"),
-        `${name} is not exported`,
-      );
+    const source = runtimeSource("alice", true);
+    for (const name of [...CORE_RUNTIME_EXPORTS, ...DYN_RUNTIME_EXPORTS]) {
+      assert.ok(exports(source, name), `${name} is not exported`);
     }
   });
 
-  it("differs between endpoints in __here alone", () => {
+  it("holds the core helpers alone without dyn", () => {
+    const source = runtimeSource("alice", false);
+    for (const name of CORE_RUNTIME_EXPORTS) {
+      assert.ok(exports(source, name), `${name} is not exported`);
+    }
+    for (const name of DYN_RUNTIME_EXPORTS) {
+      assert.ok(!exports(source, name), `${name} is exported`);
+    }
+    assert.doesNotMatch(source, /__here/);
+  });
+
+  it("opens with the core helpers, the dynamic-location runtime after them (spec §runtime-files)", () => {
+    const core = runtimeSource("alice", false);
+    // The header comment is the one line that tells the two apart.
+    const body = (text: string) => text.split("\n").filter((line) => !line.startsWith("//")).join("\n");
+    assert.ok(body(runtimeSource("alice", true)).startsWith(body(core)));
+  });
+
+  it("declares the nothing helpers with one any parameter per argument (spec §nothing)", () => {
+    const source = runtimeSource("alice", false);
+    for (let arity = 1; arity <= 5; arity++) {
+      const params = Array.from({ length: arity }, (_, i) => `a${i + 1}: any`).join(", ");
+      assert.ok(
+        source.includes(`export function __nothing${arity}(${params}): null {\n  return null;\n}\n`),
+        `__nothing${arity}`,
+      );
+    }
+    assert.ok(!exports(source, "__nothing0"));
+    assert.ok(!exports(source, "__nothing6"));
+  });
+
+  it("declares each runtime function as lowering types its calls (spec §runtime-functions)", () => {
+    // What `verifyLowered` checks the calls against, as BlueScript sees it.
+    const parameter: Record<ArgumentShape, string> = {
+      dyn: "__DynVal",
+      concrete: "any",
+      constant: "string",
+      payload: "any",
+    };
+    const result: Record<ResultShape, string> = { dyn: "__DynVal", named: "any", void: "void" };
+    const source = runtimeSource("alice", true);
+    for (const [name, signature] of Object.entries(DYN_RUNTIME)) {
+      const declared = new RegExp(`^export function ${name}\\(([^)]*)\\): (\\S+) \\{$`, "m").exec(source);
+      assert.ok(declared, `${name} is not declared as an exported function`);
+      const params = declared[1] === "" ? [] : declared[1]!.split(", ").map((p) => p.split(": ")[1]);
+      assert.deepEqual(params, signature.args.map((shape) => parameter[shape]), `${name} parameters`);
+      assert.equal(declared[2], result[signature.result], `${name} result`);
+    }
+  });
+
+  it("differs between endpoints in __here and the header comment alone", () => {
     const strip = (text: string) =>
       text
         .split("\n")
         .filter((line) => !line.startsWith("//") && !line.startsWith("export const __here"))
         .join("\n");
-    assert.equal(strip(dynRuntimeSource("alice")), strip(dynRuntimeSource("bob")));
-    assert.match(dynRuntimeSource("bob"), /^export const __here: string = "bob";$/m);
+    for (const dyn of [false, true]) {
+      assert.equal(strip(runtimeSource("alice", dyn)), strip(runtimeSource("bob", dyn)));
+    }
+    assert.match(runtimeSource("bob", true), /^export const __here: string = "bob";$/m);
   });
 
-  it("is the code spec.md lists, block for block (spec §dyn-runtime)", () => {
-    // Every `ts` block of the runtime sections must appear, as written, in the
-    // generated file: the specification shows the runtime, not a sketch of it.
-    const spec = readFileSync(join(import.meta.dirname, "..", "..", "spec.md"), "utf8");
-    const start = spec.indexOf('<a id="dyn-runtime"></a>');
-    const end = spec.indexOf("## 15. Examples");
-    assert.ok(start > 0 && end > start, "runtime sections not found");
-    const blocks = [...spec.slice(start, end).matchAll(/```ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
-    assert.ok(blocks.length >= 10, `expected the runtime's code blocks, found ${blocks.length}`);
-    const source = dynRuntimeSource("alice");
+  it("is the code spec.md lists, block for block (spec §runtime-support-functions)", () => {
+    // Every `ts` block of the runtime chapter must appear, as written, in the
+    // generated file, and in the same order: the specification shows the
+    // runtime, not a sketch of it.
+    const spec = parseSpec();
+    const start = spec.bySlug.get("runtime-support-functions");
+    assert.ok(start, "runtime chapter not found");
+    const end = spec.headings.find((h) => h.line > start.line && h.level <= start.level);
+    const sections = spec.lines.slice(start.line - 1, end === undefined ? undefined : end.line - 1);
+    const blocks = [...sections.join("\n").matchAll(/```ts\n([\s\S]*?)```/g)].map((m) => m[1]!);
+    assert.ok(blocks.length >= 12, `expected the runtime's code blocks, found ${blocks.length}`);
+    const source = runtimeSource("alice", true);
+    let from = 0;
     for (const block of blocks) {
-      assert.ok(source.includes(block.trimEnd()), `not in the generated runtime:\n${block}`);
+      const at = source.indexOf(block.trimEnd(), from);
+      assert.ok(at >= 0, `not in the generated runtime, or out of order:\n${block}`);
+      from = at + block.trimEnd().length;
     }
   });
 
   it("carries nothing choreographic", () => {
-    assertNoChoreoResidue(dynRuntimeSource("alice"));
+    assertNoChoreoResidue(runtimeSource("alice", true));
   });
 
   it("halts on a location error instead of returning (spec §location-errors)", () => {
     assert.match(
-      dynRuntimeSource("alice"),
+      runtimeSource("alice", true),
       /export function __locationError\(\): void \{\n  while \(true\) \{\n  \}\n\}/,
     );
   });
@@ -67,12 +130,12 @@ describe("dynamic-location runtime (spec §runtime-files)", () => {
         ["carol", "dir/__runtime_carol.bs"],
       ],
     );
-    assert.equal(result.runtimeOutputs[1]!.source, dynRuntimeSource("bob"));
+    assert.equal(result.runtimeOutputs[1]!.source, runtimeSource("bob", true));
     assert.equal(result.outputs.length, 3);
     assert.match(result.outputs[2]!.source, /^import \{ __DynVal, __dynUnbound \} from "\.\/__runtime_carol";\n\n/);
   });
 
-  it("is not written, and nothing is imported, for a program without dyn (spec §runtime-files)", () => {
+  it("is not written, and nothing is imported, for a program that calls no runtime helper (spec §runtime-files)", () => {
     const result = compile(`let x: integer@alice = 1@alice;
 let y: integer@bob <- x;`);
     expectSuccess(result);
@@ -80,6 +143,34 @@ let y: integer@bob <- x;`);
     for (const out of result.outputs) {
       assert.doesNotMatch(out.source, /import/);
     }
+  });
+
+  it("is written with the core helpers alone for a program without dyn that calls one (spec §runtime-files)", () => {
+    const result = compile(`let a: boolean@alice = true@alice;
+let b: boolean@alice = a && a;`);
+    expectSuccess(result);
+    assert.deepEqual(
+      result.runtimeOutputs.map((o) => [o.endpoint, o.source]),
+      [
+        ["alice", runtimeSource("alice", false)],
+        ["bob", runtimeSource("bob", false)],
+      ],
+    );
+    assert.match(result.outputs[0]!.source, /^import \{ __and \} from "\.\/__runtime_alice";\n\n/);
+    // `bob` holds none of it, so it imports nothing, and is given the file all the same.
+    assert.doesNotMatch(result.outputs[1]!.source, /import/);
+  });
+
+  it("lists the core helpers before the dynamic-location runtime's names (spec §runtime-import)", () => {
+    const result = compile(`let a: boolean@alice = true@alice;
+let b: boolean@alice = a || a && a;
+let d: boolean@dyn = true@dyn;`);
+    expectSuccess(result);
+    assert.match(
+      result.outputs[0]!.source,
+      /^import \{ __and, __or, __DynVal, __dynUnbound \} from "\.\/__runtime_alice";\n\n/,
+    );
+    assert.equal(result.runtimeOutputs[0]!.source, runtimeSource("alice", true));
   });
 
   it("imports what a function signature uses even when nothing calls the runtime", () => {

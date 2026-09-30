@@ -1,5 +1,6 @@
 import type { CommKind } from "../ir/projected.js";
 import type { CommConsistencyResult } from "./consistency.js";
+import { DYN_TRANSFER } from "../runtime/dyn.js";
 import { checkCommunicationConsistency } from "./consistency.js";
 import type { ProjectedProgram, ProjectedStatement } from "../ir/projected.js";
 
@@ -33,7 +34,7 @@ const BROADCAST_RE = new RegExp(
   "g",
 );
 /** `__dynTransfer("tag", "kind", "to", …)` (spec §dynamic-transfer). */
-const DYN_TRANSFER_RE = /__dynTransfer\("([^"]+)", "([^"]+)", "([^"]+)",/g;
+const DYN_TRANSFER_RE = new RegExp(`${DYN_TRANSFER}\\("([^"]+)", "([^"]+)", "([^"]+)",`, "g");
 
 /**
  * Checks generated BlueScript for send/receive/broadcast pairing by
@@ -107,7 +108,7 @@ function emittedToProjectedProgram(
       kind: "ExpressionStatement",
       expression: {
         kind: "CallExpression",
-        callee: "__dynTransfer",
+        callee: DYN_TRANSFER,
         args: [
           constant(match[1]!),
           constant(match[2]!),

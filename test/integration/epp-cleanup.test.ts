@@ -182,7 +182,7 @@ let x: integer@alice = 1@alice;
       // negate — but its operand is still evaluated (spec §binary-and-unary-operation-projection).
       assert.match(
         bobBody("let y: integer@alice = -relay(x);"),
-        /^nothing\(relay\(null\)\);$/m,
+        /^__nothing1\(relay\(null\)\);$/m,
       );
     });
 
@@ -195,7 +195,7 @@ let x: integer@alice = 1@alice;
       // performed (spec §binary-and-unary-operation-projection). The literal operand leaves a `null` behind.
       assert.match(
         bobBody("let y: integer@alice = relay(x) + 1@alice;"),
-        /^nothing\(relay\(null\), null\);$/m,
+        /^__nothing2\(relay\(null\), null\);$/m,
       );
     });
 
@@ -341,7 +341,7 @@ function sends2(): integer@alice {
       // arguments left to right, so the call order is the source's.
       assert.match(
         bobOf("let v: integer@alice = sends() + sends() * sends2();"),
-        /^nothing\(sends\(\), nothing\(sends\(\), sends2\(\)\)\);$/m,
+        /^__nothing2\(sends\(\), __nothing2\(sends\(\), sends2\(\)\)\);$/m,
       );
     });
 
@@ -353,7 +353,7 @@ function add@alice(a: integer@alice, b: integer@alice): integer@alice {
 }
 add(sends(), sends2());
 `),
-        /^nothing\(sends\(\), sends2\(\)\);$/m,
+        /^__nothing2\(sends\(\), sends2\(\)\);$/m,
       );
     });
 
@@ -391,7 +391,7 @@ v = sends();
 let xs: integer[]@alice = [0, 0]@alice;
 xs[sends()] = sends2();
 `);
-      assert.match(bob, /^nothing\(sends\(\), sends2\(\)\);$/m);
+      assert.match(bob, /^__nothing2\(sends\(\), sends2\(\)\);$/m);
     });
 
     it("keeps `.length` and index operands of an absent array", () => {
@@ -400,14 +400,14 @@ xs[sends()] = sends2();
 let xs: integer[]@alice = [0, 0]@alice;
 let v: integer@alice = xs[sends()];
 `),
-        /^nothing\(null, sends\(\)\);$/m,
+        /^__nothing2\(null, sends\(\)\);$/m,
       );
     });
 
     it("keeps a call in an array literal element", () => {
       assert.match(
         bobOf("let xs: integer[]@alice = [sends(), sends2()]@alice;"),
-        /^nothing\(sends\(\), sends2\(\)\);$/m,
+        /^__nothing2\(sends\(\), sends2\(\)\);$/m,
       );
     });
 
@@ -417,7 +417,7 @@ let v: integer@alice = xs[sends()];
 let xs: integer[]@alice = [0]@alice;
 xs.push(sends());
 `),
-        /^nothing\(sends\(\)\);$/m,
+        /^__nothing1\(sends\(\)\);$/m,
       );
     });
   });
@@ -507,7 +507,7 @@ let d: boolean@alice = c && ping();
 `);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /^let d: boolean = __and\(c, ping\(\)\);$/m);
-      assert.match(bs(result, "bob"), /^nothing\(null, ping\(\)\);$/m);
+      assert.match(bs(result, "bob"), /^__nothing2\(null, ping\(\)\);$/m);
     });
 
     it("keeps a choreography call in the left operand at every endpoint", () => {
@@ -517,7 +517,7 @@ let d: boolean@alice = ping() || c;
 `);
       expectSuccess(result);
       assert.match(bs(result, "alice"), /^let d: boolean = __or\(ping\(\), c\);$/m);
-      assert.match(bs(result, "bob"), /^nothing\(ping\(\), null\);$/m);
+      assert.match(bs(result, "bob"), /^__nothing2\(ping\(\), null\);$/m);
     });
 
     it("drops the operator entirely where no operand calls anything", () => {
