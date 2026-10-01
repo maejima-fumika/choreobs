@@ -13,13 +13,9 @@ export function broadcastFunction(comm: CommKind): string {
 }
 
 function capitalize(comm: CommKind): string {
-  if (comm.endsWith("Array")) {
-    const head = comm.slice(0, -5);
-    return `${head.charAt(0).toUpperCase()}${head.slice(1)}Array`;
-  }
   return comm.charAt(0).toUpperCase() + comm.slice(1);
 }
 
-export function cloneFunction(comm: CommKind): string {
-  return `clone${capitalize(comm)}`;
+export function copyFunction(comm: CommKind): string {
+  return `copy${capitalize(comm)}`;
 }

@@ -1,6 +1,8 @@
 import type { CommKind } from "../ir/projected.js";
 import type { CommConsistencyResult } from "./consistency.js";
 import { DYN_TRANSFER } from "../runtime/dyn.js";
+import { ALL_COMM_KINDS } from "../runtime/names.js";
+import { broadcastFunction, receiveFunction, sendFunction } from "../emit/comm.js";
 import { checkCommunicationConsistency } from "./consistency.js";
 import type { ProjectedProgram, ProjectedStatement } from "../ir/projected.js";
 
@@ -9,32 +11,46 @@ export interface EmittedEndpointOutput {
   readonly source: string;
 }
 
-const COMM_TYPES = [
-  "Integer",
-  "Float",
-  "Boolean",
-  "String",
-  "Null",
-  "IntegerArray",
-  "FloatArray",
-  "BooleanArray",
-] as const;
-type CommSuffix = (typeof COMM_TYPES)[number];
+/**
+ * The kind each function of one role of the communication API carries, by the
+ * function's name (spec §communication-api). Built from the emitter's own name
+ * functions, so that it cannot fall behind the kinds.
+ */
+function byName(name: (comm: CommKind) => string): ReadonlyMap<string, CommKind> {
+  return new Map(ALL_COMM_KINDS.map((comm) => [name(comm), comm]));
+}
 
-const SEND_RE = new RegExp(
-  `send(${COMM_TYPES.join("|")})\\("([^"]+)", "([^"]+)",`,
-  "g",
-);
-const RECEIVE_RE = new RegExp(
-  `receive(${COMM_TYPES.join("|")})\\("([^"]+)", "([^"]+)"\\)`,
-  "g",
-);
-const BROADCAST_RE = new RegExp(
-  `broadcast(${COMM_TYPES.join("|")})\\("([^"]+)",`,
-  "g",
-);
+const SEND = byName(sendFunction);
+const RECEIVE = byName(receiveFunction);
+const BROADCAST = byName(broadcastFunction);
+
+/** A group matching any one of the names in `names`. */
+function anyOf(names: ReadonlyMap<string, CommKind>): string {
+  return `(${[...names.keys()].join("|")})`;
+}
+
+/** The kind of the function `name`, one of those `anyOf(names)` matched. */
+function kindOf(names: ReadonlyMap<string, CommKind>, name: string): CommKind {
+  const comm = names.get(name);
+  if (comm === undefined) {
+    throw new Error(`internal error: '${name}' is not a communication API function`);
+  }
+  return comm;
+}
+
+const SEND_RE = new RegExp(`${anyOf(SEND)}\\("([^"]+)", "([^"]+)",`, "g");
+const RECEIVE_RE = new RegExp(`${anyOf(RECEIVE)}\\("([^"]+)", "([^"]+)"\\)`, "g");
+const BROADCAST_RE = new RegExp(`${anyOf(BROADCAST)}\\("([^"]+)",`, "g");
 /** `__dynTransfer("tag", "kind", "to", …)` (spec §dynamic-transfer). */
 const DYN_TRANSFER_RE = new RegExp(`${DYN_TRANSFER}\\("([^"]+)", "([^"]+)", "([^"]+)",`, "g");
+
+/**
+ * The type of a `let` rebuilt from emitted text. The consistency check reads a
+ * binding's initializer, never its type, and the emitted text no longer says
+ * an array's element type (spec §type-mapping), so every rebuilt binding gets
+ * this placeholder.
+ */
+const RECONSTRUCTED_TYPE = { kind: "AbsentType" } as const;
 
 /**
  * Checks generated BlueScript for send/receive/broadcast pairing by
@@ -55,7 +71,7 @@ function emittedToProjectedProgram(
   const source = output.source;
 
   for (const match of source.matchAll(SEND_RE)) {
-    const comm = suffixToComm(match[1] as CommSuffix);
+    const comm = kindOf(SEND, match[1]!);
     body.push({
       kind: "SendStatement",
       comm,
@@ -67,7 +83,7 @@ function emittedToProjectedProgram(
   }
 
   for (const match of source.matchAll(BROADCAST_RE)) {
-    const comm = suffixToComm(match[1] as CommSuffix);
+    const comm = kindOf(BROADCAST, match[1]!);
     body.push({
       kind: "BroadcastStatement",
       comm,
@@ -78,18 +94,18 @@ function emittedToProjectedProgram(
     body.push({
       kind: "LetStatement",
       name: "_broadcast_local",
-      type: { kind: "PresentType", base: commToProjectedBase(comm) },
+      type: RECONSTRUCTED_TYPE,
       initializer: { kind: "IdentifierExpression", name: "_", span },
       span,
     });
   }
 
   for (const match of source.matchAll(RECEIVE_RE)) {
-    const comm = suffixToComm(match[1] as CommSuffix);
+    const comm = kindOf(RECEIVE, match[1]!);
     body.push({
       kind: "LetStatement",
       name: `_recv_${match[3]}`,
-      type: { kind: "PresentType", base: commToProjectedBase(comm) },
+      type: RECONSTRUCTED_TYPE,
       initializer: {
         kind: "ReceiveExpression",
         comm,
@@ -128,44 +144,4 @@ function emittedToProjectedProgram(
     body,
     span,
   };
-}
-
-function commToProjectedBase(
-  comm: CommKind,
-): import("../ir/projected.js").ProjectedBaseType {
-  switch (comm) {
-    case "integer":
-    case "float":
-    case "boolean":
-    case "string":
-    case "null":
-      return comm;
-    case "integerArray":
-      return "integer[]";
-    case "floatArray":
-      return "float[]";
-    case "booleanArray":
-      return "boolean[]";
-  }
-}
-
-function suffixToComm(suffix: CommSuffix): CommKind {
-  switch (suffix) {
-    case "Integer":
-      return "integer";
-    case "Float":
-      return "float";
-    case "Boolean":
-      return "boolean";
-    case "String":
-      return "string";
-    case "Null":
-      return "null";
-    case "IntegerArray":
-      return "integerArray";
-    case "FloatArray":
-      return "floatArray";
-    case "BooleanArray":
-      return "booleanArray";
-  }
 }

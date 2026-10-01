@@ -30,6 +30,7 @@ import type {
   IndexExpression,
   LengthExpression,
   PushExpression,
+  PrintExpression,
   ParenthesizedExpression,
 } from "../ast/expressions.js";
 import type { ExecutionContext } from "../ast/context.js";
@@ -51,6 +52,7 @@ import type {
   TypedAssignmentTarget,
   TypedTransferStatement,
   TypedPushExpression,
+  TypedPrintExpression,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
@@ -148,9 +150,6 @@ function isEmptyArrayLiteral(expr: TypedExpression["expr"]): boolean {
  * type from an expected array type (spec §array-literal-typing), and anything
  * else is left as it is. The literal keeps its own location, which is checked
  * like any other.
- *
- * The element type is what the literal will hold: a `dyn` one is built by
- * `__dynArrayNew(kind)`, whose kind comes from here (spec §dyn-lowering).
  */
 function withExpectedElementType(
   value: TypedExpression,
@@ -1127,6 +1126,8 @@ class TypeChecker {
         return this.checkLength(expr, ctx);
       case "PushExpression":
         return this.checkPush(expr, ctx);
+      case "PrintExpression":
+        return this.checkPrint(expr, ctx);
       case "ParenthesizedExpression":
         return this.checkParen(expr, ctx);
     }
@@ -1471,6 +1472,32 @@ class TypeChecker {
       expr,
       choreoType: locatedType("integer", target.choreoType.location),
       target,
+    };
+  }
+
+  /**
+   * `print(e)` (spec §expressions, §print-typing).
+   *
+   * Any value may be printed, at any location; the print happens where the
+   * value is. The result is `void`, like a push's, and carries the value's
+   * location, which is never written or shown (spec §void) but tells endpoint
+   * projection which endpoints print (spec §print-projection).
+   *
+   * It is not a call, so a local context may use it (spec §call-in-a-local-context): in
+   * a local function the argument's own checks already keep it at the
+   * function's location.
+   */
+  private checkPrint(
+    expr: PrintExpression,
+    ctx: ExecutionContext,
+  ): TypedPrintExpression {
+    const value = this.checkExpression(expr.value, ctx);
+    this.rejectEmptyArrayLiteral(expr.value, expr.span);
+    this.requireValueExpression(value, expr.span);
+    return {
+      expr,
+      choreoType: locatedType("void", value.choreoType.location),
+      value,
     };
   }
 

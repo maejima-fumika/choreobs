@@ -11,6 +11,9 @@ import type {
 /**
  * ChoreoBS `void` projects to `void` at every endpoint (spec §type-projection),
  * and a `dyn` type to the runtime's `__DynVal` (spec §type-projection).
+ *
+ * The array types keep their element type here. Code generation writes all
+ * three as BlueScript's `any[]` (spec §type-mapping).
  */
 export type ProjectedBaseType =
   | BaseType
@@ -32,9 +35,10 @@ export type ProjectedType =
  * Payload kinds the communication API can carry (spec §communication-api).
  *
  * This is deliberately a closed set rather than `BaseType`: `void` has no value
- * to send (spec §void), and array element types are restricted to the three
- * supported ones (spec §array-types). Anything that is not listed here must be
- * rejected before EPP, never defaulted to some other kind.
+ * to send (spec §void). Every array travels as the one kind `array`, since an
+ * array is a BlueScript `any[]` whatever its element type (spec §type-mapping).
+ * Anything that is not listed here must be rejected before EPP, never
+ * defaulted to some other kind.
  */
 export type CommKind =
   | "integer"
@@ -42,9 +46,7 @@ export type CommKind =
   | "boolean"
   | "string"
   | "null"
-  | "integerArray"
-  | "floatArray"
-  | "booleanArray";
+  | "array";
 
 export type ProjectedExpression =
   | AbsentExpression
@@ -124,9 +126,14 @@ export interface UnaryExpression {
   readonly span: Span;
 }
 
-/** Emitted as BlueScript's own `as` (spec §numeric-conversion-code-generation). */
+/**
+ * Emitted as BlueScript's own `as` (spec §numeric-conversion-code-generation).
+ * `source` is the operand's type, which code generation spells out when it
+ * differs from `target`.
+ */
 export interface ConversionExpression {
   readonly kind: "ConversionExpression";
+  readonly source: NumericType;
   readonly target: NumericType;
   readonly operand: ProjectedExpression;
   readonly span: Span;

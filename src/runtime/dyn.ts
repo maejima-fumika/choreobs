@@ -71,9 +71,10 @@ export const DYN_RUNTIME = {
   __dynArraySet: { args: ["dyn", "dyn", "dyn"], result: "void" },
   __dynArrayPush: { args: ["dyn", "dyn"], result: "void" },
   __dynArrayLength: UNARY,
-  __dynArrayNew: { args: ["constant"], result: "dyn" },
+  __dynArrayNew: { args: [], result: "dyn" },
   __dynArrayAppend: BINARY,
   __dynTransfer: { args: ["constant", "constant", "constant", "dyn"], result: "dyn" },
+  __dynPrint: { args: ["dyn"], result: "void" },
 } as const satisfies Record<string, Signature>;
 
 export type DynRuntimeFunction = keyof typeof DYN_RUNTIME;

@@ -39,6 +39,7 @@ import type {
   CallExpression,
   IndexExpression,
   ParenthesizedExpression,
+  PrintExpression,
 } from "../ast/expressions.js";
 import type {
   LocatedLiteral,
@@ -58,6 +59,7 @@ import {
   tokenize,
   type Token,
 } from "../lexer/index.js";
+import { PRINT_FUNCTION } from "../runtime/names.js";
 import type { SpecRefs } from "../spec/ref.js";
 import { parseError, type ParseError } from "./errors.js";
 import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-utils.js";
@@ -71,6 +73,9 @@ import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-uti
  */
 const LENGTH_PROPERTY = "length";
 const PUSH_METHOD = "push";
+
+const PRINT_ARITY_MESSAGE = "'print' takes exactly one argument";
+const PRINT_ARITY_SPEC: SpecRefs = ["invalid-print-call", "expressions"];
 
 /**
  * The type keywords (spec §types). A type annotation accepts every one; `as`
@@ -832,7 +837,9 @@ class Parser {
     if (this.check(TokenKind.Identifier)) {
       const idToken = this.consumeIdentifierToken("expected expression");
       if (this.match(TokenKind.LParen)) {
-        return this.finishCall(idToken);
+        return idToken.name === PRINT_FUNCTION
+          ? this.finishPrint(idToken)
+          : this.finishCall(idToken);
       }
       const expr: IdentifierExpression = {
         kind: "IdentifierExpression",
@@ -878,6 +885,31 @@ class Parser {
       kind: "CallExpression",
       callee: calleeToken.name,
       args,
+      span: spanBetween(calleeToken, end),
+    };
+  }
+
+  /**
+   * `print(e)` (spec §expressions). `print` is reserved (spec §reserved-runtime-names), so it
+   * never names a function and its `(` always opens this form. It takes exactly
+   * one argument, as `.push` does; any other count is a syntax error
+   * (spec §invalid-print-call).
+   */
+  private finishPrint(calleeToken: { name: string; span: Token["span"] } & Token): PrintExpression {
+    if (this.check(TokenKind.RParen)) {
+      throw this.fail(PRINT_ARITY_MESSAGE, PRINT_ARITY_SPEC);
+    }
+    const value = this.parseExpression();
+    if (this.check(TokenKind.Comma)) {
+      throw this.fail(PRINT_ARITY_MESSAGE, PRINT_ARITY_SPEC);
+    }
+    const end = this.consume(
+      TokenKind.RParen,
+      "expected ')' after the argument of 'print'",
+    );
+    return {
+      kind: "PrintExpression",
+      value,
       span: spanBetween(calleeToken, end),
     };
   }

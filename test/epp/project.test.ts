@@ -249,7 +249,7 @@ let y: integer@alice <- x;
     );
   });
 
-  it("projects an array local copy with clone at destination (spec §local-copy)", () => {
+  it("projects an array local copy with a copy at destination (spec §local-copy)", () => {
     const source = `
 let xs: float[]@every = [1.1, 2.2]@every;
 let ys: float[]@alice <- xs;
@@ -262,7 +262,7 @@ let ys: float[]@alice <- xs;
     if (ysLet?.kind === "LetStatement") {
       assert.equal(ysLet.initializer.kind, "CallExpression");
       if (ysLet.initializer.kind === "CallExpression") {
-        assert.equal(ysLet.initializer.callee, "cloneFloatArray");
+        assert.equal(ysLet.initializer.callee, "copyArray");
         assert.equal(ysLet.initializer.args[0]?.kind, "IdentifierExpression");
       }
     }

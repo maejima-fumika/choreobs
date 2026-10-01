@@ -184,12 +184,20 @@ class BlueScriptEmitter {
           ? `!${this.emitExpr(expr.operand)}`
           : `(-${this.emitExpr(expr.operand)})`;
       // BlueScript's own `as`, parenthesized so that it survives any enclosing
-      // operator (spec §numeric-conversion-code-generation).
-      case "ConversionExpression":
-        return `(${this.emitExpr(expr.operand)} as ${expr.target})`;
+      // operator. A conversion between two types names the operand's type
+      // first: an array element is an `any`, and `as integer` rejects an `any`
+      // that holds a float (spec §numeric-conversion-code-generation).
+      case "ConversionExpression": {
+        const operand = this.emitExpr(expr.operand);
+        return expr.source === expr.target
+          ? `(${operand} as ${expr.target})`
+          : `((${operand} as ${expr.source}) as ${expr.target})`;
+      }
       case "CallExpression": {
+        // BlueScript's own `new Array<T>([...])`, which builds an `any[]` from
+        // the elements (spec §array-operation-code-generation).
         if (expr.callee === ARRAY_SENTINEL) {
-          return `[${expr.args.map((a) => this.emitExpr(a)).join(", ")}]`;
+          return `new Array<any>([${expr.args.map((a) => this.emitExpr(a)).join(", ")}])`;
         }
         if (expr.callee === PUSH_SENTINEL) {
           const xs = expr.args[0] ? this.emitExpr(expr.args[0]) : "null";

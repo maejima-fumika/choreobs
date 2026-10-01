@@ -54,7 +54,7 @@ let i1: integer@dyn = iDyn as integer;
         runtime: ["__DynVal", "__dynUnbound", "__inject", "__cast", "__dynIntegerToFloat"],
         alice: `let valAlice: integer = 1;
 let iDyn: __DynVal = __dynUnbound(2);
-let f1: __DynVal = __inject((valAlice as float), "alice");
+let f1: __DynVal = __inject(((valAlice as integer) as float), "alice");
 let f2: float = __cast(__dynIntegerToFloat(iDyn), "alice");
 let f3: __DynVal = __dynIntegerToFloat(iDyn);
 let f4: __DynVal = __dynIntegerToFloat(__dynUnbound(3));
@@ -170,18 +170,18 @@ let xs: integer[]@alice = [d]@alice;
         alice: `let a: integer = 1;
 let b: integer = 2;
 let d: __DynVal = __dynUnbound(3);
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-let e: __DynVal = __dynArrayNew("integerArray");
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(a, "alice")), __inject(b, "alice"));
-let xs: integer[] = [__cast(d, "alice")];`,
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+let e: __DynVal = __dynArrayNew();
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __inject(a, "alice")), __inject(b, "alice"));
+let xs: any[] = new Array<any>([__cast(d, "alice")]);`,
         bob: `let d: __DynVal = __dynUnbound(3);
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-let e: __DynVal = __dynArrayNew("integerArray");
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(null, "alice")), __inject(null, "alice"));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+let e: __DynVal = __dynArrayNew();
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __inject(null, "alice")), __inject(null, "alice"));
 __nothing1(__cast(d, "alice"));`,
       },
     );
@@ -196,11 +196,11 @@ let ys: boolean[]@dyn <- [];
 `,
       {
         runtime: ["__DynVal", "__cast", "__dynArrayNew", "__dynTransfer"],
-        alice: `let fs: float[] = [1.0];
-fs = __cast(__dynArrayNew("floatArray"), "alice");
-let ys: __DynVal = __dynTransfer("__top_0", "booleanArray", "dyn", __dynArrayNew("booleanArray"));`,
-        bob: `__cast(__dynArrayNew("floatArray"), "alice");
-let ys: __DynVal = __dynTransfer("__top_0", "booleanArray", "dyn", __dynArrayNew("booleanArray"));`,
+        alice: `let fs: any[] = new Array<any>([1.0]);
+fs = __cast(__dynArrayNew(), "alice");
+let ys: __DynVal = __dynTransfer("__top_0", "array", "dyn", __dynArrayNew());`,
+        bob: `__cast(__dynArrayNew(), "alice");
+let ys: __DynVal = __dynTransfer("__top_0", "array", "dyn", __dynArrayNew());`,
       },
     );
   });
@@ -359,15 +359,15 @@ arrAlice[iAlice];
 `,
       {
         runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynArrayGet", "__dynArrayNew", "__dynArrayAppend"],
-        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
-let arrAlice: integer[] = [1, 3, 4];
+        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+let arrAlice: any[] = new Array<any>([1, 3, 4]);
 let iDyn: __DynVal = __dynUnbound(0);
 let iAlice: integer = 0;
 __dynArrayGet(arrDyn, iDyn);
 __dynArrayGet(__inject(arrAlice, "alice"), iDyn);
 __dynArrayGet(arrDyn, __inject(iAlice, "alice"));
 arrAlice[iAlice];`,
-        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let iDyn: __DynVal = __dynUnbound(0);
 __dynArrayGet(arrDyn, iDyn);
 __dynArrayGet(__inject(null, "alice"), iDyn);
@@ -396,8 +396,8 @@ arrAlice[iAlice] = valAlice;
 `,
       {
         runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynArraySet", "__dynArrayNew", "__dynArrayAppend"],
-        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
-let arrAlice: integer[] = [1, 3, 4];
+        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+let arrAlice: any[] = new Array<any>([1, 3, 4]);
 let iDyn: __DynVal = __dynUnbound(0);
 let iAlice: integer = 0;
 let valDyn: __DynVal = __dynUnbound(5);
@@ -410,7 +410,7 @@ __dynArraySet(arrDyn, __inject(iAlice, "alice"), valDyn);
 __dynArraySet(arrDyn, __inject(iAlice, "alice"), __inject(valAlice, "alice"));
 __dynArraySet(__inject(arrAlice, "alice"), __inject(iAlice, "alice"), valDyn);
 arrAlice[iAlice] = valAlice;`,
-        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let iDyn: __DynVal = __dynUnbound(0);
 let valDyn: __DynVal = __dynUnbound(5);
 __dynArraySet(arrDyn, iDyn, valDyn);
@@ -440,8 +440,8 @@ arrAlice.length;
 `,
       {
         runtime: ["__DynVal", "__dynUnbound", "__inject", "__dynArrayPush", "__dynArrayLength", "__dynArrayNew", "__dynArrayAppend"],
-        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
-let arrAlice: integer[] = [1, 3, 4];
+        alice: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+let arrAlice: any[] = new Array<any>([1, 3, 4]);
 let valDyn: __DynVal = __dynUnbound(5);
 let valAlice: integer = 5;
 __dynArrayPush(arrDyn, valDyn);
@@ -450,12 +450,38 @@ __dynArrayPush(__inject(arrAlice, "alice"), valDyn);
 arrAlice.push(valAlice);
 __dynArrayLength(arrDyn);
 arrAlice.length;`,
-        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
+        bob: `let arrDyn: __DynVal = __dynArrayAppend(__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(3)), __dynUnbound(4));
 let valDyn: __DynVal = __dynUnbound(5);
 __dynArrayPush(arrDyn, valDyn);
 __dynArrayPush(arrDyn, __inject(null, "alice"));
 __dynArrayPush(__inject(null, "alice"), valDyn);
 __dynArrayLength(arrDyn);`,
+      },
+    );
+  });
+
+  it("§print-projection", () => {
+    expectEndpoints(
+      `
+let x: integer@alice = 10@alice;
+print(x);
+let s: string@every = "ready"@every;
+print(s);
+let d: integer@dyn = 3@dyn;
+print(d);
+`,
+      {
+        runtime: ["__DynVal", "__dynUnbound", "__dynPrint"],
+        alice: `let x: integer = 10;
+print(x);
+let s: string = "ready";
+print(s);
+let d: __DynVal = __dynUnbound(3);
+__dynPrint(d);`,
+        bob: `let s: string = "ready";
+print(s);
+let d: __DynVal = __dynUnbound(3);
+__dynPrint(d);`,
       },
     );
   });

@@ -3,12 +3,12 @@ import type { NumericType } from "../ast/syntax-types.js";
 import type { CommKind } from "../ir/projected.js";
 import {
   broadcastFunction,
-  cloneFunction,
+  copyFunction,
   receiveFunction,
   sendFunction,
 } from "../emit/comm.js";
-import { arrayCommKindElement } from "../comm/kind.js";
-import { ALL_COMM_KINDS, ARRAY_COMM_KINDS } from "./names.js";
+import { ARRAY_COMM_KIND } from "../comm/kind.js";
+import { ALL_COMM_KINDS } from "./names.js";
 import { LOGICAL_HELPERS, NOTHING_HELPERS } from "./core.js";
 import {
   DYN_BINARY,
@@ -24,11 +24,11 @@ import {
  * core helpers, which every program may call (spec §nothing, §and-or-helpers),
  * and then, when `dyn` is set, the dynamic-location runtime — the
  * representation of dynamically located values and the operations on them
- * (spec §dyn-runtime–§dyn-array-operations).
+ * (spec §dyn-runtime–§dyn-print).
  *
  * Every endpoint gets the same text except for the header comment that names
  * it and, in the dynamic-location runtime, `__here`. The communication API and
- * the clone helpers are not here; they are supplied from outside, as for every
+ * the copy helper are not here; they are supplied from outside, as for every
  * program (spec §runtime-support-functions).
  *
  * Unverified BlueScript behaviour this relies on is listed in
@@ -60,8 +60,9 @@ function dynRuntime(endpoint: string): string[] {
     dispatch(),
     TRANSFER,
     ARRAY_OPERATIONS,
-    arrayNew(),
+    ARRAY_NEW,
     ARRAY_APPEND,
+    PRINT,
   ];
 }
 
@@ -285,8 +286,9 @@ function unaryFunction(operator: UnaryOperator, name: DynRuntimeFunction): strin
 
 /**
  * A conversion to `target` from the other numeric type. The payload is brought
- * back to its static type before BlueScript's own `as` converts it
- * (spec §unverified-bluescript-assumptions).
+ * back to its static type before BlueScript's own `as` converts it, as in a
+ * static conversion: `as integer` rejects an `any` that holds a float
+ * (spec §numeric-conversion-code-generation).
  */
 function conversionFunction(target: NumericType, name: DynRuntimeFunction): string {
   const source: NumericType = target === "float" ? "integer" : "float";
@@ -304,7 +306,7 @@ function conversionFunction(target: NumericType, name: DynRuntimeFunction): stri
 // --- §dyn-transfer-runtime ---------------------------------------------------
 
 const COPY_PAYLOAD = `function __copyPayload(kind: string, v: any): any {
-${kindBranches(ARRAY_COMM_KINDS, (kind) => `    return ${cloneFunction(kind)}(v);`, "    return v;")}
+${kindBranches([ARRAY_COMM_KIND], (kind) => `    return ${copyFunction(kind)}(v);`, "    return v;")}
 }
 `;
 
@@ -404,22 +406,32 @@ export function __dynArrayLength(arr: __DynVal): __DynVal {
 `;
 
 /**
- * An empty array of the kind's element type, so that its run-time type never
- * depends on how `any` treats an array literal (spec §dyn-lowering). The checker
- * admits only the array kinds, so the last one needs no test of its own.
+ * An empty array. It is an `any[]` like every array at run time
+ * (spec §array-operation-code-generation), whatever its element type, so it
+ * needs no kind.
  */
-function arrayNew(): string {
-  const empty = (kind: CommKind): string =>
-    `    const a: ${arrayCommKindElement(kind)}[] = [];\n    return __dynUnbound(a);`;
-  const last = ARRAY_COMM_KINDS[ARRAY_COMM_KINDS.length - 1]!;
-  return `export function __dynArrayNew(kind: string): __DynVal {
-${kindBranches(ARRAY_COMM_KINDS.slice(0, -1), empty, empty(last))}
+const ARRAY_NEW = `export function __dynArrayNew(): __DynVal {
+  return __dynUnbound(new Array<any>([]));
 }
 `;
-}
 
 const ARRAY_APPEND = `export function __dynArrayAppend(arr: __DynVal, v: __DynVal): __DynVal {
   __dynArrayPush(arr, v);
   return arr;
+}
+`;
+
+// --- §dyn-print --------------------------------------------------------------
+
+/**
+ * `print(v)` with `v` at `dyn` (spec §print-typing). It prints where the payload is
+ * held, and only looks the location up: printing a value never binds it.
+ * `print` is BlueScript's own, supplied from outside (spec §runtime-support-functions).
+ */
+const PRINT = `export function __dynPrint(v: __DynVal): void {
+  const loc = __find(v.loc);
+  if (__holdsPayload(loc)) {
+    print(v.payload);
+  }
 }
 `;

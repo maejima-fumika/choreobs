@@ -28,6 +28,8 @@ export function childExpressions(expr: Expression): readonly Expression[] {
       return [expr.target];
     case "PushExpression":
       return [expr.target, expr.value];
+    case "PrintExpression":
+      return [expr.value];
     case "ParenthesizedExpression":
       return [expr.expression];
     default:

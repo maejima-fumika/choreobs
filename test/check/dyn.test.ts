@@ -15,6 +15,7 @@ import {
 } from "../support/check.js";
 import type {
   LocatedType,
+  TypedExpressionStatement,
   TypedLetStatement,
   TypedLetTransferStatement,
   TypedTopLevelStatement,
@@ -115,6 +116,18 @@ let xs = [a, d];
 `);
   });
 
+  it("accepts a print of a dyn value, written or left by an omission (spec §print-typing)", () => {
+    const typed = expectChecks(`let d: integer@dyn = 3@dyn;
+print(d);
+print(1);
+`);
+    // The void result carries the value's location, so both prints are dynamic.
+    for (const stmt of topLevelStatements(typed).slice(1)) {
+      assert.ok(stmt.stmt.kind === "ExpressionStatement");
+      assert.deepEqual((stmt as TypedExpressionStatement).expression.choreoType.location, dyn);
+    }
+  });
+
   it("rejects two concrete locations in an element assignment, dyn or not", () => {
     expectCheckError(
       `${decls}
@@ -207,6 +220,7 @@ function bar(): integer {
 describe("strict mode (spec §strict-mode)", () => {
   it("reports each omission of spec §omitted-locations instead", () => {
     expectCheckError(`3;`, { message: "location annotation required on literal", spec: "location-annotation-omission", config: aliceBobStrict });
+    expectCheckError(`print(3);`, { message: "location annotation required on literal", spec: "location-annotation-omission", config: aliceBobStrict });
     expectCheckError(`let xs = [1, 2];`, { message: "array literal location annotation required", spec: "array-literal-without-required-location", config: aliceBobStrict });
     expectCheckError(`function foo(a: integer) {}`, { message: "location annotation required on type", spec: "location-annotation-omission", config: aliceBobStrict });
     expectCheckError(

@@ -37,7 +37,7 @@ let y: integer@bob <- x;
 
 This program declares `x` as `integer@alice`, sends its value from `alice` to
 `bob`, and stores the received value in `y`. Writing `let x = 10@alice;` would
-infer the same type from the initializer (spec [§7.19.1](#let-type-inference)).
+infer the same type from the initializer (spec [§7.20.1](#let-type-inference)).
 
 After EPP:
 
@@ -105,7 +105,7 @@ omitted location is `dyn` (spec [§8.3](#strict-mode)).
 * Each name is held in the value namespace for the whole program (spec [§6.1](#namespaces)): no function, variable or parameter may take an endpoint's name, whether or not the source ever writes `@` with it.
 * Each name must be an identifier (spec [§4.3](#identifiers)) and must not be a reserved word (spec [§4.4](#keywords)). An endpoint name is written after `@` in the source (spec [§5.2](#types)) and is also pasted into the output file name (spec [§2.3](#output-files)): a name that is not an identifier would name an endpoint no program could refer to, and would still name a file — `../x` would place that file outside the output directory.
 * A name must not begin with `__`, which is reserved for the compiler (spec [§4.3](#identifiers), [§6.2](#function-names)), on the same terms as every other identifier the source writes.
-* The **reserved runtime names** of spec [§6.2](#function-names) that do not begin with `__` — the communication API and clone helper names — are *not* reserved here. An endpoint name reaches the generated code only as a string literal (spec [§13.14](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
+* The **reserved runtime names** of spec [§6.2](#function-names) that do not begin with `__` — the communication API and copy helper names — are *not* reserved here. An endpoint name reaches the generated code only as a string literal (spec [§13.14](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
 * The names must be distinct. A repeated name is an error: it would give two output files the same name, and make one endpoint both the sender and the receiver of the same communication.
 * `every` and `dyn` are reserved words and must not appear in `endpoints` (spec [§16.2](#using-every-as-an-endpoint)). This is a special case of the reserved-word rule above, called out separately because `every` and `dyn` name the two locations that are deliberately never listed (spec [§3.4](#every), [§3.5](#dyn)).
 * Every individual location used in a `.cbs` source file must be listed in `endpoints`. The locations `every` and `dyn` are never listed.
@@ -190,9 +190,9 @@ A runtime file has two parts, in this order:
   BlueScript scopes a module's names (spec [§6.2](#function-names)).
 * A program without `dyn` gets the core helpers alone: nothing in its output
   depends on gradual locating.
-* The communication API and the clone helpers are not in the runtime file. They
-  are supplied from outside for every program, with or without `dyn`
-  (spec [§14](#runtime-support-functions)).
+* The communication API, the copy helper and BlueScript's `print` are not in the
+  runtime file. They are supplied from outside for every program, with or
+  without `dyn` (spec [§14](#runtime-support-functions)).
 
 ***
 
@@ -296,6 +296,11 @@ component is gradual. Base type compatibility, array invariance and operator
 applicability are checked at compile time exactly as for any value
 (spec [§7.5](#subtyping), [§7.14](#operators), [§7.16](#array-typing)).
 
+The payload of a `dyn` value is a BlueScript `any` (spec [§14.7](#dyn-val)), and the
+dynamic operations work on it as an `any`. A `dyn` value, and every result of a
+dynamic operation, is therefore limited as an array element is, and its `===`
+and `!==` compare as an element's do (spec [§7.1.1](#array-types)).
+
 In a choreography context, a `dyn` value may be placed wherever a location is
 required, and a value at any location may be placed where `dyn` is required, as
 long as the base types agree (spec [§7.7](#location-consistency-and-join)). Each such place is a coercion (spec [§7.8](#coercion)).
@@ -331,10 +336,11 @@ variable:
 
 A payload that does not exist is `null`.
 
-The payload always holds the runtime representation of the value's **static**
-base type. Values only ever flow between the same base type (spec [§7.5](#subtyping)), and a
-numeric conversion produces the representation of its target type
-(spec [§7.15](#numeric-conversion)), so this holds by construction.
+The payload is a BlueScript `any` (spec [§14.7](#dyn-val)) that always holds a value of the
+value's **static** base type: the **representation** of that type, as later
+sections call it. Values only ever flow between the same base type (spec [§7.5](#subtyping)), and a numeric
+conversion produces a value of its target type (spec [§7.15](#numeric-conversion)), so this holds by
+construction.
 
 #### Location Dispatch <a id="location-dispatch"></a>
 
@@ -575,8 +581,8 @@ Type ::= NonLocatedType LocationAnnotation?
 ```
 
 A type written without its `LocationAnnotation` takes its location from an
-initializer where there is one (spec [§7.19.1](#let-type-inference)) or, as the return type of a
-choreography function, from its `return` statements (spec [§7.19.4](#function-return-type-inference)). It is otherwise
+initializer where there is one (spec [§7.20.1](#let-type-inference)) or, as the return type of a
+choreography function, from its `return` statements (spec [§7.20.4](#function-return-type-inference)). It is otherwise
 `dyn`, or an error in strict mode and in a local function (spec [§8.2](#omitted-locations)).
 
 ```ebnf
@@ -645,9 +651,9 @@ choreography function. A function location must be an individual location:
 neither `@every` nor `@dyn` is one (spec [§16.42](#every-on-a-function-declaration), [§16.43](#dyn-on-a-function-declaration)). A declaration
 without a location is a choreography function, never a `dyn` one.
 
-The return type annotation may be omitted. When omitted, the return type is inferred according to [Section 7.19](#type-inference).
+The return type annotation may be omitted. When omitted, the return type is inferred according to [Section 7.20](#type-inference).
 A choreography function may also write the base type of its return type and omit only
-the location, which is then inferred from its `return` statements (spec [§7.19.4](#function-return-type-inference)).
+the location, which is then inferred from its `return` statements (spec [§7.20.4](#function-return-type-inference)).
 
 ```ebnf
 ParameterList ::= Parameter ("," Parameter)*
@@ -706,11 +712,11 @@ TypeAnnotation ::= ":" Type
 
 Uninitialized `let` declarations are not allowed in v1.
 
-For ordinary initialized `let` declarations using `=`, the type annotation may be omitted and inferred from the right-hand side according to [Section 7.19](#type-inference).
+For ordinary initialized `let` declarations using `=`, the type annotation may be omitted and inferred from the right-hand side according to [Section 7.20](#type-inference).
 
 For transfer declarations using `<-`, the type annotation is still required. The
 destination type and location of a transfer declaration are never inferred from
-its source (spec [§7.19.3](#transfer-let-does-not-infer-destination-type)); a destination written without its location is
+its source (spec [§7.20.3](#transfer-let-does-not-infer-destination-type)); a destination written without its location is
 `dyn` (spec [§8.2](#omitted-locations)).
 
 Allowed:
@@ -826,7 +832,7 @@ for (let i = 0@every; i < 10@every; i = i + 1@every) {
 }
 ```
 
-The type annotation in a `for` initializer `let` may be omitted and inferred from the initializer expression according to [Section 7.19](#type-inference).
+The type annotation in a `for` initializer `let` may be omitted and inferred from the initializer expression according to [Section 7.20](#type-inference).
 
 The following forms are not supported in v1:
 
@@ -933,6 +939,7 @@ PrimaryExpression ::= Literal
                     | ArrayLiteral
                     | LengthExpression
                     | PushExpression
+                    | PrintExpression
                     | Identifier
                     | FunctionCall
                     | "(" Expression ")"
@@ -959,6 +966,23 @@ stand as an expression statement — every value position rejects it
 ```ts
 xs.push(1@alice);            // valid
 let n = xs.push(1@alice);    // invalid — produces no value
+```
+
+```ebnf
+PrintExpression ::= "print" "(" Expression ")"
+```
+
+`print(e)` writes the value of `e` to the output of the endpoints that hold it
+(spec [§7.18](#print-typing)). It is a compiler-known operation, not a call: `print` followed by
+`(` is always a `PrintExpression`, never a `FunctionCall`. `print` is not a
+keyword, but it is a reserved name (spec [§6.2](#function-names)), so no function, variable or
+parameter can take it. It takes exactly one argument; `print()` and
+`print(a, b)` are syntax errors (spec [§16.56](#invalid-print-call)). Like `xs.push(v)`, it yields
+nothing, and can only stand as an expression statement.
+
+```ts
+print(1@alice);              // valid
+let n = print(1@alice);      // invalid — produces no value
 ```
 
 ```ebnf
@@ -1215,13 +1239,16 @@ identifier that matches a name the generated code itself calls would capture
 that call. The following are therefore reserved in every one of the three
 positions:
 
-* every communication and clone API name (spec [§13.14](#communication-api)). These are
+* every communication and copy API name (spec [§13.14](#communication-api)). These are
   `sendInteger`, `receiveInteger` and `broadcastInteger`, and the corresponding
-  names for `Float`, `Boolean`, `String`, `Null`, `IntegerArray`, `FloatArray`
-  and `BooleanArray`; plus the three clone helpers, which exist for the array
-  types alone: `cloneIntegerArray`, `cloneFloatArray` and `cloneBooleanArray`.
-  There is no `cloneInteger` and no scalar clone of any type, so none is
-  reserved;
+  names for `Float`, `Boolean`, `String`, `Null` and `Array`; plus the one copy
+  helper, which exists for arrays alone: `copyArray`. There is no
+  `copyInteger` and no scalar copy of any type, so none is reserved. One
+  `Array` API serves every array type (spec [§13.1](#type-mapping)), so names such as
+  `sendIntegerArray` are not reserved;
+* `print` — BlueScript's output function, which the generated code calls for
+  `print(e)` (spec [§7.18](#print-typing)). A program's own `print` would be emitted next to that
+  call and capture it, as a program's own `sendInteger` would;
 * `__array` and `__push` — compiler-internal call sentinels;
 * every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.11](#transfer-typing), [§12.10](#transfer-projection)), and reserving the prefix lets it do so without consulting the program. Every name in the runtime file is covered by the same prefix (spec [§2.3](#output-files)): the core helpers `__nothing1` to `__nothing5`, `__and` and `__or` (spec [§14.1](#nothing), [§14.3](#and-or-helpers)), and the names of the dynamic-location runtime — `__DynVal`, `__LocVar`, `__inject`, `__cast`, the `__dyn…` operations, `__here` and the runtime's internal helpers (spec [§14.4](#dyn-runtime)).
 
@@ -1249,6 +1276,7 @@ Disallowed:
 function __and@alice(): void { return; }     // takes the compiler's prefix
 let sendInteger: integer@alice = 1@alice;    // shadows the runtime API
 function f@alice(receiveFloat: integer@alice): void { return; }
+function print@alice(): void { return; }     // captures `print(e)`
 ```
 
 Disallowed:
@@ -1371,9 +1399,9 @@ null
 void
 ```
 
-`any` and `undefined` do not exist in v1. (The dynamic-location runtime holds a
-`dyn` payload in a BlueScript `any` internally (spec [§14.7](#dyn-val)); that is not a source
-type.)
+`any` and `undefined` do not exist in v1. (The BlueScript output holds each
+array element, and each `dyn` payload, in a BlueScript `any` (spec [§7.1.1](#array-types), [§14.7](#dyn-val));
+that is not a source type.)
 
 An integer literal such as `1` has type `integer`, and a float literal such as
 `1.0` has type `float` (spec [§4.5](#literals)). The two types are unrelated (spec [§7.5](#subtyping)), so a
@@ -1433,6 +1461,43 @@ A transfer moves array contents by serialized value. The receiver obtains a fres
 
 A value of type `T[]@every` means that each endpoint has an independent local mutable array with the same contents. It is not shared memory.
 
+The element type does not reach the BlueScript output. There every array is an
+`any[]` (spec [§13.1](#type-mapping)), so each element is held as a BlueScript `any`, and an
+element can hold only what an `any` can:
+
+* an `integer` element holds an integer from −2^29 to 2^29 − 1;
+* a `float` element holds `0.0`, `-0.0`, `NaN`, and a value whose magnitude is at
+  least 2^−30 and below 2^32.
+
+Storing any other value in an element gives an unspecified result.
+
+An operation on a value read from an element is BlueScript's operation on
+`any`, not the static one:
+
+* an arithmetic result is itself held as an `any`, with the same limits: a
+  result outside them is unspecified, even where the static type could hold it;
+* `===` and `!==` compare the two values as they are held. For `float` this
+  differs from the static comparison: `NaN === NaN` is true, and `0.0 === -0.0`
+  is false.
+
+Apart from these, an operation on an `any` gives the static result: BlueScript
+applies the operation for the type of the value the `any` holds.
+`integer / integer` is still integer division, `%` still takes two integers, and
+a `<` compares two numbers as the static `<` does.
+
+A value at `dyn` has the same limits, since its payload is an `any` too
+(spec [§3.5](#dyn)).
+
+Converting a value read from a static array to its own type gives it back its
+static type, and every operation on the converted value is the static one
+(spec [§13.5](#numeric-conversion-code-generation)):
+
+```ts
+let xs: integer[]@alice = [400000000, 400000000]@alice;
+let a: integer@alice = xs[0@alice] + xs[1@alice];                            // unspecified
+let b: integer@alice = (xs[0@alice] as integer) + (xs[1@alice] as integer);  // 800000000
+```
+
 ### 7.2 Located Types <a id="located-types"></a>
 
 Expressions fall into two kinds, and most rules in this specification are about
@@ -1449,15 +1514,17 @@ A **value expression** produces a value, and that value has a located type:
 T@L
 ```
 
-A **void computation** produces no value. v1 has two: a call to a function whose
-return type is `void`, and `xs.push(v)` (spec [§7.16](#array-typing)). Having no value, it has no location (spec [§7.3](#void)) — but it still
+A **void computation** produces no value. v1 has three: a call to a function whose
+return type is `void`, `xs.push(v)` (spec [§7.16](#array-typing)), and `print(e)` (spec [§7.18](#print-typing)). Having no value, it has no location (spec [§7.3](#void)) — but it still
 has to run *somewhere*, and where that is comes from the operation itself, not
 from a location on its type:
 
 * a call to a local function at `P` runs at `P`;
 * a call to a choreography function runs at every endpoint;
-* a dynamic push runs at every endpoint, which dispatches on the array's
-  location at run time (spec [§7.9](#dynamic-operations)).
+* a print runs where the printed value is located — at every endpoint when that
+  is `every`;
+* a dynamic push or print runs at every endpoint, which dispatches on the
+  location of the array or of the printed value at run time (spec [§7.9](#dynamic-operations)).
 
 Every rule stated for `T@L` — location consistency ([§7.7](#location-consistency-and-join)), assignment ([§7.10](#assignment-typing)),
 transfer ([§7.11](#transfer-typing)), conditions ([§7.12](#if-condition-typing)) and the Local Function Strict Location Rule
@@ -1526,7 +1593,7 @@ does carry a location.
 
 A function whose omitted return type is inferred as `void` has return type
 `void`, never `void@dyn`: there is no value whose location could be left to run
-time (spec [§7.19.4](#function-return-type-inference)).
+time (spec [§7.20.4](#function-return-type-inference)).
 
 ### 7.4 Null <a id="null"></a>
 
@@ -1609,7 +1676,7 @@ integer@alice does not match an every context
 
 This rule applies uniformly to scalars and to mutable arrays. On concrete
 locations it is the location rule of assignment ([§7.10](#assignment-typing)), function arguments ([§7.17](#function-call-typing)),
-and return values ([§7.18](#return-typing)); those rules state it as consistency, `~`, which is
+and return values ([§7.19](#return-typing)); those rules state it as consistency, `~`, which is
 matching extended to `dyn` (spec [§7.7](#location-consistency-and-join)). Inside `function f@P` the required
 location is `P`, so a value at `every` or at another individual location is
 rejected by the same rule, and `dyn`, which would be consistent with `P`, is not
@@ -1788,6 +1855,7 @@ An operation is **dynamic** when a `dyn` location takes part in it:
 * a numeric conversion of a `dyn` operand to the other numeric type. One to the
   operand's own type changes nothing, and is dropped (spec [§7.15](#numeric-conversion));
 * an index access, element assignment, `.length` or push whose join is `dyn`;
+* a print of a `dyn` value (spec [§7.18](#print-typing));
 * a `dyn` literal or array literal (spec [§8.6](#dyn-literals), [§5.16](#array-literals));
 * an inject or a cast (spec [§7.8](#coercion));
 * a transfer with `dyn` on either side (spec [§11.5](#dynamic-transfer)).
@@ -1924,8 +1992,11 @@ that is, the source base type must be a subtype of the destination base type
 types must be the same. Locations play no part in this rule.
 
 Every value type may be transferred: `integer`, `float`, `boolean`, `string`,
-`null`, and the array types. Each has its own entry in the communication API
-(spec [§13.14](#communication-api)), so no payload is ever sent through a channel of the wrong type. A
+`null`, and the array types. Each scalar type has its own entry in the
+communication API, and the array types share the one `Array` entry
+(spec [§13.14](#communication-api)). The two sides of a transfer have the same base type, so the
+sender and the receivers always use the same entry, and no payload is ever sent
+through a channel of the wrong type. A
 `null` transfer carries no data — it is a synchronisation signal — but it is an
 ordinary transfer in every other respect. `void` is not a value type at all and
 cannot appear on either side (spec [§7.3](#void), [§16.44](#invalid-use-of-void)).
@@ -2184,6 +2255,10 @@ valAlice + 2@bob       // invalid: alice and bob
 valDyn + 1.5@dyn       // invalid: integer and float, dyn or not
 ```
 
+On a value read from an array, or at `dyn`, the operation is BlueScript's
+operation on `any`, whose result is limited as an array element is
+(spec [§7.1.1](#array-types)).
+
 #### String Concatenation <a id="string-concatenation"></a>
 
 `string + string` is allowed.
@@ -2242,7 +2317,10 @@ types: `integer === float` is rejected (spec [§16.47](#invalid-comparison-or-eq
 
 The operand locations must be consistent, and the result is a `boolean` at their
 join (spec [§7.7](#location-consistency-and-join)). Since a `dyn` payload always holds the representation of its
-static base type (spec [§3.5](#dyn)), a dynamic `===` compares like with like.
+static base type (spec [§3.5](#dyn)), a dynamic `===` compares like with like. On a
+value read from an array, or at `dyn`, `===` and `!==` compare the values as
+BlueScript's `any` holds them: for `float`, `NaN === NaN` is true and
+`0.0 === -0.0` is false (spec [§7.1.1](#array-types)).
 
 `==` and `!=` are not allowed.
 
@@ -2351,8 +2429,10 @@ e : S@L          where S is integer or float
   the target carries no location: moving a value between locations is what `<-`
   is for (spec [§7.11](#transfer-typing)). As for a unary operator, the operand must be
   usable in the current context (spec [§8.4](#local-function-strict-location-rule)).
-* `T` may be the operand's own type, in which case the conversion changes
-  nothing.
+* `T` may be the operand's own type, in which case the value does not change.
+  On a value read from a static array, or computed from one, it gives the value
+  back its static type, so that what follows is the static operation
+  (spec [§7.1.1](#array-types)). On a `dyn` operand it is dropped (see below).
 * The conversion is carried out by BlueScript's `as` (spec [§13.5](#numeric-conversion-code-generation)), which also
   decides how a `float` becomes an `integer`. On a `dyn` operand it is a dynamic
   operation instead (see below).
@@ -2500,7 +2580,7 @@ is checked against an explicit array type, which supplies the element type:
 * the right-hand side of an assignment to an array variable;
 * an argument, towards its parameter's type;
 * the value of a `return` in a function whose return type is written, if only as
-  its base type (spec [§7.19.4](#function-return-type-inference));
+  its base type (spec [§7.20.4](#function-return-type-inference));
 * the source of a transfer, towards the destination's type.
 
 Where no array type is expected of it — the initializer of an unannotated `let`,
@@ -2516,11 +2596,11 @@ Allowed:
 ```ts
 let xs: integer[]@alice = []@alice;
 let ys: integer[]@alice = [];        // [] is integer[]@dyn, cast to alice
-let zs: float[]@dyn = [];            // built as an empty float array (spec §dyn-lowering)
+let zs: float[]@dyn = [];            // built as an empty array (spec §dyn-lowering)
 
 let fs: float[]@alice = [1.5]@alice;
 fs = []@alice;
-fs = [];                             // __cast(__dynArrayNew("floatArray"), "alice")
+fs = [];                             // __cast(__dynArrayNew(), "alice")
 
 function count@alice(bs: boolean[]@alice): integer@alice {
     return bs.length;
@@ -2809,10 +2889,86 @@ The following are disallowed:
 * calls to local functions at other endpoints;
 * calls to choreography functions.
 
-`.length` and `.push` are array operations, not calls (spec [§5.14](#expressions)), so this rule
-does not reach them: they may be used in any context, local or choreography.
+`.length` and `.push` are array operations, and `print` is a compiler-known
+operation, not calls (spec [§5.14](#expressions)), so this rule does not reach them: they may be
+used in any context, local or choreography.
 
-### 7.18 Return Typing <a id="return-typing"></a>
+### 7.18 Print Typing <a id="print-typing"></a>
+
+`print(e)` writes the value of `e` to the output of the endpoints that hold it
+(spec [§5.14](#expressions)).
+
+```text
+e : T@L
+---------------
+print(e) : void
+```
+
+`T` may be any value type: `integer`, `float`, `boolean`, `string`, `null`, or
+an array type (spec [§7.1](#base-types)). There is no `any` type behind this. The rule accepts
+each type as it is, and `print` has no parameter that a coercion could aim at
+(spec [§7.8](#coercion)).
+
+`print` does not move a value. It runs where its argument is located:
+
+| `L` | Printed at |
+|---|---|
+| an individual location `p` | `p` alone |
+| `every` | every endpoint, each printing its own copy (spec [§3.4](#every)) |
+| `dyn` | every endpoint that holds the payload (spec [§3.5](#dyn)) |
+
+To print at `bob` a value that is at `alice`, transfer it first:
+
+```ts
+let x: integer@alice = 10@alice;
+print(x);                    // printed at alice
+let y: integer@bob <- x;
+print(y);                    // printed at bob
+print("ready"@every);        // printed at every endpoint
+```
+
+A print of a `dyn` value is a dynamic operation (spec [§7.9](#dynamic-operations)). Every endpoint
+performs it, and the endpoints that hold the payload print it: the owner once
+the value is bound to an individual location, and every endpoint while it is
+bound to `every` or still unbound (spec [§3.5](#dyn)). A print adds no constraint and
+binds nothing: printing a value does not decide where it is. Outside strict
+mode, then, `print(1);` prints at every endpoint, since the omitted location
+makes `1` an unbound `1@dyn` (spec [§8.2](#omitted-locations)).
+
+Internally the result travels with the argument's location `L`, which tells
+endpoint projection where the print happens (spec [§12.17](#print-projection)), as a push's does
+(spec [§7.16](#array-typing)). Like the location of any `void`, it is never written or shown
+(spec [§7.3](#void)).
+
+`print` is not a call (spec [§5.14](#expressions)). What a local context may call (spec [§7.17](#function-call-typing))
+does not limit it, so it may be used in a local function as well as in a
+choreography context. In `function f@alice` every value is at `alice`
+(spec [§8.4](#local-function-strict-location-rule)), so a print there always prints at `alice`.
+
+`print(e)` is a void computation (spec [§7.2](#located-types)): it can only stand as an expression
+statement, and every value position rejects it (spec [§16.44](#invalid-use-of-void)). Its argument is a
+value position, so a void computation is rejected there too. So is `[]`, which
+has no array type there to take its element type from (spec [§16.34](#cannot-infer-empty-array-element-type)).
+
+```ts
+function g@alice(): void { return; }
+
+print(g());                  // invalid: g() produces no value
+print([]@alice);             // invalid: cannot infer the element type
+```
+
+What `print` writes is what BlueScript's own `print` writes for the value.
+BlueScript's `print` takes an `any`, so the value is held as an `any` on the
+way, with the limits of spec [§7.1.1](#array-types): printing an `integer` outside −2^29 to
+2^29 − 1, or a `float` that an `any` cannot hold, gives an unspecified result.
+The format — the line break after each value, and how a string, `null` or an
+array looks — is BlueScript's, and is not specified here.
+
+Each endpoint prints in its own program order. Between endpoints there is no
+order: two prints at different endpoints may appear in either order, whatever
+their order in the program.
+
+### 7.19 Return Typing <a id="return-typing"></a>
 
 When a function has an explicit return type:
 
@@ -2841,14 +2997,14 @@ return;
 
 is allowed only if the function return type is `void`.
 
-When a function omits its return type, the return type is inferred according to [Section 7.19](#type-inference).
+When a function omits its return type, the return type is inferred according to [Section 7.20](#type-inference).
 
 #### Return Coverage <a id="return-coverage"></a>
 
 A function whose return type is not `void` must return a value on every
 execution path. This holds whether the return type is written or inferred, and
 is checked by the same conservative syntactic analysis in both cases
-(spec [§7.19.6](#return-coverage-for-non-void-functions), [§16.45](#missing-return-in-a-non-void-function)).
+(spec [§7.20.6](#return-coverage-for-non-void-functions), [§16.45](#missing-return-in-a-non-void-function)).
 
 ```ts
 function bad@alice(c: boolean@alice): integer@alice {   // invalid (spec §missing-return-in-a-non-void-function)
@@ -2861,13 +3017,13 @@ function bad@alice(c: boolean@alice): integer@alice {   // invalid (spec §missi
 A `void` function needs no coverage: falling off the end is the same as
 `return;`.
 
-### 7.19 Type Inference <a id="type-inference"></a>
+### 7.20 Type Inference <a id="type-inference"></a>
 
 ChoreoBS v1 supports simple, local type inference. This feature does not perform general location inference. It only uses types and locations already determined by literals, identifiers, function signatures, and expression typing. Where it determines no location, the location is `dyn`, or an error in strict mode (spec [§8.2](#omitted-locations), [§8.3](#strict-mode)). Inference itself works the same way in both modes.
 
 The compiler should elaborate inferred constructs into a fully typed AST before Endpoint Projection.
 
-#### 7.19.1 Let Type Inference <a id="let-type-inference"></a>
+#### 7.20.1 Let Type Inference <a id="let-type-inference"></a>
 
 For an ordinary initialized `let` declaration:
 
@@ -2932,14 +3088,14 @@ A written location always wins, so a mismatch is still reported:
 let c: integer@server = 3@mcu;   // invalid (spec §invalid-assignment-across-locations)
 ```
 
-This applies to a `for` initializer `let` as well (spec [§7.19.2](#for-initializer-let-type-inference)). Where there is
+This applies to a `for` initializer `let` as well (spec [§7.20.2](#for-initializer-let-type-inference)). Where there is
 no initializer to read the location from, a type written without its location
 is `dyn` instead (spec [§8.2](#omitted-locations)): a function parameter, and the destination of a
 transfer `let`, which never takes the source's location
-(spec [§7.19.3](#transfer-let-does-not-infer-destination-type)). A return type written without its location takes it
-from the `return` statements (spec [§7.19.4](#function-return-type-inference)).
+(spec [§7.20.3](#transfer-let-does-not-infer-destination-type)). A return type written without its location takes it
+from the `return` statements (spec [§7.20.4](#function-return-type-inference)).
 
-#### 7.19.2 For Initializer Let Type Inference <a id="for-initializer-let-type-inference"></a>
+#### 7.20.2 For Initializer Let Type Inference <a id="for-initializer-let-type-inference"></a>
 
 For a C-style `for` initializer:
 
@@ -2961,7 +3117,7 @@ then:
 i : T@L
 ```
 
-#### 7.19.3 Transfer Let Does Not Infer Destination Type <a id="transfer-let-does-not-infer-destination-type"></a>
+#### 7.20.3 Transfer Let Does Not Infer Destination Type <a id="transfer-let-does-not-infer-destination-type"></a>
 
 Transfer declarations keep the existing syntax:
 
@@ -2970,7 +3126,7 @@ let y: integer@bob <- x;
 ```
 
 The type annotation is required. Unlike an initialized `let`
-(spec [§7.19.1](#let-type-inference)), the location is **not** taken from the right-hand side: the
+(spec [§7.20.1](#let-type-inference)), the location is **not** taken from the right-hand side: the
 destination location is the whole point of a transfer, and inferring it from the
 source would make every transfer a no-op local copy. A destination written
 without its location is `dyn` instead (spec [§8.2](#omitted-locations)), which makes the transfer
@@ -2988,7 +3144,7 @@ a type remains invalid in either mode, since its base type is needed
 let y <- x;
 ```
 
-#### 7.19.4 Function Return Type Inference <a id="function-return-type-inference"></a>
+#### 7.20.4 Function Return Type Inference <a id="function-return-type-inference"></a>
 
 A function declaration may omit its return type:
 
@@ -3077,23 +3233,23 @@ function bar(): integer {      // returns integer@alice
 }
 ```
 
-As with a partial annotation on a `let` (spec [§7.19.1](#let-type-inference)), the base type comes from
+As with a partial annotation on a `let` (spec [§7.20.1](#let-type-inference)), the base type comes from
 the annotation and the location from inference: the location is the
 `lub_location` of the values returned, as above, and the returns are then
 checked against the resulting type like those of a written one. A function with
 no value to return takes no location from it, and is reported by the return
-checks instead (spec [§7.18](#return-typing)).
+checks instead (spec [§7.19](#return-typing)).
 
 The location is inferred in strict mode too. A local function may not write a
 return type without its location at all (spec [§8.4](#local-function-strict-location-rule)).
 
-#### 7.19.5 Mixing `return;` and `return expr;` <a id="mixing-return-and-return-expr"></a>
+#### 7.20.5 Mixing `return;` and `return expr;` <a id="mixing-return-and-return-expr"></a>
 
 A function with an omitted return type must not mix bare `return;` and value-returning `return expr;`.
 
-#### 7.19.6 Return Coverage for Non-`void` Functions <a id="return-coverage-for-non-void-functions"></a>
+#### 7.20.6 Return Coverage for Non-`void` Functions <a id="return-coverage-for-non-void-functions"></a>
 
-If a function with an omitted return type contains any `return expr;`, then all execution paths must return a value. The same requirement applies to a function with a written non-`void` return type (spec [§7.18](#return-typing)).
+If a function with an omitted return type contains any `return expr;`, then all execution paths must return a value. The same requirement applies to a function with a written non-`void` return type (spec [§7.19](#return-typing)).
 
 ChoreoBS v1 requires only a conservative syntactic return coverage analysis. At minimum, an implementation must accept:
 
@@ -3103,7 +3259,7 @@ ChoreoBS v1 requires only a conservative syntactic return coverage analysis. At 
 
 The compiler may reject programs whose totality is not proven by this conservative analysis.
 
-#### 7.19.7 Parameter Types Are Not Inferred <a id="parameter-types-are-not-inferred"></a>
+#### 7.20.7 Parameter Types Are Not Inferred <a id="parameter-types-are-not-inferred"></a>
 
 Function parameter types are not inferred in ChoreoBS v1. A parameter must
 always write its base type; only its location may be left out, in a choreography
@@ -3125,7 +3281,7 @@ function add@alice(a: integer@alice, b: integer@alice) {
 }
 ```
 
-#### 7.19.8 Inference and Recursion <a id="inference-and-recursion"></a>
+#### 7.20.8 Inference and Recursion <a id="inference-and-recursion"></a>
 
 Local function recursion is allowed, but recursive local functions must have explicit return types in ChoreoBS v1.
 
@@ -3143,8 +3299,8 @@ Therefore:
 
 A location is written as a location annotation on a type or a literal. Where it
 is left out, it is taken from the program itself — from the initializer of a
-`let` (spec [§7.19.1](#let-type-inference)), or from the `return` statements of a function
-(spec [§7.19.4](#function-return-type-inference)) — and where nothing determines it, it is `dyn` (spec [§8.2](#omitted-locations)).
+`let` (spec [§7.20.1](#let-type-inference)), or from the `return` statements of a function
+(spec [§7.20.4](#function-return-type-inference)) — and where nothing determines it, it is `dyn` (spec [§8.2](#omitted-locations)).
 
 In strict mode (spec [§8.3](#strict-mode)) and inside a local function
 (spec [§8.4](#local-function-strict-location-rule)), that last case is an error instead: every type annotation and every
@@ -3207,14 +3363,14 @@ selects the kind of function — a location declares a local function, no locati
 declares a choreography function (spec [§10.1](#function-kinds)) — so neither form is an omission.
 
 This rule governs location annotations only. It does not affect **type**
-inference ([§7.19](#type-inference)), which is a separate mechanism:
+inference ([§7.20](#type-inference)), which is a separate mechanism:
 
 ```ts
 let x = 1@alice;   // valid: `x : integer@alice` is inferred from the initializer
 ```
 
 and a function may still omit its return type entirely, in which case the return
-type — including its location — is inferred from the `return` statements ([§7.19.4](#function-return-type-inference)).
+type — including its location — is inferred from the `return` statements ([§7.20.4](#function-return-type-inference)).
 
 ```ts
 function f@alice(a: integer@alice) {   // valid: returns integer@alice
@@ -3231,20 +3387,20 @@ let xs: integer[]@alice = [1, 2, 3]@alice;   // valid
 
 ### 8.2 Omitted Locations <a id="omitted-locations"></a>
 
-Where a location is omitted and simple inference (spec [§7.19](#type-inference)) does not
+Where a location is omitted and simple inference (spec [§7.20](#type-inference)) does not
 determine it, it is `dyn`:
 
 * a literal without a location annotation (spec [§5.15](#located-literals));
 * a parameter type without a location, in a choreography function;
 * the destination of a transfer `let` written without a location
-  (spec [§7.19.3](#transfer-let-does-not-infer-destination-type));
+  (spec [§7.20.3](#transfer-let-does-not-infer-destination-type));
 * an array literal without an annotation, whose elements are not consulted
   (spec [§5.16](#array-literals));
 * a return type whose location the `return` statements do not determine
-  (spec [§7.19.4](#function-return-type-inference)).
+  (spec [§7.20.4](#function-return-type-inference)).
 
 A variable whose initializer is at `dyn` is at `dyn` as well, but by inference
-(spec [§7.19.1](#let-type-inference)), not by omission: the location is determined, and the variable is
+(spec [§7.20.1](#let-type-inference)), not by omission: the location is determined, and the variable is
 `dyn` in strict mode too.
 
 A function declaration's location is not the location of a value.
@@ -3315,9 +3471,9 @@ location written as `@dyn`, or inferred from one, is dynamic.
     (spec [§16.3](#location-annotation-omission));
   * an array literal without its annotation (spec [§16.32](#array-literal-without-required-location));
   * a transfer `let` without a destination location
-    (spec [§7.19.3](#transfer-let-does-not-infer-destination-type));
+    (spec [§7.20.3](#transfer-let-does-not-infer-destination-type));
   * returns at two different concrete locations (spec [§16.23](#incompatible-inferred-return-locations)).
-* Simple inference works exactly as in the default mode (spec [§7.19](#type-inference)): a
+* Simple inference works exactly as in the default mode (spec [§7.20](#type-inference)): a
   partial annotation on a `let` takes its location from the initializer, a
   partial return annotation takes it from the returns, and a written `dyn` among
   the returns makes the return type `dyn`.
@@ -3354,7 +3510,7 @@ Rules:
 - Values located at another individual location are not allowed inside local function bodies.
 - A transfer inside a local function has the function's own location on both sides, so it is always a local copy (spec [§11.4](#local-copy)). This follows from the rules above rather than being a separate restriction: the source must be an expression at `P`, and the destination must be a variable at `P`.
 - `dyn` is not allowed anywhere in a local function: not in a parameter type, the return type, a variable type, a literal or an array literal, nor as the location of any value evaluated in the body (spec [§16.5](#dyn-in-a-local-function)). Since `dyn ~ P` holds (spec [§7.7](#location-consistency-and-join)), the rules above would otherwise accept it.
-- No location may be left to `dyn` in a local function, in either mode (spec [§16.4](#location-omission-in-a-local-function)): each one is written or inferred. An initialized `let` takes its location from its initializer (spec [§7.19.1](#let-type-inference)), a return type omitted altogether is inferred from the `return` statements (spec [§7.19.4](#function-return-type-inference)), and an unlocated literal element of an annotated array literal takes the literal's location (spec [§5.16](#array-literals)). A return type written without its location, `function f@P(): integer`, is an error: only a choreography function may leave the location of a written return type to its `return` statements (spec [§7.19.4](#function-return-type-inference)).
+- No location may be left to `dyn` in a local function, in either mode (spec [§16.4](#location-omission-in-a-local-function)): each one is written or inferred. An initialized `let` takes its location from its initializer (spec [§7.20.1](#let-type-inference)), a return type omitted altogether is inferred from the `return` statements (spec [§7.20.4](#function-return-type-inference)), and an unlocated literal element of an annotated array literal takes the literal's location (spec [§5.16](#array-literals)). A return type written without its location, `function f@P(): integer`, is an error: only a choreography function may leave the location of a written return type to its `return` statements (spec [§7.20.4](#function-return-type-inference)).
 
 `dyn` is excluded because a local function runs at one endpoint only. A dynamic
 operation in its body would be performed at that endpoint alone, and the
@@ -3927,9 +4083,9 @@ let ys: float[]@every <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: float[] = [1.1, 2.2];
-broadcastFloatArray("__top_0", xs);
-let ys: float[] = cloneFloatArray(xs);
+let xs: any[] = new Array<any>([1.1, 2.2]);
+broadcastArray("__top_0", xs);
+let ys: any[] = copyArray(xs);
 ```
 
 ### 11.4 Local Copy <a id="local-copy"></a>
@@ -3972,8 +4128,8 @@ let ys: float[]@alice <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: float[] = [1.1, 2.2];
-let ys: float[] = cloneFloatArray(xs);
+let xs: any[] = new Array<any>([1.1, 2.2]);
+let ys: any[] = copyArray(xs);
 ```
 
 An `every -> every` local copy is emitted at every endpoint:
@@ -4014,9 +4170,9 @@ Here `q` and `q'` are concrete locations, and `a ← …` stands for the `let` o
 transfer declaration or the `=` of a transfer assignment.
 
 * `tag` is the transfer's communication tag (spec [§11.6](#communication-tags)).
-* `kind(T)` is the payload kind of the destination base type, one of the eight
+* `kind(T)` is the payload kind of the destination base type, one of the six
   names of the communication API: `"integer"`, `"float"`, `"boolean"`,
-  `"string"`, `"null"`, `"integerArray"`, `"floatArray"` and `"booleanArray"`
+  `"string"`, `"null"` and `"array"`, the last for every array type
   (spec [§13.14](#communication-api)). A receiver has no payload to look at, so the kind cannot be
   read off the value: the compiler passes it, just as it picks the API by the
   destination type for a static transfer. The source has the same base type
@@ -4166,9 +4322,10 @@ of the type system:
 | `__dynArraySet(xs, i, v)` | `xs : T[]@dyn`, `i : integer@dyn`, `v : T@dyn` | `void` | `xs[i] = v` |
 | `__dynArrayPush(xs, v)` | `xs : T[]@dyn`, `v : T@dyn` | `void` | `xs.push(v)` |
 | `__dynArrayLength(xs)` | `xs : T[]@dyn` | `integer@dyn` | `xs.length` |
-| `__dynArrayNew(kind)` | | `T[]@dyn` | an array literal at `dyn` |
+| `__dynArrayNew()` | | `T[]@dyn` | an array literal at `dyn` |
 | `__dynArrayAppend(xs, v)` | `xs : T[]@dyn`, `v : T@dyn` | `T[]@dyn` | an element of one |
 | `__dynTransfer(tag, kind, "L", v)` | `v : T@dyn` | `T@dyn` | a dynamic transfer |
+| `__dynPrint(v)` | `v : T@dyn` | `void` | `print(v)` |
 
 The binary operators are `+ - * / %` — `__dynPlus`, `__dynSub`, `__dynMul`,
 `__dynDiv`, `__dynMod`, with `string + string` under `__dynPlus` — `&& ||` —
@@ -4176,8 +4333,8 @@ The binary operators are `+ - * / %` — `__dynPlus`, `__dynSub`, `__dynMul`,
 `__dynGt`, `__dynGe`, `__dynEq`, `__dynNeq`.
 
 The location, `kind` and `tag` arguments are `string@every` literals, the same at
-every endpoint. `__dynArraySet` and `__dynArrayPush` are `void`, and stand as
-expression statements. What each function does is given in spec [§14.4](#dyn-runtime).
+every endpoint. `__dynArraySet`, `__dynArrayPush` and `__dynPrint` are `void`,
+and stand as expression statements. What each function does is given in spec [§14.4](#dyn-runtime).
 
 #### Rewriting <a id="dyn-lowering-rules"></a>
 
@@ -4186,6 +4343,7 @@ Lowering rewrites the typed AST bottom up:
 * a literal `c@dyn` becomes `__dynUnbound(c)` (spec [§8.6](#dyn-literals));
 * an operator, index access, `.length` or push whose result or join is `dyn`
   becomes its runtime function, with its static operands injected first;
+* a print of a `dyn` value becomes `__dynPrint(v)` (spec [§7.18](#print-typing));
 * a conversion of a `dyn` operand becomes `__dynIntegerToFloat` or
   `__dynFloatToInteger`, or its operand itself when the type does not change
   (spec [§7.15](#numeric-conversion));
@@ -4205,16 +4363,15 @@ whatever its elements are:
 
 | Elements | Lowered to |
 |---|---|
-| none (`[]@dyn`) | `__dynArrayNew(kind)` |
-| one or more | `__dynArrayAppend(…__dynArrayAppend(__dynArrayNew(kind), e1')…, en')` |
+| none (`[]@dyn`) | `__dynArrayNew()` |
+| one or more | `__dynArrayAppend(…__dynArrayAppend(__dynArrayNew(), e1')…, en')` |
 
 * `ei'` is `coerce(ei → T@dyn)`. An unlocated literal element is `c@dyn` and
   becomes `__dynUnbound(c)`; a static element is injected.
-* `kind` is the kind of the array type: `"integerArray"`, `"floatArray"` or
-  `"booleanArray"`. An empty literal takes its element type from the array type
-  it is checked against (spec [§7.16](#array-typing)). The runtime type of the array is always
-  fixed here, by `__dynArrayNew`, so it never depends on how `any` would treat an
-  array literal's elements.
+* `__dynArrayNew()` takes no kind. Every array is a BlueScript `any[]` whatever
+  its element type (spec [§13.3](#array-operation-code-generation)), so one empty array serves them all. An
+  empty literal still takes its element type from the array type it is checked
+  against (spec [§7.16](#array-typing)): that is its static type.
 * The elements are evaluated from `e1` to `en`, since arguments are evaluated
   left to right (spec [§5.17](#evaluation-order)).
 * Each element costs a `__DynVal`, a location variable and a push, even in an
@@ -4222,7 +4379,8 @@ whatever its elements are:
   later optimization (spec [§17.6](#future-work)).
 
 An array literal at a concrete location stays a literal, and a `dyn` element in it
-is cast: `[d]@alice` becomes `[__cast(d, "alice")]`.
+is cast: `[d]@alice` becomes `[__cast(d, "alice")]`, which code generation writes
+as `new Array<any>([__cast(d, "alice")])` (spec [§13.3](#array-operation-code-generation)).
 
 ### 12.3 Type Projection <a id="type-projection"></a>
 
@@ -4257,6 +4415,7 @@ Examples:
 integer@alice projected to alice -> integer
 integer@alice projected to bob   -> absent
 integer@every projected to bob   -> integer
+integer[]@alice projected to alice -> integer[]
 void projected to bob            -> void
 integer@dyn projected to bob     -> __DynVal
 ```
@@ -4313,6 +4472,7 @@ parenthesized:        ( e )       =>  discard(e)
 index:                xs[i]       =>  nothing(discard(xs), discard(i))
 length:               xs.length   =>  nothing()
 push:                 xs.push(v)  =>  nothing(discard(v))
+print:                print(e)    =>  nothing(discard(e))
 array literal:        [e1, ...]   =>  nothing(discard(e1), ...)
 call, callee here:    f(e1, ...)  =>  f(project(e1), ...)
 call, callee absent:  f(e1, ...)  =>  nothing(project(e1), ...)
@@ -4363,6 +4523,11 @@ location (spec [§7.16](#array-typing)), so at an endpoint that does not hold th
 array `project_P` falls through to the `push` row above — which is exactly the
 statement rule [§12.11](#assignment-projection) states. It drops its receiver for
 the same reason `.length` does.
+
+`print(e)` is `void` too, and its result travels with the location of `e`
+(spec [§7.18](#print-typing)). At an endpoint that does not hold `e`, `project_P` falls through to
+the `print` row: the print is not performed, and only the evaluation of `e` is
+left behind (spec [§12.17](#print-projection)).
 
 Nested `nothing(...)` artifacts are left nested. Flattening them is not part of
 v1 (spec [§13.15](#projected-ast-cleanup), [§17.7](#future-cleanup-optimizations)).
@@ -4545,26 +4710,37 @@ both, finalization rewrites the first, and cleanup folds the second
 
 ### 12.6 Literal Projection <a id="literal-projection"></a>
 
+For a literal `c@L`, projection to endpoint `P` is:
+
+```text
+if residesAt(L, P):
+    c
+else:
+    absent
+```
+
+A literal has no effect of its own, so an absent one leaves nothing to evaluate.
+A literal statement where the literal is absent becomes `null;` in absent
+finalization (spec [§13.13](#absent-finalization)), and cleanup removes it (spec [§13.15](#projected-ast-cleanup)):
+
 ```ts
-14@alice
-"Hello"@alice
-true@every
+14@alice;
+"Hello"@alice;
+true@every;
 ```
 
 EPP at `alice`:
 
 ```ts
-14
-"Hello"
-true
+14;
+"Hello";
+true;
 ```
 
 EPP at `bob`:
 
 ```ts
-absent
-absent
-true
+true;
 ```
 
 A literal at `dyn` does not reach EPP as a literal: lowering has made it
@@ -4791,8 +4967,8 @@ EPP at `alice`:
 
 ```ts
 let n: integer = 3;
-let x: float = (n as float);
-let y: float = (relay(n) as float);
+let x: float = ((n as integer) as float);
+let y: float = ((relay(n) as integer) as float);
 ```
 
 EPP at `bob` — `x` disappears altogether, and of `y` only the call remains,
@@ -4820,7 +4996,7 @@ EPP at `alice`:
 ```ts
 let valAlice: integer = 1;
 let iDyn: __DynVal = __dynUnbound(2);
-let f1: __DynVal = __inject((valAlice as float), "alice");
+let f1: __DynVal = __inject(((valAlice as integer) as float), "alice");
 let f2: float = __cast(__dynIntegerToFloat(iDyn), "alice");
 let f3: __DynVal = __dynIntegerToFloat(iDyn);
 let f4: __DynVal = __dynIntegerToFloat(__dynUnbound(3));
@@ -5035,15 +5211,15 @@ let ys: integer[]@every <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: integer[] = [1, 2];
-broadcastIntegerArray("__top_0", xs);
-let ys: integer[] = cloneIntegerArray(xs);
+let xs: any[] = new Array<any>([1, 2]);
+broadcastArray("__top_0", xs);
+let ys: any[] = copyArray(xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "__top_0");
+let ys: any[] = receiveArray("alice", "__top_0");
 ```
 
 #### Local Copy <a id="epp-local-copy"></a>
@@ -5074,8 +5250,8 @@ let ys: float[]@alice <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: float[] = [1.1, 2.2];
-let ys: float[] = cloneFloatArray(xs);
+let xs: any[] = new Array<any>([1.1, 2.2]);
+let ys: any[] = copyArray(xs);
 ```
 
 #### Transfer Declaration Versus Transfer Assignment <a id="transfer-decl-vs-assignment"></a>
@@ -5084,7 +5260,7 @@ The rules above are those of a transfer **declaration**, `let y: T@L <- e;`,
 which introduces `y`. A transfer **assignment**, `y <- e;`, stores into a
 variable that already exists, so every rule above holds except that the
 destination side emits an assignment rather than a `let`. Nothing else differs:
-the same tag is allocated, the same send, broadcast, receive and clone are
+the same tag is allocated, the same send, broadcast, receive and copy are
 chosen, and the sender still binds its own copy after a broadcast.
 
 ```ts
@@ -5110,9 +5286,9 @@ broadcastInteger("__top_1", src);
 e = src;
 let s: integer = 0;
 s = src;
-let arr: float[] = [1.1];
-let a2: float[] = [0.0];
-a2 = cloneFloatArray(arr);
+let arr: any[] = new Array<any>([1.1]);
+let a2: any[] = new Array<any>([0.0]);
+a2 = copyArray(arr);
 ```
 
 EPP at `bob`:
@@ -5126,7 +5302,7 @@ e = receiveInteger("alice", "__top_1");
 
 A receiver must not re-declare the destination — `let d: integer = receive...`
 would shadow the variable the program meant to update. For an array, the
-assignment replaces the destination's reference with the fresh clone, which is
+assignment replaces the destination's reference with the fresh copy, which is
 what makes `<-` differ from `=` at one location (spec [§7.11](#transfer-typing)).
 
 #### Single Evaluation at the Sender <a id="single-evaluation-at-the-sender"></a>
@@ -5584,7 +5760,7 @@ let n: integer@alice = xs.length;
 EPP at `alice`:
 
 ```ts
-let xs: integer[] = [1, 2, 3];
+let xs: any[] = new Array<any>([1, 2, 3]);
 let x: integer = xs[0];
 xs[1] = 10;
 xs.push(20);
@@ -5617,14 +5793,14 @@ let ys: integer[]@bob <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: integer[] = [1, 2];
-sendIntegerArray("bob", "__top_0", xs);
+let xs: any[] = new Array<any>([1, 2]);
+sendArray("bob", "__top_0", xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "__top_0");
+let ys: any[] = receiveArray("alice", "__top_0");
 ```
 
 Broadcast to `@every` uses a fresh copy at all endpoints, including the sender.
@@ -5639,15 +5815,15 @@ let ys: integer[]@every <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: integer[] = [1, 2];
-broadcastIntegerArray("__top_0", xs);
-let ys: integer[] = cloneIntegerArray(xs);
+let xs: any[] = new Array<any>([1, 2]);
+broadcastArray("__top_0", xs);
+let ys: any[] = copyArray(xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "__top_0");
+let ys: any[] = receiveArray("alice", "__top_0");
 ```
 
 #### Dynamic Arrays <a id="dyn-array-projection"></a>
@@ -5675,23 +5851,23 @@ EPP at `alice`:
 let a: integer = 1;
 let b: integer = 2;
 let d: __DynVal = __dynUnbound(3);
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-let e: __DynVal = __dynArrayNew("integerArray");
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(a, "alice")), __inject(b, "alice"));
-let xs: integer[] = [__cast(d, "alice")];
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+let e: __DynVal = __dynArrayNew();
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __inject(a, "alice")), __inject(b, "alice"));
+let xs: any[] = new Array<any>([__cast(d, "alice")]);
 ```
 
 EPP at `bob`:
 
 ```ts
 let d: __DynVal = __dynUnbound(3);
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __dynUnbound(1)), __dynUnbound(2));
-let e: __DynVal = __dynArrayNew("integerArray");
-__dynArrayAppend(__dynArrayAppend(__dynArrayNew("integerArray"), __inject(null, "alice")), __inject(null, "alice"));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __dynUnbound(1)), __dynUnbound(2));
+let e: __DynVal = __dynArrayNew();
+__dynArrayAppend(__dynArrayAppend(__dynArrayNew(), __inject(null, "alice")), __inject(null, "alice"));
 __nothing1(__cast(d, "alice"));
 ```
 
@@ -5804,7 +5980,65 @@ __dynArrayPush(__inject(null, "alice"), valDyn);
 __dynArrayLength(arrDyn);
 ```
 
-### 12.17 Top-Level Projection <a id="top-level-projection"></a>
+### 12.17 Print Projection <a id="print-projection"></a>
+
+A print is projected according to the location of its argument (spec [§7.18](#print-typing)).
+For `print(e)` with `e : T@L`, at endpoint `P`:
+
+```text
+project_P(print(e)) =
+    if residesAt(L, P):  print(project_P(e))
+    else:                nothing(discard_P(e))
+```
+
+This is the expression projection rule (spec [§12.4](#expression-projection)) applied to a print. Where
+`P` does not print, the argument is still evaluated, so a choreography call in
+it is still made: at an endpoint that does not hold the value of `f()`,
+`print(f())` leaves `f()` inside a `nothing(...)`. A print of a `dyn` value is
+the runtime call `__dynPrint(v)` by the time EPP sees it (spec [§12.2](#dyn-lowering)), and is kept at
+every endpoint.
+
+Code generation writes a static print as it stands, `print(e)`. It is a call of
+BlueScript's own `print`, which is supplied from outside like the
+communication API (spec [§14](#runtime-support-functions)). `__dynPrint` calls the same `print` on the payload
+(spec [§14.14](#dyn-print)).
+
+Example:
+
+```ts
+let x: integer@alice = 10@alice;
+print(x);
+let s: string@every = "ready"@every;
+print(s);
+let d: integer@dyn = 3@dyn;
+print(d);
+```
+
+EPP at `alice`:
+
+```ts
+let x: integer = 10;
+print(x);
+let s: string = "ready";
+print(s);
+let d: __DynVal = __dynUnbound(3);
+__dynPrint(d);
+```
+
+EPP at `bob` — `x` is absent there, so its print leaves `nothing(null)`, which
+cleanup removes (spec [§13.15](#projected-ast-cleanup)):
+
+```ts
+let s: string = "ready";
+print(s);
+let d: __DynVal = __dynUnbound(3);
+__dynPrint(d);
+```
+
+`d` is still unbound when it is printed, so both endpoints print `3`
+(spec [§14.14](#dyn-print)).
+
+### 12.18 Top-Level Projection <a id="top-level-projection"></a>
 
 Top-level non-function statements are projected as the entry program for each endpoint.
 
@@ -5841,12 +6075,31 @@ ChoreoBS boolean -> BlueScript boolean
 ChoreoBS string  -> BlueScript string
 ChoreoBS null    -> BlueScript null
 ChoreoBS void    -> BlueScript void
-ChoreoBS integer[] -> BlueScript integer[]
-ChoreoBS float[]   -> BlueScript float[]
-ChoreoBS boolean[] -> BlueScript boolean[]
+ChoreoBS integer[] -> BlueScript any[]
+ChoreoBS float[]   -> BlueScript any[]
+ChoreoBS boolean[] -> BlueScript any[]
 ChoreoBS T@dyn     -> BlueScript __DynVal
 ChoreoBS T[]@dyn   -> BlueScript __DynVal
 ```
+
+Every array type is BlueScript's `any[]`, because BlueScript gives `push` to an
+`any[]` alone: its `integer[]`, `float[]` and `boolean[]` have no methods. Endpoint
+projection keeps the element type (spec [§12.3](#type-projection)), and only code generation drops
+it. An element is then held as an `any`, which limits the values it can hold
+(spec [§7.1.1](#array-types)).
+
+The generated code relies on BlueScript converting between `any` and the static
+types implicitly, in both directions:
+
+* a value of a static type becomes an `any` wherever an `any` is expected: an
+  element of `new Array<any>([...])`, the value of an element assignment, and an
+  argument of `__inject`, `__dynUnbound` or a `__nothing…` helper;
+* an `any` becomes a value of a static type wherever that type is expected — a
+  read element `xs[i]`, or the result of `__cast`, used as an initializer, an
+  assigned value, a condition, an argument or a returned value. BlueScript
+  checks at run time that the `any` holds a value of that type.
+
+An explicit `as` on an `any` is the same check (spec [§13.5](#numeric-conversion-code-generation)).
 
 `__DynVal` is the class of the dynamic-location runtime (spec [§14.7](#dyn-val)), imported from
 the runtime file (spec [§13.10](#runtime-import)).
@@ -5873,17 +6126,40 @@ marks an unbound location variable (spec [§14.5](#location-variables)): these s
 
 ### 13.3 Array Operation Code Generation <a id="array-operation-code-generation"></a>
 
-A static `xs.length` and `xs.push(v)` are emitted unchanged: BlueScript spells
-them the same way ChoreoBS does, so code generation for these two is the
-identity. A dynamic one is already a runtime call (spec [§12.2](#dyn-lowering)).
+A static array literal is emitted as BlueScript's array constructor with the
+element type `any`, empty or not:
+
+```text
+[e1, ..., en]  =>  new Array<any>([e1, ..., en])
+[]             =>  new Array<any>([])
+```
+
+This is BlueScript's own form, which builds an `any[]` from the elements. It is
+not TypeScript's `new Array(x)`, which would make an array whose one element is
+`x`. The literal `[e1, ..., en]` alone would not do: BlueScript types it by its
+elements, as an `integer[]` for example, which has no `push` (spec [§13.1](#type-mapping)).
+
+A static `xs[i]`, `xs[i] = v`, `xs.length` and `xs.push(v)` are emitted
+unchanged: BlueScript spells them the same way ChoreoBS does, so code generation
+for these is the identity. A dynamic one is already a runtime call
+(spec [§12.2](#dyn-lowering)).
 
 ```ts
+xs[i]
+xs[i] = v
 xs.length
 xs.push(v)
 ```
 
-These two are the whole of ChoreoBS's dot syntax. A program cannot access a
-field or call a method on anything else (spec [§17.2](#typescript-javascript-features)).
+`.length` and `.push` are the whole of ChoreoBS's dot syntax. A program cannot
+access a field or call a method on anything else (spec [§17.2](#typescript-javascript-features)).
+
+Every array at run time is an `any[]`: the static literals above, the runtime's
+empty array (spec [§14.13](#dyn-array-operations)), and every array the communication and copy API
+returns (spec [§13.14](#communication-api)). The generated code relies on this. BlueScript's
+conversion from `any` to `any[]`, which a `__cast` of an array makes, checks only
+that the value is an array, so an `integer[]` would pass it and fail later, at
+its first `push`.
 
 ### 13.4 Logical Operator Code Generation <a id="logical-operator-code-generation"></a>
 
@@ -5906,15 +6182,42 @@ function. With a `dyn` operand, the operation is the runtime call `__dynAnd` or
 
 ### 13.5 Numeric Conversion Code Generation <a id="numeric-conversion-code-generation"></a>
 
-A projected conversion is emitted as BlueScript's own `as`, in parentheses:
+A projected conversion is emitted as BlueScript's own `as`, in parentheses. A
+conversion between the two numeric types first names the operand's own type `S`,
+and a conversion to the operand's own type stays one step:
 
 ```text
-e as T  =>  (e as T)
+e as T  =>  ((e as S) as T)     where S is the type of e, and S is not T
+e as T  =>  (e as T)            where e has type T
+```
+
+The first `as` is there for an operand that BlueScript holds as an `any`: a
+value read from an array (spec [§7.1.1](#array-types)), or a result computed from one. BlueScript's
+`as integer` on an `any` accepts only an integer, so it would stop the program on
+a `float` element instead of converting it; `as S` first gives the value back its
+static type, and the second `as` then converts it as a static value. The rule
+applies to every conversion between the two types, whatever its operand, so that
+the output never depends on what BlueScript holds as an `any`.
+
+```ts
+let fs: float[]@alice = [1.5]@alice;
+let i: integer@alice = fs[0@alice] as integer;
+let f: float@alice = i as float;
+let j: integer@alice = i as integer;
+```
+
+EPP at `alice`:
+
+```ts
+let fs: any[] = new Array<any>([1.5]);
+let i: integer = ((fs[0] as float) as integer);
+let f: float = ((i as integer) as float);
+let j: integer = (i as integer);
 ```
 
 The parentheses keep the conversion together whatever operator surrounds it.
 A conversion the source already parenthesizes is not wrapped a second time:
-`total / (n as float)` is emitted as written.
+`total / (n as float)` is emitted as `total / ((n as integer) as float)`.
 
 Only an endpoint that holds the value emits one (spec [§12.8](#binary-and-unary-operation-projection)); where the value
 is absent there is no `as` at all, so `null as T` is never emitted. A conversion
@@ -6119,7 +6422,8 @@ cleanup pass in [Section 13.15](#projected-ast-cleanup).
 
 ### 13.14 Communication API <a id="communication-api"></a>
 
-The generated BlueScript code uses type-specific communication APIs.
+The generated BlueScript code uses a communication API for each scalar type, and
+one for every array type.
 
 ```ts
 sendInteger(dst: string, tag: string, value: integer): void;
@@ -6137,28 +6441,25 @@ receiveString(src: string, tag: string): string;
 sendNull(dst: string, tag: string, value: null): void;
 receiveNull(src: string, tag: string): null;
 
-sendIntegerArray(dst: string, tag: string, value: integer[]): void;
-receiveIntegerArray(src: string, tag: string): integer[];
-
-sendFloatArray(dst: string, tag: string, value: float[]): void;
-receiveFloatArray(src: string, tag: string): float[];
-
-sendBooleanArray(dst: string, tag: string, value: boolean[]): void;
-receiveBooleanArray(src: string, tag: string): boolean[];
+sendArray(dst: string, tag: string, value: any[]): void;
+receiveArray(src: string, tag: string): any[];
 ```
 
-There is one send/receive pair and one broadcast per transferable type, and the
-compiler selects it from the transfer's base type. There is no default: a base
-type with no entry here cannot be transferred, and the compiler must reject it
-rather than fall back on another type's API. `null[]` is not a type (spec
-[§7.1.1](#array-types)), so there is no array form of the `null` API.
+There is one send/receive pair and one broadcast per transferable scalar type,
+and one for all arrays, and the compiler selects it from the transfer's base
+type. There is no default: a base type with no entry here cannot be transferred,
+and the compiler must reject it rather than fall back on another type's API.
+
+Every array type is an `any[]` in the output (spec [§13.1](#type-mapping)), so the one `Array` API
+carries an `integer[]`, a `float[]` and a `boolean[]` alike, each element as the
+`any` that holds it (spec [§7.1.1](#array-types)). The array it returns must itself be an `any[]`
+(spec [§13.3](#array-operation-code-generation)).
 
 A dynamic transfer selects the API at run time instead: the compiler passes the
-destination type's kind as a string — the eight names `"integer"`, `"float"`,
-`"boolean"`, `"string"`, `"null"`, `"integerArray"`, `"floatArray"` and
-`"booleanArray"` — and the runtime dispatches on it (spec [§14.12](#dyn-transfer-runtime)). There is
-no default there either. The runtime file calls this API, and the clone helpers,
-as the generated code does.
+destination type's kind as a string — the six names `"integer"`, `"float"`,
+`"boolean"`, `"string"`, `"null"` and `"array"` — and the runtime dispatches on it
+(spec [§14.12](#dyn-transfer-runtime)). There is no default there either. The runtime file calls
+this API, and the copy helper, as the generated code does.
 
 Broadcast APIs:
 
@@ -6169,22 +6470,18 @@ broadcastBoolean(tag: string, value: boolean): void;
 broadcastString(tag: string, value: string): void;
 broadcastNull(tag: string, value: null): void;
 
-broadcastIntegerArray(tag: string, value: integer[]): void;
-broadcastFloatArray(tag: string, value: float[]): void;
-broadcastBooleanArray(tag: string, value: boolean[]): void;
+broadcastArray(tag: string, value: any[]): void;
 ```
 
-Array clone helper APIs used by generated code for:
+The array copy helper is used by generated code for:
 
 * sender-side fresh copies in array broadcast;
 * local copies produced by a transfer (spec [§11.4](#local-copy)).
 
-APIs:
+It returns a fresh `any[]`:
 
 ```ts
-cloneIntegerArray(value: integer[]): integer[];
-cloneFloatArray(value: float[]): float[];
-cloneBooleanArray(value: boolean[]): boolean[];
+copyArray(value: any[]): any[];
 ```
 
 ### 13.15 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
@@ -6408,13 +6705,14 @@ removing it is sound.
 The generated code relies on two groups of functions:
 
 * supplied from outside, for every program, with or without `dyn`: the
-  communication API and the clone helpers (spec [§13.14](#communication-api));
+  communication API and the copy helper (spec [§13.14](#communication-api)), and BlueScript's own
+  `print` (spec [§7.18](#print-typing));
 * generated by the compiler into the runtime file (spec [§2.3](#output-files)), and imported from
   it (spec [§13.10](#runtime-import)):
   * the core helpers, for every program that calls them: `__nothing1` to
     `__nothing5` ([§14.1](#nothing)), and `__and` and `__or` ([§14.3](#and-or-helpers));
   * the dynamic-location runtime, for a program that uses `dyn` only
-    ([§14.4](#dyn-runtime)–[§14.13](#dyn-array-operations)).
+    ([§14.4](#dyn-runtime)–[§14.14](#dyn-print)).
 
 The `ts` blocks of this chapter are the runtime file itself, in the order they
 appear in it.
@@ -6480,8 +6778,10 @@ export function __nothing5(a1: any, a2: any, a3: any, a4: any, a5: any): null {
 * A helper's body only returns `null`. The call has already evaluated its
   arguments, left to right (spec [§5.17](#evaluation-order)), which is all the evaluation
   `nothing(...)` asks for, and the values are discarded.
-* Every parameter is `any`, so that one helper takes arguments of every type:
-  BlueScript has neither rest parameters nor type parameters.
+* Every parameter is `any`, so that one helper takes arguments of every type: a
+  BlueScript function takes neither rest parameters nor type parameters. (The
+  `<any>` of `new Array<any>(...)` is BlueScript's built-in array constructor,
+  not a type parameter of a function, spec [§13.3](#array-operation-code-generation).)
 
 ### 14.2 Where It Appears <a id="nothing-where-it-appears"></a>
 
@@ -6529,8 +6829,13 @@ endpoints, what is exported, and why every name begins with `__` — is stated
 with the file (spec [§2.3](#output-files)).
 
 * Its one endpoint-specific part is the constant `__here` ([§14.8](#location-functions)).
-* It calls the communication API and the clone helpers, which are supplied from
-  outside like everywhere else (spec [§13.14](#communication-api)). The core helpers call neither.
+* It calls the communication API, the copy helper and `print`, which are
+  supplied from outside like everywhere else (spec [§13.14](#communication-api), [§7.18](#print-typing)). The core
+  helpers call none of them.
+* It applies BlueScript's operators, `[]`, `.length` and `.push` to payloads
+  typed `any`. BlueScript carries each out for the type of the value the `any`
+  holds — an array payload is an `any[]` (spec [§13.3](#array-operation-code-generation)) — with the results and
+  limits of spec [§7.1.1](#array-types).
 
 The following sections give its content, in the order it appears in the file.
 The runtime assumes some BlueScript behaviour that has not yet been verified;
@@ -6668,8 +6973,8 @@ export function __dynAt(payload: any, loc: string): __DynVal {
   (spec [§7.10](#assignment-typing)).
 * An alias made with `=` shares the one `__DynVal`, and so its location variable.
 * The payload is a BlueScript `any`. One `__DynVal`, rather than one class and
-  one set of operations per base type, keeps the runtime small, and BlueScript
-  has no generics. An operation that needs the static type — a transfer or a
+  one set of operations per base type, keeps the runtime small, and a BlueScript
+  class cannot take a type parameter. An operation that needs the static type — a transfer or a
   copy — is given its kind by the compiler (spec [§14.12](#dyn-transfer-runtime)).
 * A payload that does not exist is `null`.
 
@@ -6757,6 +7062,8 @@ The others differ only in the operator applied to the two payloads:
   operands are in one class, so the result's location is theirs.
 * The two payloads always have the same representation, since the operands have
   the same base type (spec [§7.14](#operators)).
+* The operator is BlueScript's operator on two `any`s, so its result has the
+  limits of spec [§7.1.1](#array-types), and `===` and `!==` compare `float`s as held there.
 * `__dynAnd` and `__dynOr` receive both operands already evaluated, so the
   short-circuit of BlueScript's `&&` and `||` inside them changes nothing.
 
@@ -6798,8 +7105,8 @@ export function __dynFloatToInteger(v: __DynVal): __DynVal {
 ```
 
 * The payload is an `any`, so it is first brought back to its static type and
-  then converted with BlueScript's own `as`. This does not depend on whether `as`
-  on an `any` would convert.
+  then converted with BlueScript's own `as`, as a static conversion is
+  (spec [§13.5](#numeric-conversion-code-generation)): `as integer` on an `any` accepts only an integer.
 * The result shares the operand's location variable: a conversion changes the
   representation, not the location (spec [§7.15](#numeric-conversion)).
 * An endpoint that does not hold the payload does not convert, so `null as float`
@@ -6811,18 +7118,15 @@ generated for it (spec [§12.2](#dyn-lowering)).
 ### 14.12 Dynamic Transfer Runtime <a id="dyn-transfer-runtime"></a>
 
 A dynamic transfer (spec [§11.5](#dynamic-transfer)) is performed by `__dynTransfer`, with four
-helpers that dispatch on the kind the compiler passes: `__copyPayload` chooses the
-clone helper, and `__sendAny`, `__receiveAny` and `__broadcastAny` choose the
-communication API (the last is described after the code):
+helpers that dispatch on the kind the compiler passes: `__copyPayload` copies an
+array and leaves any other payload as it is, and `__sendAny`, `__receiveAny` and
+`__broadcastAny` choose the communication API (the last is described after the
+code):
 
 ```ts
 function __copyPayload(kind: string, v: any): any {
-  if (kind === "integerArray") {
-    return cloneIntegerArray(v);
-  } else if (kind === "floatArray") {
-    return cloneFloatArray(v);
-  } else if (kind === "booleanArray") {
-    return cloneBooleanArray(v);
+  if (kind === "array") {
+    return copyArray(v);
   } else {
     return v;
   }
@@ -6839,12 +7143,8 @@ function __sendAny(to: string, tag: string, kind: string, v: any): void {
     sendString(to, tag, v);
   } else if (kind === "null") {
     sendNull(to, tag, v);
-  } else if (kind === "integerArray") {
-    sendIntegerArray(to, tag, v);
-  } else if (kind === "floatArray") {
-    sendFloatArray(to, tag, v);
-  } else if (kind === "booleanArray") {
-    sendBooleanArray(to, tag, v);
+  } else if (kind === "array") {
+    sendArray(to, tag, v);
   }
 }
 
@@ -6859,12 +7159,8 @@ function __receiveAny(from: string, tag: string, kind: string): any {
     return receiveString(from, tag);
   } else if (kind === "null") {
     return receiveNull(from, tag);
-  } else if (kind === "integerArray") {
-    return receiveIntegerArray(from, tag);
-  } else if (kind === "floatArray") {
-    return receiveFloatArray(from, tag);
-  } else if (kind === "booleanArray") {
-    return receiveBooleanArray(from, tag);
+  } else if (kind === "array") {
+    return receiveArray(from, tag);
   }
   return null;
 }
@@ -6974,17 +7270,8 @@ export function __dynArrayLength(arr: __DynVal): __DynVal {
 The array literal functions (spec [§12.2](#dyn-lowering)):
 
 ```ts
-export function __dynArrayNew(kind: string): __DynVal {
-  if (kind === "integerArray") {
-    const a: integer[] = [];
-    return __dynUnbound(a);
-  } else if (kind === "floatArray") {
-    const a: float[] = [];
-    return __dynUnbound(a);
-  } else {
-    const a: boolean[] = [];
-    return __dynUnbound(a);
-  }
+export function __dynArrayNew(): __DynVal {
+  return __dynUnbound(new Array<any>([]));
 }
 
 export function __dynArrayAppend(arr: __DynVal, v: __DynVal): __DynVal {
@@ -6992,6 +7279,10 @@ export function __dynArrayAppend(arr: __DynVal, v: __DynVal): __DynVal {
   return arr;
 }
 ```
+
+`__dynArrayNew` builds its empty array the way generated code builds a static one
+(spec [§13.3](#array-operation-code-generation)), so that a payload array is an `any[]` like every other array, and
+`__dynArrayPush` can append to it.
 
 An array's payload stays consistent across endpoints as follows:
 
@@ -7001,6 +7292,26 @@ An array's payload stays consistent across endpoints as follows:
    the others' copies stay as they were;
 3. those stale copies are never read: a runtime function checks the location
    before it touches a payload whenever the array is bound (spec [§3.5](#dyn)).
+
+### 14.14 Dynamic Print <a id="dyn-print"></a>
+
+```ts
+export function __dynPrint(v: __DynVal): void {
+  const loc = __find(v.loc);
+  if (__holdsPayload(loc)) {
+    print(v.payload);
+  }
+}
+```
+
+* `__dynPrint` stands for `print(v)` with `v` at `dyn` (spec [§7.18](#print-typing)). It prints at the
+  endpoints that hold the payload: the owner once `v` is bound to an individual
+  location, and every endpoint while it is bound to `every` or unbound
+  (spec [§3.5](#dyn)).
+* It looks the location up with `__find` and never binds it, as
+  `__dynArrayLength` does (spec [§14.13](#dyn-array-operations)): printing a value adds no constraint.
+* `print` is BlueScript's own, supplied from outside like the communication API
+  (spec [§14](#runtime-support-functions)).
 
 ## 15. Examples <a id="examples"></a>
 
@@ -7392,17 +7703,17 @@ let ys: integer[]@bob <- xs;
 EPP at `alice`:
 
 ```ts
-let xs: integer[] = [1, 2, 3];
+let xs: any[] = new Array<any>([1, 2, 3]);
 xs[1] = 10;
 xs.push(20);
 let n: integer = xs.length;
-sendIntegerArray("bob", "__top_0", xs);
+sendArray("bob", "__top_0", xs);
 ```
 
 EPP at `bob`:
 
 ```ts
-let ys: integer[] = receiveIntegerArray("alice", "__top_0");
+let ys: any[] = receiveArray("alice", "__top_0");
 ```
 
 Input:
@@ -7415,7 +7726,7 @@ xs[0@every] = 10@every;
 EPP at all endpoints:
 
 ```ts
-let xs: integer[] = [1, 2, 3];
+let xs: any[] = new Array<any>([1, 2, 3]);
 xs[0] = 10;
 ```
 
@@ -7595,7 +7906,7 @@ endpoints (spec [§2.2](#choreobs-json)).
 ### 16.3 Location Annotation Omission <a id="location-annotation-omission"></a>
 
 A type annotation or a literal without a location annotation, whose location
-nothing infers (spec [§7.19](#type-inference)), is an error in strict mode (spec [§8.3](#strict-mode)) and
+nothing infers (spec [§7.20](#type-inference)), is an error in strict mode (spec [§8.3](#strict-mode)) and
 in a local function (spec [§16.4](#location-omission-in-a-local-function)). Otherwise it is `dyn` (spec [§8.2](#omitted-locations)).
 
 In strict mode:
@@ -7618,8 +7929,8 @@ function f@alice(a: integer): integer@alice {   // no initializer to read
 A local function's own location does not supply a default. Parameter types,
 written return types, and literals must all be annotated explicitly
 (spec [§8.1](#explicit-location-annotations)). The exceptions are the ones inference covers: an initialized `let`
-reads its location from its initializer (spec [§7.19.1](#let-type-inference)), a return type omitted
-altogether is inferred from the `return` statements (spec [§7.19.4](#function-return-type-inference)), and an
+reads its location from its initializer (spec [§7.20.1](#let-type-inference)), a return type omitted
+altogether is inferred from the `return` statements (spec [§7.20.4](#function-return-type-inference)), and an
 unlocated literal element of an annotated array literal takes the literal's
 location (spec [§5.16](#array-literals)).
 
@@ -7906,7 +8217,7 @@ let y <- x;
 ```
 
 Transfer declarations require an explicit destination type. Its location may be
-left out, making the destination `dyn` (spec [§7.19.3](#transfer-let-does-not-infer-destination-type)) — except in strict mode,
+left out, making the destination `dyn` (spec [§7.20.3](#transfer-let-does-not-infer-destination-type)) — except in strict mode,
 where that is an error too — but its base type may not.
 
 ### 16.20 Cannot Infer Function Return Type <a id="cannot-infer-function-return-type"></a>
@@ -7971,7 +8282,7 @@ function good@alice(c: boolean@alice) {
 ### 16.23 Incompatible Inferred Return Locations <a id="incompatible-inferred-return-locations"></a>
 
 In strict mode (spec [§8.3](#strict-mode)), returns at two different concrete locations have no
-inferred location. Otherwise the return type is `dyn` (spec [§7.19.4](#function-return-type-inference)). The
+inferred location. Otherwise the return type is `dyn` (spec [§7.20.4](#function-return-type-inference)). The
 same holds for a return type written without its location.
 
 ```ts
@@ -8005,7 +8316,7 @@ function add@alice(a, b) {
 ```
 
 Parameter types are not inferred in ChoreoBS v1. Only the location of a parameter
-type may be left out, in a choreography function (spec [§7.19.7](#parameter-types-are-not-inferred)).
+type may be left out, in a choreography function (spec [§7.20.7](#parameter-types-are-not-inferred)).
 
 ***
 
@@ -8238,6 +8549,7 @@ function f@alice() {        // the return type is omitted altogether
 
 []@alice;
 let x: integer@alice = []@alice[0@alice];
+print([]@alice);
 ```
 
 Allowed:
@@ -8448,7 +8760,7 @@ let y: void <- g();         // transfer destination
 
 A `return` value is a value position like any other, so a `void` computation is
 rejected there too — even inside a `void` function, where `return;` is the form
-to write (spec [§5.12](#return-statement), [§7.18](#return-typing)):
+to write (spec [§5.12](#return-statement), [§7.19](#return-typing)):
 
 ```ts
 function g@alice(): void { return; }
@@ -8458,8 +8770,8 @@ function h@alice(): void {
 }
 ```
 
-`xs.push(v)` is the other void computation (spec [§7.2](#located-types), [§7.16](#array-typing)), and is
-rejected in the same positions for the same reason:
+`xs.push(v)` and `print(e)` are the other void computations (spec [§7.2](#located-types), [§7.16](#array-typing), [§7.18](#print-typing)),
+and are rejected in the same positions for the same reason:
 
 ```ts
 function f@alice(a: integer@alice): void { return; }
@@ -8472,13 +8784,21 @@ let m: integer@alice = xs.push(1@alice); // cannot assign void
 f(xs.push(1@alice));                     // not assignable to the parameter
 ```
 
+```ts
+function g@alice(): void { return; }
+
+let n = print(1@alice);                  // produces no value
+print(g());                              // the argument produces no value
+let b = print(1@alice) === print(2@alice);   // `===` needs values
+```
+
 `void[]` is rejected separately, as an unsupported array element type
 (spec [§16.30](#unsupported-array-element-type)).
 
 ### 16.45 Missing Return in a Non-`void` Function <a id="missing-return-in-a-non-void-function"></a>
 
 A function whose return type is not `void` must return a value on every path
-(spec [§7.18](#return-typing), [§7.19.6](#return-coverage-for-non-void-functions)). This applies to a written return type just as it does to
+(spec [§7.19](#return-typing), [§7.20.6](#return-coverage-for-non-void-functions)). This applies to a written return type just as it does to
 an inferred one (spec [§16.20](#cannot-infer-function-return-type)).
 
 ```ts
@@ -8501,7 +8821,7 @@ function ok@alice(c: boolean@alice): integer@alice {
 }
 ```
 
-The analysis is the conservative one of [§7.19.6](#return-coverage-for-non-void-functions), so a function whose totality
+The analysis is the conservative one of [§7.20.6](#return-coverage-for-non-void-functions), so a function whose totality
 rests on a loop condition is rejected even when it does always return:
 
 ```ts
@@ -8808,6 +9128,27 @@ let ys = xs as float[];
 let x = 1@alice as float@bob;
 ```
 
+### 16.56 Invalid `print` Call <a id="invalid-print-call"></a>
+
+These are **parse** errors, reported before type checking.
+
+`print` takes exactly one argument (spec [§5.14](#expressions)):
+
+```ts
+print();
+print(1@alice, 2@alice);
+```
+
+Print each value on its own:
+
+```ts
+print(1@alice);
+print(2@alice);
+```
+
+Using `print(e)` where a value is expected is not a syntax error but a type
+error, because its result is `void` (spec [§7.18](#print-typing), [§16.44](#invalid-use-of-void)).
+
 ## 17. Non-goals and Future Extensions <a id="non-goals-and-future-extensions"></a>
 
 The following features are not part of ChoreoBS v1.
@@ -8886,9 +9227,12 @@ Future versions may add:
   instead of a loop (spec [§14.6](#location-errors));
 * path compression in `__root` (spec [§14.5](#location-variables));
 * building a `dyn` array of literals in one step (spec [§12.2](#dyn-lowering));
-* passing `kind` to dynamic operators and array operations, should operations on
-  a BlueScript `any` turn out not to behave like the static ones
-  (spec [§17.8](#unverified-bluescript-assumptions));
+* operations on array elements and `dyn` values that behave like the static
+  ones rather than as on BlueScript's `any` (spec [§7.1.1](#array-types)), for example by bringing
+  each value back to its static type first;
+* printing several values in one `print`, and printing a value with a label:
+  `+` joins only two strings, and v1 has no conversion to `string`
+  (spec [§7.18](#print-typing));
 * richer communication protocols;
 * additional array operations and local object support;
 * state-machine based EPP;
@@ -8920,34 +9264,10 @@ on BlueScript behaviour that has not yet been confirmed. Each point should be
 settled by running a small `.bs` program on BlueScript, and the runtime changed
 where it does not hold.
 
-1. **Operations on `any` give the same results as the static ones.** The
-   runtime applies `[]`, `.length`, `.push`, arithmetic — `integer / integer`,
-   `%`, `+` on strings — and `===` to payloads typed `any`. The two operands of a
-   dynamic operator always have the same base type (spec [§14.10](#dyn-operators)), so `integer`
-   and `float` are never mixed; what most needs checking is that
-   `integer / integer` is still integer division on `any`. Where an operation
-   does not behave the same, the compiler would pass the operation a `kind` as
-   well, and the runtime would bring the payload back to its static type first,
-   as in `const a: integer[] = arr.payload;`.
-2. **Converting from `any` to a static type.** The generated code uses the
-   `any` result of `__cast` where a static type is expected — in
-   `let x: integer = __cast(...)`, on the right of an assignment, as a
-   condition, as a call argument, as an array literal element, and in
-   `return __cast(...)`.
-   If `any` is not converted implicitly there, the compiler would emit
-   BlueScript's `as T` on the result, `T` being the destination base type. The
-   numeric conversion functions use `(v.payload as integer) as float` and the
-   like (spec [§14.11](#dyn-numeric-conversion)); this relies on `as` from `any` to the source type being
-   a checked unwrapping.
-3. **Writing `__LocVar`** (spec [§14.5](#location-variables)): a field of the class's own type
+1. **Writing `__LocVar`** (spec [§14.5](#location-variables)): a field of the class's own type
    (`parent: __LocVar`), storing `this` in a field in the constructor, and `===`
    comparing objects by reference.
-4. **Garbage collection** of `__LocVar` and `__DynVal` objects that are no longer
+2. **Garbage collection** of `__LocVar` and `__DynVal` objects that are no longer
    reachable.
-5. **How `__locationError` stops** (spec [§14.6](#location-errors)): whether `throw` is available,
+3. **How `__locationError` stops** (spec [§14.6](#location-errors)): whether `throw` is available,
    and what the platform's halt function is if it is not.
-6. **Passing a static value to an `any` parameter.** `__inject` (spec [§14.9](#inject-and-cast)) and
-   the `__nothing…` helpers (spec [§14.1](#nothing)) take `any` parameters, and the generated
-   code passes them values of every static type — `null`, strings and arrays
-   included. If a type is not converted to `any` implicitly at a call, the
-   compiler would emit BlueScript's `as any` on that argument.

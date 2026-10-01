@@ -1,8 +1,8 @@
 import type { CommKind } from "../ir/projected.js";
-import { isArrayCommKind } from "../comm/kind.js";
+import { ARRAY_COMM_KIND } from "../comm/kind.js";
 import {
   broadcastFunction,
-  cloneFunction,
+  copyFunction,
   receiveFunction,
   sendFunction,
 } from "../emit/comm.js";
@@ -24,13 +24,8 @@ export const ALL_COMM_KINDS: readonly CommKind[] = [
   "boolean",
   "string",
   "null",
-  "integerArray",
-  "floatArray",
-  "booleanArray",
+  "array",
 ];
-
-/** The array kinds, in the order of {@link ALL_COMM_KINDS} (spec §communication-api). */
-export const ARRAY_COMM_KINDS: readonly CommKind[] = ALL_COMM_KINDS.filter(isArrayCommKind);
 
 /**
  * Internal callee sentinels. They never reach the output as calls — the emitter
@@ -40,6 +35,15 @@ export const ARRAY_COMM_KINDS: readonly CommKind[] = ALL_COMM_KINDS.filter(isArr
  */
 export const ARRAY_SENTINEL = "__array";
 export const PUSH_SENTINEL = "__push";
+
+/**
+ * BlueScript's output function, supplied from outside like the communication
+ * API. `print(e)` is emitted as a call of it (spec §print-projection), so it is
+ * reserved: a user `print` would capture that call (spec §reserved-runtime-names).
+ * Unlike `length` and `push`, it is a name in the value namespace, not grammar
+ * after a `.`.
+ */
+export const PRINT_FUNCTION = "print";
 
 /**
  * Every compiler-introduced name starts with this, and the source language
@@ -68,14 +72,15 @@ export const TRANSFER_TEMP_PREFIX = "__transfer_";
 export const RESERVED_RUNTIME_NAMES: ReadonlySet<string> = new Set<string>([
   ARRAY_SENTINEL,
   PUSH_SENTINEL,
+  PRINT_FUNCTION,
   ...ALL_COMM_KINDS.flatMap((comm) => [
     sendFunction(comm),
     receiveFunction(comm),
     broadcastFunction(comm),
   ]),
-  // Only arrays are ever cloned (spec §communication-api): there is no
-  // `cloneInteger`, so that name is left to the program (spec §reserved-runtime-names).
-  ...ARRAY_COMM_KINDS.map(cloneFunction),
+  // Only arrays are ever copied (spec §communication-api): there is no
+  // `copyInteger`, so that name is left to the program (spec §reserved-runtime-names).
+  copyFunction(ARRAY_COMM_KIND),
 ]);
 
 export function isReservedRuntimeName(name: string): boolean {

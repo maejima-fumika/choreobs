@@ -3,9 +3,16 @@ import type { CommKind } from "../ir/projected.js";
 import { specRef } from "../spec/ref.js";
 
 /**
+ * The one kind every array type travels as, the only values ever copied: an
+ * array is a BlueScript `any[]` whatever its element type (spec §type-mapping,
+ * §communication-api).
+ */
+export const ARRAY_COMM_KIND = "array" satisfies CommKind;
+
+/**
  * The payload kind a value of `type` travels as (spec §communication-api).
  *
- * Endpoint projection picks the send, receive, broadcast and clone functions
+ * Endpoint projection picks the send, receive, broadcast and copy functions
  * by it, and a dynamic transfer passes it to the runtime as its `kind`
  * argument (spec §dynamic-transfer), which dispatches on it the same way.
  *
@@ -16,7 +23,10 @@ import { specRef } from "../spec/ref.js";
  */
 export function commKindForType(type: LocatedType): CommKind {
   if (type.isArray === true) {
-    return `${supportedArrayBase(type)}Array`;
+    // One kind carries every array. The element type is still checked: an
+    // unsupported one is an internal bug here as much as below.
+    supportedArrayBase(type);
+    return ARRAY_COMM_KIND;
   }
   const base = type.base;
   switch (base) {
@@ -60,14 +70,4 @@ export function supportedArrayBase(type: LocatedType): ArrayElementBase {
         `internal error: '${type.base}[]' is not a supported array type ${specRef("array-types")}`,
       );
   }
-}
-
-/** The kinds of the array types, the only values ever cloned (spec §communication-api). */
-export function isArrayCommKind(kind: CommKind): boolean {
-  return kind.endsWith("Array");
-}
-
-/** The element type an array kind holds: `integerArray` holds `integer`. */
-export function arrayCommKindElement(kind: CommKind): ArrayElementBase {
-  return kind.slice(0, -"Array".length) as ArrayElementBase;
 }

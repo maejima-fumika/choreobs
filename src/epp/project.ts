@@ -2,6 +2,7 @@ import type { Span } from "../ast/span.js";
 import type { Location } from "../ast/location.js";
 import type { CommTag, LocatedType, TransferMode } from "../ast/typed.js";
 import type { FunctionDeclaration } from "../ast/declarations.js";
+import { isNumericType } from "../ast/syntax-types.js";
 import type {
   LoweredProgram,
   TypedFunctionDeclaration,
@@ -14,6 +15,7 @@ import type {
   TypedAssignmentStatement,
   TypedTransferStatement,
   TypedPushExpression,
+  TypedPrintExpression,
   TypedIfStatement,
   TypedWhileStatement,
   TypedForStatement,
@@ -50,9 +52,10 @@ import type {
   AbsentExpression,
   ReceiveExpression,
 } from "../ir/projected.js";
-import { cloneFunction } from "../emit/comm.js";
+import { copyFunction } from "../emit/comm.js";
 import {
   ARRAY_SENTINEL,
+  PRINT_FUNCTION,
   PUSH_SENTINEL,
   TRANSFER_TEMP_PREFIX,
 } from "../runtime/names.js";
@@ -379,7 +382,7 @@ class Projector {
       const comm = commKindForType(choreoType);
       return {
         kind: "CallExpression",
-        callee: cloneFunction(comm),
+        callee: copyFunction(comm),
         args: [projectedSource],
         span,
       };
@@ -625,8 +628,17 @@ class Projector {
       }
       case "ConversionExpression": {
         const conv = expr as TypedConversionExpression;
+        const source = conv.operand.choreoType;
+        // The checker admits only a numeric operand (spec §numeric-conversion),
+        // and a `dyn` one is a runtime call by now (spec §dyn-lowering).
+        if (source.isArray === true || !isNumericType(source.base)) {
+          throw new Error(
+            `internal error: conversion of a non-numeric '${source.base}' reached endpoint projection`,
+          );
+        }
         return {
           kind: "ConversionExpression",
+          source: source.base,
           target: conv.expr.target,
           operand: this.projectExpression(conv.operand),
           span: expr.expr.span,
@@ -662,6 +674,19 @@ class Projector {
             this.projectExpression(push.target),
             this.projectExpression(push.value),
           ],
+          span: expr.expr.span,
+        };
+      }
+      case "PrintExpression": {
+        // A call of BlueScript's own `print` (spec §print-projection). A print left
+        // in the lowered program is static, so its `void` result carries the
+        // value's location, and this arm is reached exactly at the endpoints
+        // that hold the value.
+        const print = expr as TypedPrintExpression;
+        return {
+          kind: "CallExpression",
+          callee: PRINT_FUNCTION,
+          args: [this.projectExpression(print.value)],
           span: expr.expr.span,
         };
       }
@@ -752,6 +777,12 @@ class Projector {
         const push = expr as TypedPushExpression;
         return this.nothingExpression([this.projectDiscarded(push.value)], span);
       }
+      case "PrintExpression": {
+        // Nothing is printed here, but the argument is still evaluated
+        // (spec §print-projection).
+        const print = expr as TypedPrintExpression;
+        return this.nothingExpression([this.projectDiscarded(print.value)], span);
+      }
       case "ArrayLiteralExpression": {
         const array = expr as TypedArrayLiteralExpression;
         return this.nothingExpression(
@@ -839,7 +870,9 @@ class Projector {
   }
 
   /**
-   * BlueScript type name for a resident located type (spec §type-mapping).
+   * The projected base type of a resident located type. An array keeps its
+   * element type here; code generation writes every array type as `any[]`
+   * (spec §type-mapping).
    *
    * The array arm used to fall back to `boolean[]` for anything that was not
    * `integer` or `float`, which quietly rendered an unsupported element type as

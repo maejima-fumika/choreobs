@@ -37,6 +37,7 @@ import type {
   TypedParenthesizedExpression,
   TypedProgram,
   TypedPushExpression,
+  TypedPrintExpression,
   TypedReturnStatement,
   TypedRuntimeCallExpression,
   TypedStatement,
@@ -501,6 +502,14 @@ class DynLowerer {
         }
         return this.dynamic("__dynArrayPush", [target, value], push.choreoType, span);
       }
+      case "PrintExpression": {
+        const print = expr as TypedPrintExpression;
+        const value = this.expr(print.value);
+        if (!isDyn(print.choreoType.location)) {
+          return { ...print, value };
+        }
+        return this.dynamic("__dynPrint", [value], print.choreoType, span);
+      }
       case "ParenthesizedExpression": {
         const paren = expr as TypedParenthesizedExpression;
         const inner = this.expr(paren.expression);
@@ -517,7 +526,7 @@ class DynLowerer {
   }
 
   /**
-   * `[e1, …, en]@dyn` is built one element at a time onto a typed empty array,
+   * `[e1, …, en]@dyn` is built one element at a time onto an empty array,
    * whatever the elements are (spec §dyn-lowering). A concrete array
    * literal stays a literal; its `dyn` elements are cast to its location.
    */
@@ -528,12 +537,7 @@ class DynLowerer {
       return { ...array, elements };
     }
     const span = array.expr.span;
-    let built: TypedExpression = this.call(
-      "__dynArrayNew",
-      [this.constant(commKindForType(array.choreoType), span)],
-      array.choreoType,
-      span,
-    );
+    let built: TypedExpression = this.call("__dynArrayNew", [], array.choreoType, span);
     for (const element of elements) {
       built = this.call("__dynArrayAppend", [built, element], array.choreoType, span);
     }

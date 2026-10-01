@@ -420,6 +420,12 @@ xs.push(sends());
         /^__nothing1\(sends\(\)\);$/m,
       );
     });
+
+    it("keeps a call in the argument of a print made elsewhere (spec §print-projection)", () => {
+      const bob = bobOf("print(sends());");
+      assert.match(bob, /^__nothing1\(sends\(\)\);$/m);
+      assert.doesNotMatch(bob, /\bprint\(/);
+    });
   });
 
   describe("§transfer-projection a transfer source is evaluated at every endpoint", () => {

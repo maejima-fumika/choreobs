@@ -611,6 +611,7 @@ class Generator {
       "transferStatement",
       "indexAssignment",
       "push",
+      "print",
       "call",
     ];
     if (blockDepth < this.maxBlockDepth) {
@@ -632,6 +633,8 @@ class Generator {
         return this.genIndexAssignment(scope, ctx, indent, blockDepth);
       case "push":
         return this.genPush(scope, ctx, indent, blockDepth);
+      case "print":
+        return this.genPrint(scope, ctx, indent);
       case "call":
         return this.genCallStatement(scope, ctx, indent, blockDepth);
       case "if":
@@ -790,6 +793,15 @@ class Generator {
     );
     this.features.add("array:push");
     this.emit(indent, `${target.name}.push(${value});`);
+  }
+
+  /** `print(e)` of a value of any type at any location (spec §print-typing). */
+  private genPrint(scope: Binding[], ctx: Ctx, indent: string): void {
+    const ty = this.someType();
+    const loc = this.someLocation(ctx);
+    const value = this.genExpr(ty, loc, scope, ctx, 1);
+    this.features.add(`print:${loc === "every" || loc === "dyn" ? loc : "individual"}`);
+    this.emit(indent, `print(${value});`);
   }
 
   private genCallStatement(
@@ -1173,6 +1185,18 @@ class Generator {
         lines.push(`let ${n}: integer[]@${p} = [1]@${p};`);
         lines.push(`let ${n}b: integer@${p} = ${n}.push(1@${p});`);
         break;
+      case "printAsValue":
+        lines.push(`let ${n} = print(1@${p});`);
+        break;
+      case "printVoidArgument":
+        // The argument of a print is a value position too (spec §print-typing).
+        lines.push(`let ${n}: integer[]@${p} = [1]@${p};`);
+        lines.push(`print(${n}.push(1@${p}));`);
+        break;
+      case "printArity":
+        // A parse error: `print` takes exactly one argument (spec §invalid-print-call).
+        lines.push(`print(1@${p}, 2@${p});`);
+        break;
       case "voidValue": {
         // The annotated form is caught by §invalid-use-of-void; this is the inferred path,
         // where the `let` takes its type straight from the initializer.
@@ -1479,6 +1503,9 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
     spec: "invalid-use-of-void",
     expect: ["cannot assign void", "produces no value"],
   },
+  { id: "printAsValue", spec: "invalid-use-of-void", expect: ["produces no value"] },
+  { id: "printVoidArgument", spec: "invalid-use-of-void", expect: ["produces no value"] },
+  { id: "printArity", spec: "invalid-print-call", expect: ["takes exactly one argument"] },
   { id: "reservedCompilerPrefix", spec: "function-names", expect: ["reserved runtime name"] },
   { id: "voidValue", spec: "invalid-use-of-void", expect: ["produces no value"] },
   { id: "arrayLiteralWithLocatedElements", spec: "array-literal-without-required-location", expect: ["location annotation required"], strict: true },

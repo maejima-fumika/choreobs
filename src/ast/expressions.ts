@@ -23,6 +23,7 @@ export type Expression =
   | IndexExpression
   | LengthExpression
   | PushExpression
+  | PrintExpression
   | ParenthesizedExpression;
 
 export interface BinaryExpression extends AstNode {
@@ -101,6 +102,19 @@ export interface LengthExpression extends AstNode {
 export interface PushExpression extends AstNode {
   readonly kind: "PushExpression";
   readonly target: Expression;
+  readonly value: Expression;
+}
+
+/**
+ * `print(e)` — writes a value to the output of the endpoints that hold it
+ * (spec §print-typing).
+ *
+ * A compiler-known operation, not a call: `print` followed by `(` always
+ * parses to this node (spec §expressions). Like a push it is `void`, so it can
+ * only stand as an expression statement.
+ */
+export interface PrintExpression extends AstNode {
+  readonly kind: "PrintExpression";
   readonly value: Expression;
 }
 

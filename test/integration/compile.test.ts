@@ -152,7 +152,7 @@ let xs: float[]@alice = [1.1, 2.2]@alice;
 let ys: float[]@alice <- xs;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /let ys: float\[\] = cloneFloatArray\(xs\);/);
+      assert.match(bs(result, "alice"), /let ys: any\[\] = copyArray\(xs\);/);
       assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
     });
 
@@ -176,10 +176,10 @@ ys <- xs;
 `);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      assert.match(alice, /broadcastFloatArray\("__top_0", xs\);/);
-      // The sender must not alias `xs`; it clones like every receiver does.
-      assert.match(alice, /ys = cloneFloatArray\(xs\);/);
-      assert.match(bs(result, "bob"), /ys = receiveFloatArray\("alice", "__top_0"\);/);
+      assert.match(alice, /broadcastArray\("__top_0", xs\);/);
+      // The sender must not alias `xs`; it copies like every receiver does.
+      assert.match(alice, /ys = copyArray\(xs\);/);
+      assert.match(bs(result, "bob"), /ys = receiveArray\("alice", "__top_0"\);/);
     });
 
     it("converts at the sender when the source is a conversion (spec §numeric-conversion)", () => {
@@ -188,7 +188,7 @@ let n: integer@alice = 3@alice;
 let m: float@bob <- n as float;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendFloat\("bob", "__top_0", \(n as float\)\);/);
+      assert.match(bs(result, "alice"), /sendFloat\("bob", "__top_0", \(\(n as integer\) as float\)\);/);
       assert.equal(bs(result, "bob"), `let m: float = receiveFloat("alice", "__top_0");`);
     });
   });
@@ -208,8 +208,8 @@ let y: float@alice = relay(n) as float;
 `);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      assert.match(alice, /let x: float = \(n as float\);/);
-      assert.match(alice, /let y: float = \(relay\(n\) as float\);/);
+      assert.match(alice, /let x: float = \(\(n as integer\) as float\);/);
+      assert.match(alice, /let y: float = \(\(relay\(n\) as integer\) as float\);/);
       const bob = bs(result, "bob");
       // Only the call survives, bare: no `as`, and no `nothing(...)` around it,
       // unlike a unary operator (spec §binary-and-unary-operation-projection).
@@ -226,8 +226,8 @@ let y: float@alice = x as integer + 1@alice as float;
 `);
       expectSuccess(result);
       const alice = bs(result, "alice");
-      assert.match(alice, /let x: float = 1\.5 \+ \(n as float\);/);
-      assert.match(alice, /let y: float = \(\(x as integer\) \+ 1 as float\);/);
+      assert.match(alice, /let x: float = 1\.5 \+ \(\(n as integer\) as float\);/);
+      assert.match(alice, /let y: float = \(\(\(\(x as float\) as integer\) \+ 1 as integer\) as float\);/);
     });
   });
 
@@ -456,7 +456,7 @@ let n: integer@alice = f();
 `);
       expectSuccess(result);
       // A transfer at one location is a fresh copy, and emits no communication.
-      assert.match(bs(result, "alice"), /let ys: float\[\] = cloneFloatArray\(xs\);/);
+      assert.match(bs(result, "alice"), /let ys: any\[\] = copyArray\(xs\);/);
       assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
     });
 
@@ -532,7 +532,7 @@ let n: integer@every <- nextValue();
       assert.match(alice, /let n: integer = __transfer_0;/);
     });
 
-    it("§transfer-typing clones the same array it broadcasts", () => {
+    it("§transfer-typing copies the same array it broadcasts", () => {
       const result = compile(`
 function makeArray(): integer[]@alice { return [1, 2]@alice; }
 let xs: integer[]@every <- makeArray();
@@ -543,8 +543,8 @@ let xs: integer[]@every <- makeArray();
         .split("\n")
         .filter((l) => l.includes("makeArray()") && !l.startsWith("function"));
       assert.equal(calls.length, 1, alice);
-      assert.match(alice, /broadcastIntegerArray\("__top_0", __transfer_0\);/);
-      assert.match(alice, /let xs: integer\[\] = cloneIntegerArray\(__transfer_0\);/);
+      assert.match(alice, /broadcastArray\("__top_0", __transfer_0\);/);
+      assert.match(alice, /let xs: any\[\] = copyArray\(__transfer_0\);/);
     });
 
     it("§transfer-typing uses a plain identifier source directly, with no temporary", () => {
@@ -638,6 +638,31 @@ while (false@every) {
     });
   });
 
+  describe("print (spec §print-projection)", () => {
+    it("compiles it to BlueScript's print at the endpoints that hold the value", () => {
+      const result = compile(`
+function show@alice(a: integer@alice): void {
+  print(a);
+}
+let x: integer@alice = 10@alice;
+print(x);
+show(x);
+let e: boolean@every = true@every;
+print(e);
+let xs: integer[]@alice = [1, 2]@alice;
+print(xs);
+`);
+      expectSuccess(result);
+      const alice = bs(result, "alice");
+      assert.match(alice, /^ {2}print\(a\);$/m);
+      assert.match(alice, /^print\(x\);$/m);
+      assert.match(alice, /^print\(e\);$/m);
+      assert.match(alice, /^print\(xs\);$/m);
+      // bob holds only the `@every` value, and needs nothing from the runtime.
+      assert.equal(bs(result, "bob"), "let e: boolean = true;\nprint(e);");
+    });
+  });
+
   describe("mutable array integration", () => {
     it("compiles array operations and communication", () => {
       const result = compile(`
@@ -648,8 +673,8 @@ let n: integer@alice = xs.length;
 let ys: integer[]@bob <- xs;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /sendIntegerArray\("bob", "__top_0", xs\)/);
-      assert.match(bs(result, "bob"), /receiveIntegerArray\("alice", "__top_0"\)/);
+      assert.match(bs(result, "alice"), /sendArray\("bob", "__top_0", xs\)/);
+      assert.match(bs(result, "bob"), /receiveArray\("alice", "__top_0"\)/);
     });
 
     it("rejects assigning @every array to individual-location array", () => {

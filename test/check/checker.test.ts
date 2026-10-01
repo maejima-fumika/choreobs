@@ -3,7 +3,8 @@ import { describe, it } from "node:test";
 import { checkSource, tagSource } from "../support/pipeline.js";
 import { assertCites } from "../support/spec.js";
 import { aliceBobStrict } from "../support/config.js";
-import type { TypedProgram } from "../../src/ast/typed.js";
+import { expectChecks, topLevelStatements } from "../support/check.js";
+import type { TypedExpressionStatement, TypedProgram } from "../../src/ast/typed.js";
 
 /**
  * The transfer statement at top-level item `index`, with its assigned
@@ -321,21 +322,35 @@ function sendInteger@alice(): void {
   });
 
   it("rejects a variable named after a runtime support function (spec §function-names, §codegen-function-names)", () => {
-    const { typed, errors } = checkSource(`
-let cloneFloatArray: integer@alice = 1@alice;
+    for (const name of ["copyArray", "sendArray", "receiveArray", "broadcastArray"]) {
+      const { typed, errors } = checkSource(`
+let ${name}: integer@alice = 1@alice;
 `);
-    assert.equal(typed, null);
-    assert.ok(
-      errors.some((e) => e.message.includes("reserved runtime name")),
-      JSON.stringify(errors),
-    );
+      assert.equal(typed, null, name);
+      assert.ok(
+        errors.some((e) => e.message.includes("reserved runtime name")),
+        JSON.stringify(errors),
+      );
+    }
   });
 
-  it("leaves the names of scalar clones, which do not exist, to the program (spec §reserved-runtime-names)", () => {
+  it("leaves the names of the per-element-type array API, which no longer exists, to the program (spec §reserved-runtime-names)", () => {
     const { typed, errors } = checkSource(`
-let cloneInteger: integer@alice = 1@alice;
-let cloneString: string@alice = "s"@alice;
-function cloneNull@alice(): void {
+let cloneFloatArray: integer@alice = 1@alice;
+let cloneArray: integer@alice = 3@alice;
+let sendIntegerArray: integer@alice = 2@alice;
+function receiveBooleanArray@alice(): void {
+  return;
+}
+`);
+    assert.notEqual(typed, null, JSON.stringify(errors));
+  });
+
+  it("leaves the names of scalar copies, which do not exist, to the program (spec §reserved-runtime-names)", () => {
+    const { typed, errors } = checkSource(`
+let copyInteger: integer@alice = 1@alice;
+let copyString: string@alice = "s"@alice;
+function copyNull@alice(): void {
   return;
 }
 `);
@@ -833,6 +848,107 @@ return x;
         errors.some((e) => e.message.includes("'.push' requires an array")),
         JSON.stringify(errors),
       );
+    });
+  });
+
+  describe("`print` (spec §print-typing)", () => {
+    function accepts(source: string): void {
+      const { typed, errors } = checkSource(source);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      assert.ok(typed);
+    }
+
+    function rejects(source: string, needle: string): void {
+      const { typed, errors } = checkSource(source);
+      assert.equal(typed, null);
+      assert.ok(errors.some((e) => e.message.includes(needle)), JSON.stringify(errors));
+    }
+
+    it("accepts a value of every value type, at an individual location and at every", () => {
+      accepts(`
+let xs: integer[]@alice = [1]@alice;
+print(1@alice);
+print(1.5@alice);
+print(true@alice);
+print("s"@alice);
+print(null@alice);
+print(xs);
+print(1@every);
+print(1.5@every);
+print(true@every);
+print("s"@every);
+print(null@every);
+print([1, 2]@every);
+`);
+    });
+
+    it("accepts a print in a local function and in a choreography function (spec §call-in-a-local-context)", () => {
+      accepts(`
+function f@alice(a: integer@alice): void {
+  print(a);
+  print(a + 1@alice);
+}
+function g(): void {
+  print(1@bob);
+}
+`);
+    });
+
+    it("carries the printed value's location on its void result", () => {
+      // Never written or shown, but it is what decides where the print happens
+      // (spec §print-projection).
+      const [stmt] = topLevelStatements(expectChecks(`print(1@bob);`));
+      assert.ok(stmt?.stmt.kind === "ExpressionStatement");
+      const { choreoType } = (stmt as TypedExpressionStatement).expression;
+      assert.equal(choreoType.base, "void");
+      assert.deepEqual(choreoType.location, { kind: "individual", name: "bob" });
+    });
+
+    // A void computation (spec §located-types, §invalid-use-of-void): each value position rejects it
+    // with its own message, as it rejects `xs.push(v)`.
+    it("rejects it as an inferred let initializer", () => {
+      rejects(`let n = print(1@alice);`, "produces no value");
+    });
+
+    it("rejects it as an annotated let initializer", () => {
+      rejects(`let n: integer@alice = print(1@alice);`, "cannot assign void");
+    });
+
+    it("rejects it as a call argument", () => {
+      rejects(
+        `function f@alice(a: integer@alice): void { return; }\nf(print(1@alice));`,
+        "argument type void",
+      );
+    });
+
+    it("rejects it as an operand of === (spec §invalid-comparison-or-equality-operands)", () => {
+      rejects(
+        `let b: boolean@alice = print(1@alice) === print(2@alice);`,
+        "requires operands that produce a value",
+      );
+    });
+
+    it("rejects a void computation as its argument", () => {
+      rejects(`function g@alice(): void { return; }\nprint(g());`, "produces no value");
+      rejects(`let xs: integer[]@alice = []@alice;\nprint(xs.push(1@alice));`, "produces no value");
+      rejects(`print(print(1@alice));`, "produces no value");
+    });
+
+    it("rejects an empty array literal as its argument (spec §cannot-infer-empty-array-element-type)", () => {
+      rejects(`print([]@alice);`, "cannot infer empty array element type");
+    });
+
+    it("keeps a local function's print at the function's location", () => {
+      rejects(
+        `function f@alice(): void {\n  print(1@bob);\n}`,
+        "value at bob is not usable in local function at alice",
+      );
+    });
+
+    it("reserves the name `print` (spec §reserved-runtime-names)", () => {
+      rejects(`function print@alice(): void { return; }`, "reserved runtime name");
+      rejects(`let print: integer@alice = 1@alice;`, "reserved runtime name");
+      rejects(`function f@alice(print: integer@alice): void { return; }`, "reserved runtime name");
     });
   });
 

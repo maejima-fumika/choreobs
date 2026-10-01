@@ -163,7 +163,7 @@ let y: integer@alice <- x;
     assert.doesNotMatch(alice, /broadcastInteger/);
   });
 
-  it("emits an array local copy with clone helper (spec §local-copy)", () => {
+  it("emits an array local copy with the copy helper (spec §local-copy)", () => {
     const alice = pipeline(
       `
 let xs: float[]@every = [1.1, 2.2]@every;
@@ -171,11 +171,11 @@ let ys: float[]@alice <- xs;
 `,
       "alice",
     );
-    assert.match(alice, /let xs: float\[] = \[1\.1, 2\.2\];/);
-    assert.match(alice, /let ys: float\[] = cloneFloatArray\(xs\);/);
-    assert.doesNotMatch(alice, /sendFloatArray/);
-    assert.doesNotMatch(alice, /receiveFloatArray/);
-    assert.doesNotMatch(alice, /broadcastFloatArray/);
+    assert.match(alice, /let xs: any\[] = new Array<any>\(\[1\.1, 2\.2\]\);/);
+    assert.match(alice, /let ys: any\[] = copyArray\(xs\);/);
+    assert.doesNotMatch(alice, /sendArray/);
+    assert.doesNotMatch(alice, /receiveArray/);
+    assert.doesNotMatch(alice, /broadcastArray/);
   });
 
   it("emits average use case with localized array argument", () => {
@@ -194,10 +194,11 @@ let avg: float@alice = average(arrAlice);
 `,
       "alice",
     );
-    assert.match(alice, /cloneFloatArray\(arr\)/);
+    assert.match(alice, /copyArray\(arr\)/);
     assert.match(alice, /average\(arrAlice\)/);
-    assert.match(alice, /return sum \/ \(arr\.length as float\);/);
-    assert.doesNotMatch(alice, /sendFloatArray/);
+    assert.match(alice, /function average\(arr: any\[\]\): float \{/);
+    assert.match(alice, /return sum \/ \(\(arr\.length as integer\) as float\);/);
+    assert.doesNotMatch(alice, /sendArray/);
   });
 
   it("emits array builtins and array communication APIs", () => {
@@ -211,11 +212,11 @@ let ys: integer[]@bob <- xs;
 `,
       "alice",
     );
-    assert.match(alice, /let xs: integer\[] = \[1, 2, 3\];/);
+    assert.match(alice, /let xs: any\[] = new Array<any>\(\[1, 2, 3\]\);/);
     assert.match(alice, /xs\[1\] = 10;/);
     assert.match(alice, /xs\.push\(20\);/);
     assert.match(alice, /let n: integer = xs\.length;/);
-    assert.match(alice, /sendIntegerArray\("bob", "__top_0", xs\);/);
+    assert.match(alice, /sendArray\("bob", "__top_0", xs\);/);
 
     const bob = pipeline(
       `
@@ -224,7 +225,45 @@ let ys: integer[]@bob <- xs;
 `,
       "bob",
     );
-    assert.match(bob, /receiveIntegerArray\("alice", "__top_0"\)/);
+    assert.match(bob, /let ys: any\[] = receiveArray\("alice", "__top_0"\);/);
+  });
+
+  it("writes every array type as any[] and builds every array literal with new Array<any> (spec §type-mapping, §array-operation-code-generation)", () => {
+    const alice = pipeline(
+      `
+let bs: boolean[]@alice = [true, false]@alice;
+let fs: float[]@alice = []@alice;
+function first@alice(xs: integer[]@alice): integer[]@alice {
+  return xs;
+}
+let ys: integer[]@alice = first([4]@alice);
+`,
+      "alice",
+    );
+    assert.match(alice, /let bs: any\[] = new Array<any>\(\[true, false\]\);/);
+    assert.match(alice, /let fs: any\[] = new Array<any>\(\[\]\);/);
+    assert.match(alice, /function first\(xs: any\[\]\): any\[\] \{/);
+    assert.match(alice, /let ys: any\[] = first\(new Array<any>\(\[4\]\)\);/);
+    assert.doesNotMatch(alice, /(integer|float|boolean)\[\]/);
+  });
+
+  it("names the operand's type first in a conversion between two types (spec §numeric-conversion-code-generation)", () => {
+    const alice = pipeline(
+      `
+let fs: float[]@alice = [1.5]@alice;
+let i: integer@alice = 2@alice;
+let a: integer@alice = fs[0@alice] as integer;
+let b: float@alice = i as float;
+let c: integer@alice = i as integer;
+let d: integer@alice = (fs[0@alice] + 1.0@alice) as integer;
+`,
+      "alice",
+    );
+    assert.match(alice, /let a: integer = \(\(fs\[0\] as float\) as integer\);/);
+    assert.match(alice, /let b: float = \(\(i as integer\) as float\);/);
+    // A conversion to the operand's own type is one step already.
+    assert.match(alice, /let c: integer = \(i as integer\);/);
+    assert.match(alice, /let d: integer = \(\(\(fs\[0\] \+ 1\.0\) as float\) as integer\);/);
   });
 
   it("emits && and || as the non-short-circuiting helpers (spec §logical-operator-code-generation)", () => {

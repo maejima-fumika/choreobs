@@ -27,6 +27,7 @@ import type {
   IndexExpression,
   LengthExpression,
   PushExpression,
+  PrintExpression,
   ParenthesizedExpression,
 } from "./expressions.js";
 import type { LocatedLiteral } from "./literals.js";
@@ -243,6 +244,7 @@ export type TypedExpression =
   | TypedIndexExpression
   | TypedLengthExpression
   | TypedPushExpression
+  | TypedPrintExpression
   | TypedParenthesizedExpression
   | TypedRuntimeCallExpression;
 
@@ -322,6 +324,17 @@ export interface TypedPushExpression {
    */
   readonly choreoType: LocatedType;
   readonly target: TypedExpression;
+  readonly value: TypedExpression;
+}
+
+export interface TypedPrintExpression {
+  readonly expr: PrintExpression;
+  /**
+   * Always `void` (spec §print-typing). The location is the printed value's, and is
+   * never written or shown (spec §void): it is what tells lowering whether the
+   * print is dynamic, and endpoint projection which endpoints print.
+   */
+  readonly choreoType: LocatedType;
   readonly value: TypedExpression;
 }
 

@@ -28,6 +28,7 @@ import type {
   TypedLiteralExpression,
   TypedParenthesizedExpression,
   TypedPushExpression,
+  TypedPrintExpression,
   TypedReturnStatement,
   TypedRuntimeCallExpression,
   TypedStatement,
@@ -267,6 +268,12 @@ class LoweredVerifier {
         this.concrete(location, "push", span);
         this.placed(push.target, location, "array");
         this.placed(push.value, location, "pushed value");
+        return;
+      }
+      case "PrintExpression": {
+        const print = expr as TypedPrintExpression;
+        this.concrete(location, "print", span);
+        this.placed(print.value, location, "printed value");
         return;
       }
       case "ParenthesizedExpression":

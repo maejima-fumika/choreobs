@@ -172,6 +172,47 @@ let y: integer@bob <- x;`;
     });
   });
 
+  describe("print syntax (spec §expressions, §invalid-print-call)", () => {
+    function onlyStatement(source: string) {
+      const { program, errors } = parse(source);
+      assert.equal(errors.length, 0, JSON.stringify(errors));
+      const item = program?.items[0];
+      assert.ok(item?.kind === "TopLevelStatement");
+      return item.statement;
+    }
+
+    it("parses `print(e);` as a PrintExpression statement", () => {
+      const stmt = onlyStatement(`print(1@alice + 2@alice);`);
+      assert.ok(stmt.kind === "ExpressionStatement");
+      assert.equal(stmt.expression.kind, "PrintExpression");
+      if (stmt.expression.kind !== "PrintExpression") return;
+      assert.equal(stmt.expression.value.kind, "BinaryExpression");
+    });
+
+    it("never parses `print(...)` as a call", () => {
+      // The typing rule rejects it as a value; the parser still builds the node.
+      const stmt = onlyStatement(`let n = print(x);`);
+      assert.ok(stmt.kind === "LetStatement");
+      assert.equal(stmt.initializer.kind, "PrintExpression");
+    });
+
+    it("reads a bare `print` as an identifier", () => {
+      const stmt = onlyStatement(`let y = print;`);
+      assert.ok(stmt.kind === "LetStatement");
+      assert.equal(stmt.initializer.kind, "IdentifierExpression");
+    });
+
+    it("takes exactly one argument", () => {
+      for (const source of [`print();`, `print(1@alice, 2@alice);`]) {
+        const { program, errors } = parse(source);
+        assert.equal(program, null);
+        assert.equal(errors.length, 1, JSON.stringify(errors));
+        assert.ok(errors[0]!.message.includes("'print' takes exactly one argument"));
+        assert.ok(errors[0]!.spec.includes("invalid-print-call"));
+      }
+    });
+  });
+
   describe("numeric conversion syntax (spec §expressions, §numeric-conversion)", () => {
     /** The tree with every node parenthesized, so precedence is visible. */
     function shape(expr: Expression): string {

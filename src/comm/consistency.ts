@@ -12,6 +12,7 @@ import { childExpressions } from "../ir/traverse.js";
 import type { SpecCited, SpecRefs } from "../spec/ref.js";
 import { TOP_SCOPE } from "./tags.js";
 import { ALL_COMM_KINDS } from "../runtime/names.js";
+import { receiveFunction, sendFunction } from "../emit/comm.js";
 import {
   DYN_LOCATION_NAME,
   DYN_TRANSFER,
@@ -491,7 +492,7 @@ class CommConsistencyChecker {
       );
       if (match === undefined) {
         this.error(
-          `missing receive${capitalize(broadcast.comm)}("${broadcast.endpoint}", "${broadcast.tag}") at ${endpoint} for broadcast from ${broadcast.endpoint} (scope ${broadcast.scope})`,
+          `missing ${receiveFunction(broadcast.comm)}("${broadcast.endpoint}", "${broadcast.tag}") at ${endpoint} for broadcast from ${broadcast.endpoint} (scope ${broadcast.scope})`,
           broadcast.span,
         );
       }
@@ -499,7 +500,7 @@ class CommConsistencyChecker {
     for (const recv of receives) {
       if (recv.peer !== broadcast.endpoint) {
         this.error(
-          `receive${capitalize(recv.comm)}("${recv.peer}", "${recv.tag}") at ${recv.endpoint} names a source other than broadcaster ${broadcast.endpoint} (scope ${recv.scope})`,
+          `${receiveFunction(recv.comm)}("${recv.peer}", "${recv.tag}") at ${recv.endpoint} names a source other than broadcaster ${broadcast.endpoint} (scope ${recv.scope})`,
           recv.span,
         );
       }
@@ -519,7 +520,7 @@ class CommConsistencyChecker {
       );
       if (match === undefined) {
         this.error(
-          `missing receive${capitalize(send.comm)}("${send.endpoint}", "${send.tag}") at ${send.peer} for send from ${send.endpoint} (scope ${send.scope})`,
+          `missing ${receiveFunction(send.comm)}("${send.endpoint}", "${send.tag}") at ${send.peer} for send from ${send.endpoint} (scope ${send.scope})`,
           send.span,
         );
       }
@@ -533,7 +534,7 @@ class CommConsistencyChecker {
       );
       if (match === undefined) {
         this.error(
-          `missing send${capitalize(recv.comm)}("${recv.endpoint}", "${recv.tag}", ...) at ${recv.peer} for receive at ${recv.endpoint} (scope ${recv.scope})`,
+          `missing ${sendFunction(recv.comm)}("${recv.endpoint}", "${recv.tag}", ...) at ${recv.peer} for receive at ${recv.endpoint} (scope ${recv.scope})`,
           recv.span,
         );
       }
@@ -606,8 +607,4 @@ function pathsEqual(a: ControlPath, b: ControlPath): boolean {
 
 function formatPath(path: ControlPath): string {
   return path.length === 0 ? "<top level>" : path.join(" > ");
-}
-
-function capitalize(comm: CommKind): string {
-  return comm.charAt(0).toUpperCase() + comm.slice(1);
 }
