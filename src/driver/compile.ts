@@ -1,5 +1,5 @@
-import { basename, dirname, extname, join } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
+import { readFileSync } from "node:fs";
 import { parse, type ParseError } from "../parser/index.js";
 import { typeCheck, type TypeCheckError } from "../check/index.js";
 import { projectAll } from "../epp/index.js";
@@ -9,7 +9,6 @@ import { emit } from "../emit/index.js";
 import { lowerProgram } from "../lower/index.js";
 import { importsDynRuntime, runtimeImports } from "../runtime/imports.js";
 import { runtimeSource } from "../runtime/source.js";
-import { runtimeModuleName } from "../runtime/dyn.js";
 import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
 import {
   assignCommTags,
@@ -19,15 +18,20 @@ import {
 } from "../comm/index.js";
 import type { SpecCited } from "../spec/ref.js";
 import {
+  compilerConfig,
   loadConfig,
-  defaultConfigPath,
   validateEndpoints,
   ConfigError,
+  type ChoreoBSConfig,
+  type ProjectConfig,
 } from "../config/index.js";
-import type { ChoreoBSConfig } from "../config/types.js";
+import { configPath, sourcePath } from "../workspace/layout.js";
 import type { LexicalError } from "../lexer/index.js";
 
-/** A failure the driver reports itself: an unreadable or invalid config. */
+/**
+ * A failure the driver reports itself: an unreadable or invalid config, a
+ * missing source file, or a workspace that does not match the config.
+ */
 export interface DriverDiagnostic extends SpecCited {
   readonly message: string;
   readonly span?: { start: number; end: number };
@@ -40,9 +44,12 @@ export type CompileDiagnostic =
   | CommConsistencyDiagnostic
   | DriverDiagnostic;
 
+/**
+ * One file's text for one endpoint. Where it goes is the workspace's business
+ * (spec §output-files), not the compiler's.
+ */
 export interface CompileOutput {
   readonly endpoint: string;
-  readonly path: string;
   readonly source: string;
 }
 
@@ -51,16 +58,13 @@ export interface CompileResult {
   /** One program per endpoint, in the order `endpoints` lists them. */
   readonly outputs: readonly CompileOutput[];
   /**
-   * `__runtime_<endpoint>.bs` for each endpoint, for a program whose endpoint
-   * programs import from it; empty otherwise (spec §output-files, §runtime-files).
-   * Kept apart from `outputs`, which hold the endpoint programs alone.
+   * The runtime file for each endpoint, in the same order, whether or not its
+   * program imports from it (spec §runtime-files). Empty only for a failed
+   * compilation. Kept apart from `outputs`, which hold the endpoint programs
+   * alone.
    */
   readonly runtimeOutputs: readonly CompileOutput[];
   readonly errors: readonly CompileDiagnostic[];
-}
-
-export interface CompileOptions {
-  readonly configPath?: string;
 }
 
 /** A compilation that stopped at `errors`, with nothing to write. */
@@ -68,23 +72,38 @@ function failed(errors: readonly CompileDiagnostic[]): CompileResult {
   return { success: false, outputs: [], runtimeOutputs: [], errors };
 }
 
-export function compileFile(
-  cbsPath: string,
-  options: CompileOptions = {},
-): CompileResult {
-  const source = readFileSync(cbsPath, "utf8");
-  const configPath = options.configPath ?? defaultConfigPath(cbsPath);
-  let config: ChoreoBSConfig;
+/** {@link CompileResult}, for a project read from disk. */
+export interface ProjectCompileResult extends CompileResult {
+  /** The configuration, when `choreobs.json` could be read. */
+  readonly config?: ProjectConfig;
+  /** `src/index.cbs`, when it could be read: diagnostics point into it. */
+  readonly source?: string;
+  readonly sourcePath: string;
+}
+
+/**
+ * Compiles the project at `root`: its `choreobs.json` and its `src/index.cbs`
+ * (spec §input-files). Nothing is written; see `writeProject`.
+ */
+export function compileProject(root: string): ProjectCompileResult {
+  const path = sourcePath(root);
+  let config: ProjectConfig;
   try {
-    config = loadConfig(configPath);
+    config = loadConfig(configPath(root));
   } catch (e) {
-    // This also catches a missing file and a malformed JSON document, neither
-    // of which breaks a spec rule.
+    // This also catches a missing file, which breaks no spec rule.
     const message = e instanceof Error ? e.message : String(e);
     const spec = e instanceof ConfigError ? e.spec : [];
-    return failed([{ message, spec }]);
+    return { ...failed([{ message, spec }]), sourcePath: path };
   }
-  return compileSource(source, cbsPath, config);
+  let source: string;
+  try {
+    source = readFileSync(path, "utf8");
+  } catch (e) {
+    const message = `cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`;
+    return { ...failed([{ message, spec: ["input-files"] }]), config, sourcePath: path };
+  }
+  return { ...compileSource(source, path, compilerConfig(config)), config, source, sourcePath: path };
 }
 
 export function compileSource(
@@ -101,10 +120,9 @@ export function compileSource(
     return failed([{ message: invalidConfig.message, spec: invalidConfig.spec }]);
   }
 
-  // The compiler writes `__runtime_<endpoint>.bs` next to the outputs
-  // (spec §output-files), so an input whose name took the reserved `__`
-  // prefix could have its own output overwritten by it (spec §input-files,
-  // §identifiers).
+  // The compiler names the files it writes with the reserved `__` prefix, as it
+  // does the identifiers it introduces, and keeps it out of the files it is
+  // given (spec §input-files, §identifiers).
   if (basename(cbsPath).startsWith(COMPILER_NAME_PREFIX)) {
     return failed([{
       message: `input file name '${basename(cbsPath)}' must not begin with '${COMPILER_NAME_PREFIX}', which is reserved for the compiler`,
@@ -134,13 +152,10 @@ export function compileSource(
   const projected = projectAll(lowered, config.endpoints);
   const finalized = finalizeAbsentAll(projected);
   const cleaned = cleanupAll(finalized);
-  const stem = basename(cbsPath, extname(cbsPath));
-  const outDir = dirname(cbsPath);
 
   const imports = cleaned.map(runtimeImports);
   const outputs: CompileOutput[] = cleaned.map((program, i) => ({
     endpoint: program.endpoint,
-    path: join(outDir, `${stem}_${program.endpoint}.bs`),
     source: emit(program, imports[i]),
   }));
 
@@ -152,25 +167,14 @@ export function compileSource(
     return failed([...errors, ...commConsistencyDiagnostics(commCheck.errors)]);
   }
 
-  // The runtime file is written only for a program that imports from it, and
-  // then for every endpoint, each with the same parts: the dynamic-location
-  // runtime is there for all of them or none, since a `dyn` value lives at all
-  // of them (spec §runtime-files).
-  const usesRuntime = imports.some((names) => names.length > 0);
+  // The runtime file is written for every endpoint, each with the same parts:
+  // the dynamic-location runtime is there for all of them or none, since a
+  // `dyn` value lives at all of them (spec §runtime-files).
   const usesDyn = imports.some(importsDynRuntime);
-  const runtimeOutputs: CompileOutput[] = usesRuntime
-    ? config.endpoints.map((endpoint) => ({
-        endpoint,
-        path: join(outDir, `${runtimeModuleName(endpoint)}.bs`),
-        source: runtimeSource(endpoint, usesDyn),
-      }))
-    : [];
+  const runtimeOutputs: CompileOutput[] = config.endpoints.map((endpoint) => ({
+    endpoint,
+    source: runtimeSource(endpoint, usesDyn),
+  }));
 
   return { success: true, outputs, runtimeOutputs, errors };
-}
-
-export function writeOutputs(outputs: readonly CompileOutput[]): void {
-  for (const file of outputs) {
-    writeFileSync(file.path, file.source, "utf8");
-  }
 }

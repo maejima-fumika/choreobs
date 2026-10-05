@@ -1,3 +1,8 @@
 {
-  "endpoints": ["controller", "actuator", "monitor"]
+  "name": "control-loop",
+  "endpoints": [
+    { "name": "controller", "board": "host" },
+    { "name": "actuator", "board": "host" },
+    { "name": "monitor", "board": "host" }
+  ]
 }

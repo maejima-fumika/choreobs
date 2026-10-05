@@ -321,8 +321,18 @@ function sendInteger@alice(): void {
     );
   });
 
+  it("accepts copyArray as an ordinary name: the copy helper is __copyArray (spec §reserved-runtime-names)", () => {
+    for (const source of [
+      `let copyArray: integer@alice = 1@alice;`,
+      `function copyArray@alice(xs: integer[]@alice): integer@alice { return xs.length; }`,
+    ]) {
+      const { typed, errors } = checkSource(source);
+      assert.ok(typed, `${source}\n${JSON.stringify(errors)}`);
+    }
+  });
+
   it("rejects a variable named after a runtime support function (spec §function-names, §codegen-function-names)", () => {
-    for (const name of ["copyArray", "sendArray", "receiveArray", "broadcastArray"]) {
+    for (const name of ["__copyArray", "sendArray", "receiveArray", "broadcastArray"]) {
       const { typed, errors } = checkSource(`
 let ${name}: integer@alice = 1@alice;
 `);

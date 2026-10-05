@@ -1,3 +1,9 @@
 {
-  "endpoints": ["coordinator", "alice", "bob", "carol"]
+  "name": "two-phase-commit",
+  "endpoints": [
+    { "name": "coordinator", "board": "host" },
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" },
+    { "name": "carol", "board": "host" }
+  ]
 }

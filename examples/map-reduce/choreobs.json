@@ -1,3 +1,8 @@
 {
-  "endpoints": ["driver", "worker1", "worker2"]
+  "name": "map-reduce",
+  "endpoints": [
+    { "name": "driver", "board": "host" },
+    { "name": "worker1", "board": "host" },
+    { "name": "worker2", "board": "host" }
+  ]
 }

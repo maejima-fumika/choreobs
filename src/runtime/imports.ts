@@ -10,7 +10,12 @@ import {
   DYN_VALUE_TYPE,
   isDynRuntimeFunction,
 } from "./dyn.js";
-import { CORE_RUNTIME_EXPORTS, LOGICAL_HELPERS, nestNothing } from "./core.js";
+import {
+  COPY_ARRAY_HELPER,
+  CORE_RUNTIME_EXPORTS,
+  LOGICAL_HELPERS,
+  nestNothing,
+} from "./core.js";
 
 /** Everything a generated file may import from the runtime file, in import order (spec §runtime-import). */
 const RUNTIME_EXPORTS: readonly string[] = [...CORE_RUNTIME_EXPORTS, ...DYN_RUNTIME_EXPORTS];
@@ -20,12 +25,13 @@ const DYN_EXPORTS: ReadonlySet<string> = new Set(DYN_RUNTIME_EXPORTS);
 /**
  * The runtime names one endpoint's program uses, in import order
  * (spec §runtime-import): each core helper it calls — the `nothing` helpers
- * its `nothing(...)` artifacts are emitted as, `__and` and `__or` — then the
- * `__DynVal` type if anything is declared with it, and each dynamic-location
- * runtime function it calls.
+ * its `nothing(...)` artifacts are emitted as, `__and`, `__or` and
+ * `__copyArray` — then the `__DynVal` type if anything is declared with it,
+ * and each dynamic-location runtime function it calls.
  *
- * Empty exactly when the program calls none of them, and then nothing is
- * imported (spec §runtime-files).
+ * Empty exactly when the program uses none of them, and then nothing is
+ * imported, though the runtime file is written all the same
+ * (spec §runtime-files).
  */
 export function runtimeImports(program: ProjectedProgram): readonly string[] {
   const used = new Set<string>();
@@ -36,7 +42,10 @@ export function runtimeImports(program: ProjectedProgram): readonly string[] {
     }
   };
   const expression = (expr: ProjectedExpression): ProjectedExpression => {
-    if (expr.kind === "CallExpression" && isDynRuntimeFunction(expr.callee)) {
+    if (
+      expr.kind === "CallExpression" &&
+      (isDynRuntimeFunction(expr.callee) || expr.callee === COPY_ARRAY_HELPER)
+    ) {
       used.add(expr.callee);
     }
     if (expr.kind === "BinaryExpression" && (expr.operator === "&&" || expr.operator === "||")) {

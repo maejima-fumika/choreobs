@@ -42,13 +42,13 @@ infer the same type from the initializer (spec [§7.20.1](#let-type-inference)).
 After EPP:
 
 ```ts
-// index_alice.bs
+// workspace/alice/src/index.bs
 let x: integer = 10;
 sendInteger("bob", "__top_0", x);
 ```
 
 ```ts
-// index_bob.bs
+// workspace/bob/src/index.bs
 let y: integer = receiveInteger("alice", "__top_0");
 ```
 
@@ -61,128 +61,173 @@ A location left out altogether is `dyn` (spec [§8.2](#omitted-locations)): `let
 
 ### 2.1 Input Files <a id="input-files"></a>
 
-The ChoreoBS transpiler takes the following inputs:
-
-* a `.cbs` source file;
-* a `choreobs.json` configuration file.
-
-Example:
+A ChoreoBS project is a directory that holds a `choreobs.json` configuration
+file (spec [§2.2](#choreobs-json)) and the program. The program is always
+`src/index.cbs`:
 
 ```text
 project/
-  index.cbs
   choreobs.json
+  src/
+    index.cbs
+  workspace/
 ```
 
+`workspace/` is where the compiler writes its output (spec [§2.3](#output-files)).
+
+The compiler finds the project from the directory it is run in: it looks for
+`choreobs.json` there, and then in each parent directory in turn, and compiles
+the `src/index.cbs` next to the first one it finds (spec [§2.4](#commands)).
+
 The basename of the input file must not begin with `__` (spec [§16.53](#reserved-input-file-name)).
-The compiler writes its runtime files, `__runtime_<endpoint>.bs`, next to the
-outputs (spec [§2.3](#output-files)), and the prefix is reserved for the compiler for the
-same reason it is reserved in identifiers (spec [§4.3](#identifiers)): an input named like a
-runtime file could have its own output overwritten by one.
+The compiler names the files it writes with that prefix, as it does the
+identifiers it introduces (spec [§4.3](#identifiers)), and keeps the prefix out of the files it
+is given. `src/index.cbs` keeps clear of it; the rule binds any other way of
+handing the compiler a source file.
 
 ### 2.2 `choreobs.json` <a id="choreobs-json"></a>
 
-`choreobs.json` specifies the list of endpoints, and optionally whether an
-omitted location is `dyn` (spec [§8.3](#strict-mode)).
+`choreobs.json` names the project, lists its endpoints with the BlueScript board
+each one runs on, and optionally says whether an omitted location is `dyn`
+(spec [§8.3](#strict-mode)).
 
 ```json
 {
-  "endpoints": ["alice", "bob"]
+  "name": "greeting",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "esp32", "deviceName": "BOB" }
+  ]
 }
 ```
 
 ```json
 {
-  "endpoints": ["alice", "bob"],
-  "implicitDyn": false
+  "name": "greeting",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
 }
 ```
 
 #### Rules <a id="endpoint-rules"></a>
 
-* `endpoints` must be an array of strings.
-* Each string in `endpoints` names one endpoint and defines an individual location.
+* `name` must be a non-empty string. It names the project; nothing in compilation depends on it.
+* `endpoints` must be an array of objects, one per endpoint. An entry that is a bare string, such as `"alice"`, is an error: it is the format of earlier versions, which named an endpoint and nothing else.
+* Each entry's `name` names one endpoint and defines an individual location.
 * Each name is held in the value namespace for the whole program (spec [§6.1](#namespaces)): no function, variable or parameter may take an endpoint's name, whether or not the source ever writes `@` with it.
-* Each name must be an identifier (spec [§4.3](#identifiers)) and must not be a reserved word (spec [§4.4](#keywords)). An endpoint name is written after `@` in the source (spec [§5.2](#types)) and is also pasted into the output file name (spec [§2.3](#output-files)): a name that is not an identifier would name an endpoint no program could refer to, and would still name a file — `../x` would place that file outside the output directory.
+* Each name must be an identifier (spec [§4.3](#identifiers)) and must not be a reserved word (spec [§4.4](#keywords)). An endpoint name is written after `@` in the source (spec [§5.2](#types)) and is also the name of the endpoint's directory in the workspace (spec [§2.3](#output-files)): a name that is not an identifier would name an endpoint no program could refer to, and would still name a directory — `../x` would place it outside the workspace.
 * A name must not begin with `__`, which is reserved for the compiler (spec [§4.3](#identifiers), [§6.2](#function-names)), on the same terms as every other identifier the source writes.
-* The **reserved runtime names** of spec [§6.2](#function-names) that do not begin with `__` — the communication API and copy helper names — are *not* reserved here. An endpoint name reaches the generated code only as a string literal (spec [§13.14](#communication-api)) and as part of a file name, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
-* The names must be distinct. A repeated name is an error: it would give two output files the same name, and make one endpoint both the sender and the receiver of the same communication.
-* `every` and `dyn` are reserved words and must not appear in `endpoints` (spec [§16.2](#using-every-as-an-endpoint)). This is a special case of the reserved-word rule above, called out separately because `every` and `dyn` name the two locations that are deliberately never listed (spec [§3.4](#every), [§3.5](#dyn)).
+* The **reserved runtime names** of spec [§6.2](#function-names) that do not begin with `__` — the communication API names and `print` — are *not* reserved here. An endpoint name reaches the generated code only as a string literal (spec [§13.14](#communication-api)) and as the name of a directory, never as a BlueScript identifier, so it cannot capture a runtime function the way a variable of that name would.
+* The names must be distinct. A repeated name is an error: it would give two endpoints the same directory, and make one endpoint both the sender and the receiver of the same communication.
+* Two names must not differ only in case, as `Alice` and `alice` do. They are distinct identifiers, but a file system that ignores case — the default on macOS — would give them the same directory.
+* `every` and `dyn` are reserved words and must not appear as names (spec [§16.2](#using-every-as-an-endpoint)). This is a special case of the reserved-word rule above, called out separately because `every` and `dyn` name the two locations that are deliberately never listed (spec [§3.4](#every), [§3.5](#dyn)).
 * Every individual location used in a `.cbs` source file must be listed in `endpoints`. The locations `every` and `dyn` are never listed.
+* Each entry's `board` must be `"esp32"` or `"host"`: the BlueScript board the endpoint's program runs on.
+* Each entry may have a `deviceName`, and only an `"esp32"` entry may. It must be a non-empty string: the name the board goes by over Bluetooth, which `bscript` connects to. An `"esp32"` entry without one has BlueScript's default, `BLUESCRIPT`.
+* No two `"esp32"` entries may have the same device name, counting a missing one as `BLUESCRIPT`: nothing would decide which board runs which endpoint's program.
 * `implicitDyn` is optional. When present it must be a boolean (spec [§16.52](#invalid-implicit-dyn)). It defaults to `true`, under which an omitted location that nothing infers is `dyn`; `false` selects strict mode, under which that omission is an error (spec [§8.3](#strict-mode)).
-* The compiler generates a `.bs` file for each endpoint listed in `endpoints`, even if that endpoint is not used in the source.
-* By default, the compiler reads `choreobs.json` from the same directory as the input `.cbs` file.
-* Implementations may provide a CLI option to override the config path.
-
-Example:
-
-```bash
-choreobs compile index.cbs
-```
-
-Or:
-
-```bash
-choreobs compile index.cbs --config path/to/choreobs.json
-```
+* The compiler generates a program for each endpoint listed in `endpoints`, even if that endpoint is not used in the source.
 
 ### 2.3 Output Files <a id="output-files"></a>
 
-The compiler emits one `.bs` file per endpoint. A program whose endpoint programs
-use anything from the runtime also gets one runtime file per endpoint (see below).
-
-Input:
-
-```text
-index.cbs
-```
-
-`choreobs.json`:
-
-```json
-{
-  "endpoints": ["alice", "bob"]
-}
-```
-
-Output:
+The compiler writes into a BlueScript workspace, `workspace/`, next to
+`choreobs.json`. The workspace holds one BlueScript project per endpoint, in a
+directory named after the endpoint:
 
 ```text
-index_alice.bs
-index_bob.bs
+project/
+  choreobs.json
+  src/
+    index.cbs
+  workspace/
+    bsworkspace.json
+    alice/
+      bsconfig.json
+      src/
+        index.bs
+        __runtime.bs
+    bob/
+      bsconfig.json
+      src/
+        index.bs
+        __runtime.bs
 ```
+
+The workspace and its projects are made by BlueScript's own command-line tool,
+`bscript`, which `choreobs create` and `choreobs add-endpoint` run
+(spec [§2.4](#commands)). The compiler reads `bsworkspace.json` and each `bsconfig.json`, and
+never writes them, so whatever `bscript` keeps there — such as the packages a
+project installs — survives compilation.
+
+For each endpoint, the compiler writes two files into its project:
+
+* the endpoint's program, at the project's entry file: the `entryFile` of its
+  `bsconfig.json`, or `./index.bs`, BlueScript's default, when there is none.
+  `bscript project create` sets it to `./src/index.bs`;
+* the endpoint's runtime file, `__runtime.bs`, in the same directory as the
+  program (see below).
+
+A missing directory on the way to them is created. Both files are written anew
+on every compilation; nothing else in the project is touched.
+
+Before it writes anything, the compiler checks the workspace against
+`choreobs.json`. If a check fails it reports an error and writes nothing:
+
+* `workspace/bsworkspace.json` must exist.
+* Each endpoint must have its project: `workspace/<endpoint>/bsconfig.json`,
+  with `projectName` equal to the endpoint's name and `boardName` equal to its
+  `board`. `bscript` delivers a message by project name, so the project name is
+  what makes `sendInteger("bob", …)` reach `bob` (spec [§13.14](#communication-api)).
+* Each endpoint's project must be registered in `bsworkspace.json`, and for an
+  `"esp32"` endpoint with the endpoint's device name, counting a missing one on
+  either side as `BLUESCRIPT`.
+* No other project registered in the workspace may have an endpoint's name as
+  its `projectName`, where a message for that endpoint could reach it instead,
+  nor, for an `"esp32"` endpoint, its device name, where `bscript` could connect
+  to the wrong board.
+* The entry file's name must not begin with `__`, which would let a runtime
+  file overwrite the program, and the entry file must lie under the project's
+  `srcDir` (`.` when there is none), as BlueScript requires of every source
+  file.
+
+A project registered in the workspace that is no endpoint's is left alone, with
+a warning: `choreobs run` leaves it out, but `bscript workspace run` on its own
+still runs it.
+
+Compilation never runs `bscript`. A missing project or registration is made
+with `choreobs add-endpoint` (spec [§2.4](#commands)), and the programs are run with
+`choreobs run`.
 
 #### Runtime Files <a id="runtime-files"></a>
 
 The generated code relies on names the compiler defines itself — helper
 functions and, for `dyn`, the class `__DynVal`. The compiler writes them into
-one runtime file per endpoint, and each endpoint program imports what it uses
-from there (spec [§13.10](#runtime-import)):
-
-```text
-index_alice.bs
-index_bob.bs
-__runtime_alice.bs
-__runtime_bob.bs
-```
+each endpoint's runtime file, `__runtime.bs`, and the endpoint's program imports
+what it uses from there (spec [§13.10](#runtime-import)).
 
 A runtime file has two parts, in this order:
 
-1. the **core helpers** — `__nothing1` to `__nothing5` (spec [§14.1](#nothing)), and `__and`
-   and `__or` (spec [§14.3](#and-or-helpers)). They are in every runtime file;
-2. the **dynamic-location runtime** (spec [§14.4](#dyn-runtime)). It is there only for a program
+1. the **core helpers** — `__nothing1` to `__nothing5` (spec [§14.1](#nothing)), `__and`
+   and `__or` (spec [§14.3](#and-or-helpers)), and the copy helper `__copyArray`
+   (spec [§14.4](#copy-array-helper)). They are in every runtime file;
+2. the **dynamic-location runtime** (spec [§14.5](#dyn-runtime)). It is there only for a program
    that uses `dyn` — whether written or produced by an omission (spec [§8.2](#omitted-locations)).
 
-* A runtime file is written for **every** endpoint as soon as any endpoint
-  program imports from it, and for none otherwise: a program that uses nothing
-  from it gets no runtime file. A program can import from it without calling
+* A runtime file is written for **every** endpoint on every compilation, whether
+  or not the endpoint's program imports from it. BlueScript compiles only the
+  files a program imports, so an unused runtime file costs nothing, and a
+  runtime file left over from an earlier compilation can never fall out of
+  step with the program. A program can import from it without calling
   anything — `function f(a: integer@dyn): void {}` imports `__DynVal` alone.
 * Every endpoint's file has the same parts. Whether the dynamic-location runtime
   is there is decided for the program, not for each endpoint: a `dyn` value lives
   at all of them.
 * The files differ only in the comment at the top of the file, which names their
   endpoint, and, where the dynamic-location runtime is there, in the constant
-  `__here`, which names it too (spec [§14.8](#location-functions)).
+  `__here`, which names it too (spec [§14.9](#location-functions)).
 * Every function, class and constant the generated code uses is exported, and
   imported by name (spec [§13.10](#runtime-import)).
 * Every name in the file begins with `__`, the internal helpers included
@@ -190,9 +235,91 @@ A runtime file has two parts, in this order:
   BlueScript scopes a module's names (spec [§6.2](#function-names)).
 * A program without `dyn` gets the core helpers alone: nothing in its output
   depends on gradual locating.
-* The communication API, the copy helper and BlueScript's `print` are not in the
-  runtime file. They are supplied from outside for every program, with or
-  without `dyn` (spec [§14](#runtime-support-functions)).
+* The communication API and BlueScript's `print` are not in the runtime file.
+  They belong to BlueScript's standard library, which every program has without
+  importing it (spec [§14](#runtime-support-functions)).
+
+### 2.4 Commands <a id="commands"></a>
+
+The compiler's command-line tool is `choreobs`. It has four commands. Each one
+that works on an existing project finds it as compilation does: it looks for
+`choreobs.json` in the directory it is run in, and then in each parent
+directory (spec [§2.1](#input-files)).
+
+#### `choreobs create <name>` <a id="choreobs-create-name"></a>
+
+Creates a new project in a new directory `<name>`:
+
+* `choreobs.json`, with `name` set to `<name>` and no endpoints;
+* an empty `src/index.cbs`;
+* the workspace, made by running `bscript workspace create workspace` in the
+  new directory.
+
+`<name>` must be the name of one directory — not empty, not `.` or `..`, and
+without `/` or `\` — and that directory must not exist. If `bscript` fails,
+the directory is left as it is, and `choreobs add-endpoint` makes the
+workspace later.
+
+#### `choreobs add-endpoint <name> [-b <board>] [-d <device-name>]` <a id="choreobs-add-endpoint-name-b-board-d-device-name"></a>
+
+Adds an endpoint, and makes its BlueScript project:
+
+1. The endpoint `{ "name": <name>, "board": <board>, "deviceName": <device-name> }`
+   must keep `choreobs.json` valid (spec [§2.2](#choreobs-json)). Without `-b`, the board is
+   asked for interactively; without a terminal to ask on, that is an error.
+2. Each of these is run only when what it makes is missing:
+   * `bscript workspace create workspace`, in the project directory, when
+     there is no `workspace/`;
+   * `bscript project create <name> -b <board>`, in `workspace/`, when there is
+     no `workspace/<name>/`;
+   * `bscript workspace add <name>`, in `workspace/`, with `-d <device-name>`
+     when a device name is given, when the project is not registered.
+3. The endpoint is added to the end of `endpoints` in `choreobs.json`. The
+   file's other keys are kept, in their order.
+
+What is already there is taken over when it agrees with the endpoint: a
+`workspace/<name>/` whose `bsconfig.json` has the endpoint's name as
+`projectName` and its board as `boardName`, and a registration with the
+endpoint's device name. Everything is checked before `bscript` is run at all,
+and anything that disagrees stops the command: a project of another name or
+board, a registration with another device name, a `workspace/` without
+`bsworkspace.json`, a `workspace/<name>/` without `bsconfig.json`, another
+registered project with the endpoint's name as its `projectName`, or another
+registered `esp32` project with the endpoint's device name.
+
+For an endpoint that `choreobs.json` already lists, `add-endpoint` repairs its
+project instead: it runs the steps of 2 that are missing, with the board and
+device name `choreobs.json` gives, asks nothing, and leaves `choreobs.json` as
+it is. A `-b` or `-d` that disagrees with `choreobs.json` is an error. This is
+how a workspace that was never committed is made again, one endpoint at a time.
+
+#### `choreobs compile` <a id="choreobs-compile"></a>
+
+Compiles the project's `src/index.cbs` and writes the output into the
+workspace (spec [§2.3](#output-files)), printing the path of each file it writes. It never
+runs `bscript`.
+
+#### `choreobs run` <a id="choreobs-run"></a>
+
+Compiles and writes the project as `choreobs compile` does, without printing
+the paths, and then runs every endpoint's program together:
+`bscript workspace run <endpoint>…` in `workspace/`, with the name of every
+endpoint in `endpoints`.
+
+* Naming the endpoints keeps a project registered in the workspace that is no
+  endpoint's from running (spec [§2.3](#output-files)).
+* Nothing runs when compilation fails, when the workspace disagrees with
+  `choreobs.json`, or when there is no endpoint. That `bscript` is there is
+  checked before anything is written.
+* The command ends when `bscript workspace run` does, and fails when it fails.
+
+```bash
+choreobs create greeting
+cd greeting
+choreobs add-endpoint alice -b host
+choreobs add-endpoint bob -b esp32 -d BOB
+choreobs run
+```
 
 ***
 
@@ -244,7 +371,12 @@ Individual locations are defined by the `endpoints` field in `choreobs.json`.
 
 ```json
 {
-  "endpoints": ["alice", "bob", "sensor"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" },
+    { "name": "sensor", "board": "host" }
+  ]
 }
 ```
 
@@ -296,7 +428,7 @@ component is gradual. Base type compatibility, array invariance and operator
 applicability are checked at compile time exactly as for any value
 (spec [§7.5](#subtyping), [§7.14](#operators), [§7.16](#array-typing)).
 
-The payload of a `dyn` value is a BlueScript `any` (spec [§14.7](#dyn-val)), and the
+The payload of a `dyn` value is a BlueScript `any` (spec [§14.8](#dyn-val)), and the
 dynamic operations work on it as an `any`. A `dyn` value, and every result of a
 dynamic operation, is therefore limited as an array element is, and its `===`
 and `!==` compare as an element's do (spec [§7.1.1](#array-types)).
@@ -312,16 +444,16 @@ static location check deferred to run time — while placing a static value at
 #### Location Variables and Binding <a id="dyn-binding"></a>
 
 At run time a dynamically located value is a **payload** together with a
-**location variable** (spec [§14.7](#dyn-val)).
+**location variable** (spec [§14.8](#dyn-val)).
 
 * A location variable is **bound** when it names a concrete location, and
   **unbound** otherwise.
 * Equality constraints between location variables are kept by union-find
-  (spec [§14.5](#location-variables)). Two `dyn` values that meet in one operation are placed in the
+  (spec [§14.6](#location-variables)). Two `dyn` values that meet in one operation are placed in the
   same class; binding one binds the whole class. This is what lets arrays and
   other compound uses of `dyn` stay gradual.
 * A constraint that would place one class at two different concrete locations
-  is a **location error**, and stops the program (spec [§7.9](#dynamic-operations), [§14.6](#location-errors)).
+  is a **location error**, and stops the program (spec [§7.9](#dynamic-operations), [§14.7](#location-errors)).
 
 Which endpoints hold a meaningful payload depends on the state of the location
 variable:
@@ -336,7 +468,7 @@ variable:
 
 A payload that does not exist is `null`.
 
-The payload is a BlueScript `any` (spec [§14.7](#dyn-val)) that always holds a value of the
+The payload is a BlueScript `any` (spec [§14.8](#dyn-val)) that always holds a value of the
 value's **static** base type: the **representation** of that type, as later
 sections call it. Values only ever flow between the same base type (spec [§7.5](#subtyping)), and a numeric
 conversion produces a value of its target type (spec [§7.15](#numeric-conversion)), so this holds by
@@ -1152,7 +1284,7 @@ different orders. The same holds for dynamic operations, which every endpoint
 must perform in one order to add the same location constraints (spec [§3.5](#dyn)).
 Every endpoint program therefore preserves this one order
 (spec [§12.4](#expression-projection)). The dynamic `&&` and `||` do not short-circuit either
-(spec [§14.10](#dyn-operators)).
+(spec [§14.11](#dyn-operators)).
 
 ***
 
@@ -1239,18 +1371,17 @@ identifier that matches a name the generated code itself calls would capture
 that call. The following are therefore reserved in every one of the three
 positions:
 
-* every communication and copy API name (spec [§13.14](#communication-api)). These are
+* every communication API name (spec [§13.14](#communication-api)). These are
   `sendInteger`, `receiveInteger` and `broadcastInteger`, and the corresponding
-  names for `Float`, `Boolean`, `String`, `Null` and `Array`; plus the one copy
-  helper, which exists for arrays alone: `copyArray`. There is no
-  `copyInteger` and no scalar copy of any type, so none is reserved. One
-  `Array` API serves every array type (spec [§13.1](#type-mapping)), so names such as
-  `sendIntegerArray` are not reserved;
+  names for `Float`, `Boolean`, `String`, `Null` and `Array`. One `Array` API
+  serves every array type (spec [§13.1](#type-mapping)), so names such as `sendIntegerArray` are
+  not reserved. The copy helper is `__copyArray`, covered by the `__` prefix
+  below, so `copyArray` is an ordinary name;
 * `print` — BlueScript's output function, which the generated code calls for
   `print(e)` (spec [§7.18](#print-typing)). A program's own `print` would be emitted next to that
   call and capture it, as a program's own `sendInteger` would;
 * `__array` and `__push` — compiler-internal call sentinels;
-* every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.11](#transfer-typing), [§12.10](#transfer-projection)), and reserving the prefix lets it do so without consulting the program. Every name in the runtime file is covered by the same prefix (spec [§2.3](#output-files)): the core helpers `__nothing1` to `__nothing5`, `__and` and `__or` (spec [§14.1](#nothing), [§14.3](#and-or-helpers)), and the names of the dynamic-location runtime — `__DynVal`, `__LocVar`, `__inject`, `__cast`, the `__dyn…` operations, `__here` and the runtime's internal helpers (spec [§14.4](#dyn-runtime)).
+* every identifier beginning with `__`. EPP introduces names of its own, such as the `__transfer_N` temporaries that keep a transfer source to a single evaluation (spec [§7.11](#transfer-typing), [§12.10](#transfer-projection)), and reserving the prefix lets it do so without consulting the program. Every name in the runtime file is covered by the same prefix (spec [§2.3](#output-files)): the core helpers `__nothing1` to `__nothing5`, `__and`, `__or` and `__copyArray` (spec [§14.1](#nothing), [§14.3](#and-or-helpers), [§14.4](#copy-array-helper)), and the names of the dynamic-location runtime — `__DynVal`, `__LocVar`, `__inject`, `__cast`, the `__dyn…` operations, `__here` and the runtime's internal helpers (spec [§14.5](#dyn-runtime)).
 
 These are reserved for variables and parameters too, not only for functions: a
 variable emitted into the same BlueScript scope shadows the runtime function
@@ -1400,7 +1531,7 @@ void
 ```
 
 `any` and `undefined` do not exist in v1. (The BlueScript output holds each
-array element, and each `dyn` payload, in a BlueScript `any` (spec [§7.1.1](#array-types), [§14.7](#dyn-val));
+array element, and each `dyn` payload, in a BlueScript `any` (spec [§7.1.1](#array-types), [§14.8](#dyn-val));
 that is not a source type.)
 
 An integer literal such as `1` has type `integer`, and a float literal such as
@@ -1844,7 +1975,7 @@ location, so the two compose independently (spec [§7.15](#numeric-conversion)):
 | a `dyn` literal `c` converted, into a `float@dyn` position | `__dynIntegerToFloat(__dynUnbound(c))` |
 
 The compiler represents `inj<q>` and `cast<q>` as calls of the runtime functions
-`__inject(e, "q")` and `__cast(e, "q")` (spec [§12.2](#dyn-lowering), [§14.9](#inject-and-cast)).
+`__inject(e, "q")` and `__cast(e, "q")` (spec [§12.2](#dyn-lowering), [§14.10](#inject-and-cast)).
 
 ### 7.9 Dynamic Operations <a id="dynamic-operations"></a>
 
@@ -1879,7 +2010,7 @@ executing at that operation.
 Every endpoint adds the same constraints in the same order (spec [§3.5](#dyn)), so
 every endpoint detects the same error at the same operation and stops there. No
 coordination between endpoints is needed. How an endpoint stops is given in
-spec [§14.6](#location-errors).
+spec [§14.7](#location-errors).
 
 ```ts
 let d: integer@dyn = 1@dyn;
@@ -1959,7 +2090,7 @@ valAlice = 5@dyn;                // cast<alice>
 #### Assigning to a `dyn` Variable <a id="assigning-to-a-dyn-variable"></a>
 
 A location variable belongs to a dynamically located **value**, not to a
-variable (spec [§14.7](#dyn-val)). Assigning to a `dyn` variable replaces the value it refers
+variable (spec [§14.8](#dyn-val)). Assigning to a `dyn` variable replaces the value it refers
 to; the previous value, and the location constraints on it, are left as they
 were. The new value brings its own location variable, so `valDyn = 4@alice;`
 does not bind whatever `valDyn` held before to `alice`.
@@ -2361,7 +2492,7 @@ let d: boolean@alice = c && ping();   // ping() runs although c is false
 
 Their projection is that of any other binary operator (spec [§12.8](#binary-and-unary-operation-projection)). With a
 `dyn` operand they are dynamic operations, which do not short-circuit either
-(spec [§14.10](#dyn-operators)).
+(spec [§14.11](#dyn-operators)).
 
 #### Unary Operators <a id="unary-operators"></a>
 
@@ -2471,7 +2602,7 @@ types `S` and `T`:
 | Operand | Form |
 |---|---|
 | `L` is concrete | a static conversion, `e as T` |
-| `L = dyn`, `S = integer`, `T = float` | `__dynIntegerToFloat(e)` (spec [§14.11](#dyn-numeric-conversion)) |
+| `L = dyn`, `S = integer`, `T = float` | `__dynIntegerToFloat(e)` (spec [§14.12](#dyn-numeric-conversion)) |
 | `L = dyn`, `S = float`, `T = integer` | `__dynFloatToInteger(e)` |
 | `L = dyn`, `S = T` | nothing: `e` itself |
 
@@ -2499,7 +2630,7 @@ other unlocated literal (spec [§8.2](#omitted-locations)), and is converted as 
 `as` is only ever applied where a value exists. A static conversion is projected
 only where its operand resides (spec [§12.8](#binary-and-unary-operation-projection)), so `inj<q>(e as float)` converts at
 `q` and passes `null` elsewhere; and a dynamic conversion leaves the payload alone
-at an endpoint that does not hold it (spec [§14.11](#dyn-numeric-conversion)). `null as float` is never
+at an endpoint that does not hold it (spec [§14.12](#dyn-numeric-conversion)). `null as float` is never
 evaluated.
 
 ### 7.16 Array Typing <a id="array-typing"></a>
@@ -3460,8 +3591,12 @@ location written as `@dyn`, or inferred from one, is dynamic.
 
 ```json
 {
-  "endpoints": ["alice", "bob"],
-  "implicitDyn": false
+  "name": "example",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
 }
 ```
 
@@ -4085,7 +4220,7 @@ EPP at `alice`:
 ```ts
 let xs: any[] = new Array<any>([1.1, 2.2]);
 broadcastArray("__top_0", xs);
-let ys: any[] = copyArray(xs);
+let ys: any[] = __copyArray(xs);
 ```
 
 ### 11.4 Local Copy <a id="local-copy"></a>
@@ -4129,7 +4264,7 @@ EPP at `alice`:
 
 ```ts
 let xs: any[] = new Array<any>([1.1, 2.2]);
-let ys: any[] = copyArray(xs);
+let ys: any[] = __copyArray(xs);
 ```
 
 An `every -> every` local copy is emitted at every endpoint:
@@ -4192,7 +4327,7 @@ At run time:
   fresh location variable is created.
 
 The case analysis in full, and the runtime function, are given in
-spec [§14.12](#dyn-transfer-runtime).
+spec [§14.13](#dyn-transfer-runtime).
 
 Every endpoint makes the same `__dynTransfer` call. The rules of spec [§12.10](#transfer-projection) —
 the split between sender, receivers and third parties, and the discarding of the
@@ -4334,7 +4469,7 @@ The binary operators are `+ - * / %` — `__dynPlus`, `__dynSub`, `__dynMul`,
 
 The location, `kind` and `tag` arguments are `string@every` literals, the same at
 every endpoint. `__dynArraySet`, `__dynArrayPush` and `__dynPrint` are `void`,
-and stand as expression statements. What each function does is given in spec [§14.4](#dyn-runtime).
+and stand as expression statements. What each function does is given in spec [§14.5](#dyn-runtime).
 
 #### Rewriting <a id="dyn-lowering-rules"></a>
 
@@ -4499,7 +4634,7 @@ projected callee returns `null` at `P` (spec [§12.3](#type-projection), [§13.1
 in for the absent value wherever one is needed. A call of a runtime function
 (spec [§12.2](#dyn-lowering)) is always of this kind, since every endpoint generates the callee.
 Where its result is at an individual location that `P` is not — `__cast(v, "alice")`
-at `bob` — the runtime itself returns `null` (spec [§14.9](#inject-and-cast)). A call whose callee `P` does
+at `bob` — the runtime itself returns `null` (spec [§14.10](#inject-and-cast)). A call whose callee `P` does
 not generate — a local function at another endpoint — disappears, but its
 arguments do not: they are ordinary expressions that may contain choreography
 calls of their own. With no arguments that leaves `nothing()`, which cleanup
@@ -5213,7 +5348,7 @@ EPP at `alice`:
 ```ts
 let xs: any[] = new Array<any>([1, 2]);
 broadcastArray("__top_0", xs);
-let ys: any[] = copyArray(xs);
+let ys: any[] = __copyArray(xs);
 ```
 
 EPP at `bob`:
@@ -5251,7 +5386,7 @@ EPP at `alice`:
 
 ```ts
 let xs: any[] = new Array<any>([1.1, 2.2]);
-let ys: any[] = copyArray(xs);
+let ys: any[] = __copyArray(xs);
 ```
 
 #### Transfer Declaration Versus Transfer Assignment <a id="transfer-decl-vs-assignment"></a>
@@ -5288,7 +5423,7 @@ let s: integer = 0;
 s = src;
 let arr: any[] = new Array<any>([1.1]);
 let a2: any[] = new Array<any>([0.0]);
-a2 = copyArray(arr);
+a2 = __copyArray(arr);
 ```
 
 EPP at `bob`:
@@ -5817,7 +5952,7 @@ EPP at `alice`:
 ```ts
 let xs: any[] = new Array<any>([1, 2]);
 broadcastArray("__top_0", xs);
-let ys: any[] = copyArray(xs);
+let ys: any[] = __copyArray(xs);
 ```
 
 EPP at `bob`:
@@ -5831,7 +5966,7 @@ let ys: any[] = receiveArray("alice", "__top_0");
 An array operation whose join is `dyn`, and an array literal at `dyn`, is a
 runtime call by the time EPP sees it (spec [§12.2](#dyn-lowering)), and is kept at every endpoint.
 The location checks run at every endpoint. The operation on the payload itself,
-bounds check included, runs only where the payload is held (spec [§14.13](#dyn-array-operations)).
+bounds check included, runs only where the payload is held (spec [§14.14](#dyn-array-operations)).
 
 ```ts
 let a: integer@alice = 1@alice;
@@ -5999,9 +6134,9 @@ the runtime call `__dynPrint(v)` by the time EPP sees it (spec [§12.2](#dyn-low
 every endpoint.
 
 Code generation writes a static print as it stands, `print(e)`. It is a call of
-BlueScript's own `print`, which is supplied from outside like the
-communication API (spec [§14](#runtime-support-functions)). `__dynPrint` calls the same `print` on the payload
-(spec [§14.14](#dyn-print)).
+BlueScript's own `print`, which comes from BlueScript's standard library like
+the communication API (spec [§14](#runtime-support-functions)). `__dynPrint` calls the same `print` on the payload
+(spec [§14.15](#dyn-print)).
 
 Example:
 
@@ -6036,7 +6171,7 @@ __dynPrint(d);
 ```
 
 `d` is still unbound when it is printed, so both endpoints print `3`
-(spec [§14.14](#dyn-print)).
+(spec [§14.15](#dyn-print)).
 
 ### 12.18 Top-Level Projection <a id="top-level-projection"></a>
 
@@ -6101,7 +6236,7 @@ types implicitly, in both directions:
 
 An explicit `as` on an `any` is the same check (spec [§13.5](#numeric-conversion-code-generation)).
 
-`__DynVal` is the class of the dynamic-location runtime (spec [§14.7](#dyn-val)), imported from
+`__DynVal` is the class of the dynamic-location runtime (spec [§14.8](#dyn-val)), imported from
 the runtime file (spec [§13.10](#runtime-import)).
 
 ### 13.2 Location Annotation Removal <a id="location-annotation-removal"></a>
@@ -6122,7 +6257,7 @@ A location does reach the output as data, in the arguments of runtime calls: the
 string literals `"alice"`, `"every"` and `"dyn"`, written as in the communication
 API (spec [§13.14](#communication-api)). An endpoint name is an identifier other than `every` and `dyn`
 (spec [§2.2](#choreobs-json)), so it is never one of those two strings, nor the empty string that
-marks an unbound location variable (spec [§14.5](#location-variables)): these strings cannot collide.
+marks an unbound location variable (spec [§14.6](#location-variables)): these strings cannot collide.
 
 ### 13.3 Array Operation Code Generation <a id="array-operation-code-generation"></a>
 
@@ -6155,8 +6290,8 @@ xs.push(v)
 access a field or call a method on anything else (spec [§17.2](#typescript-javascript-features)).
 
 Every array at run time is an `any[]`: the static literals above, the runtime's
-empty array (spec [§14.13](#dyn-array-operations)), and every array the communication and copy API
-returns (spec [§13.14](#communication-api)). The generated code relies on this. BlueScript's
+empty array (spec [§14.14](#dyn-array-operations)), and every array the communication API and the copy
+helper return (spec [§13.14](#communication-api)). The generated code relies on this. BlueScript's
 conversion from `any` to `any[]`, which a `__cast` of an array makes, checks only
 that the value is an array, so an `integer[]` would pass it and fail later, at
 its first `push`.
@@ -6222,7 +6357,7 @@ A conversion the source already parenthesizes is not wrapped a second time:
 Only an endpoint that holds the value emits one (spec [§12.8](#binary-and-unary-operation-projection)); where the value
 is absent there is no `as` at all, so `null as T` is never emitted. A conversion
 of a `dyn` operand to the other numeric type is a runtime call, whose own `as`
-runs only where the payload is held (spec [§14.11](#dyn-numeric-conversion)).
+runs only where the payload is held (spec [§14.12](#dyn-numeric-conversion)).
 
 ### 13.6 Unary Minus Code Generation <a id="unary-minus-code-generation"></a>
 
@@ -6303,7 +6438,7 @@ EPP at `alice`:
 function add(...)
 ```
 
-The dynamic-location runtime's names (spec [§14.4](#dyn-runtime)) all begin with `__`, so no user
+The dynamic-location runtime's names (spec [§14.5](#dyn-runtime)) all begin with `__`, so no user
 function can share one (spec [§6.2](#function-names)).
 
 ### 13.9 Output File Naming <a id="output-file-naming"></a>
@@ -6311,55 +6446,57 @@ function can share one (spec [§6.2](#function-names)).
 Input:
 
 ```text
-index.cbs
+src/index.cbs
 ```
 
 `choreobs.json`:
 
 ```json
 {
-  "endpoints": ["alice", "bob"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
 }
 ```
 
-Output:
+Output, for projects whose `entryFile` is `./src/index.bs`, as `bscript project create`
+makes them (spec [§2.3](#output-files)):
 
 ```text
-index_alice.bs
-index_bob.bs
+workspace/alice/src/index.bs
+workspace/alice/src/__runtime.bs
+workspace/bob/src/index.bs
+workspace/bob/src/__runtime.bs
 ```
 
-For a program whose endpoint programs import from the runtime, the runtime files
-are added, one per endpoint (spec [§2.3](#output-files)):
-
-```text
-index_alice.bs
-index_bob.bs
-__runtime_alice.bs
-__runtime_bob.bs
-```
+Each endpoint's program goes to its project's entry file, and its runtime file
+next to it. The runtime file is written for every endpoint, whether or not the
+program imports from it (spec [§2.3](#output-files)).
 
 ### 13.10 Runtime Import <a id="runtime-import"></a>
 
 An endpoint program that uses anything from the runtime file (spec [§2.3](#output-files)) imports
-what it uses from its endpoint's runtime file, in one `import` at the top,
-followed by a blank line:
+what it uses from it, in one `import` at the top, followed by a blank line:
 
 ```ts
-// index_alice.bs
-import { __nothing2, __and, __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime_alice";
+// workspace/alice/src/index.bs
+import { __nothing2, __and, __copyArray, __DynVal, __dynUnbound, __inject, __cast, __dynPlus } from "./__runtime";
 ```
 
 * Only the names the program uses are imported: each core helper it calls —
   the `__nothing…` helpers its `nothing(...)` artifacts are emitted as
-  (spec [§13.7](#nothing-code-generation)), `__and` and `__or` — then `__DynVal` when a type is `__DynVal`,
-  and each runtime function it calls.
+  (spec [§13.7](#nothing-code-generation)), `__and`, `__or` and `__copyArray` — then `__DynVal` when a
+  type is `__DynVal`, and each runtime function it calls.
 * They are listed in a fixed order: the core helpers first, as `__nothing1` to
-  `__nothing5`, `__and`, `__or`; then `__DynVal`; then the runtime functions in
-  the order of the table of spec [§12.2](#dyn-lowering).
+  `__nothing5`, `__and`, `__or`, `__copyArray`; then `__DynVal`; then the runtime
+  functions in the order of the table of spec [§12.2](#dyn-lowering).
+* Every endpoint's program imports from the same module name, `"./__runtime"`:
+  each runtime file sits in its own endpoint's project, next to the program.
 * The module name has no extension. BlueScript resolves a relative import by
-  appending `.bs` itself, so `"./__runtime_alice.bs"` would look for
-  `__runtime_alice.bs.bs`.
+  appending `.bs` itself, so `"./__runtime.bs"` would look for
+  `__runtime.bs.bs`.
 * A program that uses nothing from the runtime file has no `import` at all.
 
 The examples in this specification leave the `import` line out.
@@ -6423,7 +6560,8 @@ cleanup pass in [Section 13.15](#projected-ast-cleanup).
 ### 13.14 Communication API <a id="communication-api"></a>
 
 The generated BlueScript code uses a communication API for each scalar type, and
-one for every array type.
+one for every array type. It belongs to BlueScript's standard library, which
+every program has without importing it (spec [§14](#runtime-support-functions)).
 
 ```ts
 sendInteger(dst: string, tag: string, value: integer): void;
@@ -6458,8 +6596,8 @@ carries an `integer[]`, a `float[]` and a `boolean[]` alike, each element as the
 A dynamic transfer selects the API at run time instead: the compiler passes the
 destination type's kind as a string — the six names `"integer"`, `"float"`,
 `"boolean"`, `"string"`, `"null"` and `"array"` — and the runtime dispatches on it
-(spec [§14.12](#dyn-transfer-runtime)). There is no default there either. The runtime file calls
-this API, and the copy helper, as the generated code does.
+(spec [§14.13](#dyn-transfer-runtime)). There is no default there either. The runtime file calls
+this API as the generated code does.
 
 Broadcast APIs:
 
@@ -6473,7 +6611,7 @@ broadcastNull(tag: string, value: null): void;
 broadcastArray(tag: string, value: any[]): void;
 ```
 
-The array copy helper is used by generated code for:
+The array copy helper, `__copyArray`, is used by generated code for:
 
 * sender-side fresh copies in array broadcast;
 * local copies produced by a transfer (spec [§11.4](#local-copy)).
@@ -6481,8 +6619,12 @@ The array copy helper is used by generated code for:
 It returns a fresh `any[]`:
 
 ```ts
-copyArray(value: any[]): any[];
+__copyArray(value: any[]): any[];
 ```
+
+Unlike the communication API it is not BlueScript's: the compiler writes it into
+the runtime file with the other core helpers (spec [§14.4](#copy-array-helper)), and a program
+that calls it imports it from there (spec [§13.10](#runtime-import)).
 
 ### 13.15 Projected AST Cleanup <a id="projected-ast-cleanup"></a>
 
@@ -6704,15 +6846,16 @@ removing it is sound.
 
 The generated code relies on two groups of functions:
 
-* supplied from outside, for every program, with or without `dyn`: the
-  communication API and the copy helper (spec [§13.14](#communication-api)), and BlueScript's own
-  `print` (spec [§7.18](#print-typing));
+* BlueScript's standard library, which every program has without importing it,
+  with or without `dyn`: the communication API (spec [§13.14](#communication-api)) and `print`
+  (spec [§7.18](#print-typing));
 * generated by the compiler into the runtime file (spec [§2.3](#output-files)), and imported from
   it (spec [§13.10](#runtime-import)):
   * the core helpers, for every program that calls them: `__nothing1` to
-    `__nothing5` ([§14.1](#nothing)), and `__and` and `__or` ([§14.3](#and-or-helpers));
+    `__nothing5` ([§14.1](#nothing)), `__and` and `__or` ([§14.3](#and-or-helpers)), and the copy helper
+    `__copyArray` ([§14.4](#copy-array-helper));
   * the dynamic-location runtime, for a program that uses `dyn` only
-    ([§14.4](#dyn-runtime)–[§14.14](#dyn-print)).
+    ([§14.5](#dyn-runtime)–[§14.15](#dyn-print)).
 
 The `ts` blocks of this chapter are the runtime file itself, in the order they
 appear in it.
@@ -6819,19 +6962,45 @@ never touches them (spec [§13.15](#projected-ast-cleanup)).
 BlueScript's own `&&` and `||` in their bodies are harmless: both operands are
 evaluated by then, so the short circuit has nothing left to skip.
 
-### 14.4 Dynamic Location Runtime <a id="dyn-runtime"></a>
+### 14.4 `__copyArray` <a id="copy-array-helper"></a>
+
+`__copyArray(v)` returns a fresh array that holds the elements of `v`, in order:
+the copy a transfer makes of an array (spec [§11.4](#local-copy), [§13.14](#communication-api)). It follows
+`__and` and `__or` in the runtime file, the last of the core helpers:
+
+```ts
+export function __copyArray(v: any[]): any[] {
+  return new Array<any>(v);
+}
+```
+
+* Given an array, `new Array<any>(v)` is BlueScript's copying constructor: it
+  makes a new `any[]` of the same length and fills it with the elements of `v`.
+  It is not the array literal form `new Array<any>([e1, …])` of
+  spec [§13.3](#array-operation-code-generation), whose argument is written out.
+* The copy is shallow, and that is all a copy needs: no array has arrays as its
+  elements (spec [§16.31](#nested-array)), and every other element is a value that is
+  copied with its slot.
+* BlueScript has no copy of its own, which is why the compiler writes one. The
+  behaviour of `new Array<any>(v)` it relies on has not yet been verified
+  (spec [§17.8](#unverified-bluescript-assumptions)).
+* It is an ordinary call, which cleanup never touches (spec [§13.15](#projected-ast-cleanup)). A
+  program imports it only when it copies an array.
+
+### 14.5 Dynamic Location Runtime <a id="dyn-runtime"></a>
 
 The dynamic-location runtime represents dynamically located values and performs
 the dynamic operations (spec [§7.9](#dynamic-operations)). The compiler writes it into
-`__runtime_<endpoint>.bs`, after the core helpers, for each endpoint of a
-program that uses `dyn`. What holds for the whole file — what differs between
+each endpoint's `__runtime.bs`, after the core helpers, for a program that uses
+`dyn`. What holds for the whole file — what differs between
 endpoints, what is exported, and why every name begins with `__` — is stated
 with the file (spec [§2.3](#output-files)).
 
-* Its one endpoint-specific part is the constant `__here` ([§14.8](#location-functions)).
-* It calls the communication API, the copy helper and `print`, which are
-  supplied from outside like everywhere else (spec [§13.14](#communication-api), [§7.18](#print-typing)). The core
-  helpers call none of them.
+* Its one endpoint-specific part is the constant `__here` ([§14.9](#location-functions)).
+* It calls the communication API and `print`, which come from BlueScript's
+  standard library like everywhere else (spec [§13.14](#communication-api), [§7.18](#print-typing)), and the copy
+  helper `__copyArray`, which is defined before it in the same file
+  ([§14.4](#copy-array-helper)). The core helpers call none of the communication API.
 * It applies BlueScript's operators, `[]`, `.length` and `.push` to payloads
   typed `any`. BlueScript carries each out for the type of the value the `any`
   holds — an array payload is an `any[]` (spec [§13.3](#array-operation-code-generation)) — with the results and
@@ -6841,7 +7010,7 @@ The following sections give its content, in the order it appears in the file.
 The runtime assumes some BlueScript behaviour that has not yet been verified;
 spec [§17.8](#unverified-bluescript-assumptions) lists it.
 
-### 14.5 Location Variables <a id="location-variables"></a>
+### 14.6 Location Variables <a id="location-variables"></a>
 
 A location variable is an object on the heap, and equality constraints between
 location variables are kept by union-find. There is no global constraint store
@@ -6882,7 +7051,7 @@ export function __unify(a: __LocVar, b: __LocVar): string {
   }
   if (ra.bound !== "" && rb.bound !== "") {
     if (ra.bound !== rb.bound) {
-      __locationError();
+      __locationError(ra.bound, rb.bound);
     }
     return ra.bound;
   }
@@ -6904,7 +7073,7 @@ export function __bind(v: __LocVar, loc: string): void {
   if (r.bound === "") {
     r.bound = loc;
   } else if (r.bound !== loc) {
-    __locationError();
+    __locationError(r.bound, loc);
   }
 }
 ```
@@ -6924,16 +7093,16 @@ export function __bind(v: __LocVar, loc: string): void {
 The representative is chosen with care. A bound representative is never replaced.
 When both classes are unbound, the one of higher rank is kept, and the left one on
 a tie: the result of an operator shares its left operand's location variable
-(spec [§14.10](#dyn-operators)), so the longer-lived side stays representative. Otherwise
+(spec [§14.11](#dyn-operators)), so the longer-lived side stays representative. Otherwise
 repeating `x = x + 1@dyn` or `x = 1@dyn + x` would lengthen the chain to the
 representative each time, and a live alias could keep the whole chain reachable.
 
-### 14.6 Location Errors <a id="location-errors"></a>
+### 14.7 Location Errors <a id="location-errors"></a>
 
 ```ts
-export function __locationError(): void {
-  while (true) {
-  }
+export function __locationError(a: string, b: string): void {
+  const message = "location error: " + a + " and " + b;
+  code`runtime_error(gc_string_to_cstr(${message}));`;
 }
 ```
 
@@ -6942,11 +7111,19 @@ operation; the function never returns. Every endpoint adds the same constraints 
 the same order, so every endpoint stops at the same operation, and no
 coordination is needed.
 
-The loop is a stand-in: it keeps the promise of never returning without depending
-on `throw` or on a platform's halt function, whose availability in BlueScript is
-unverified (spec [§17.8](#unverified-bluescript-assumptions)). Either may replace it.
+`a` and `b` are the two concrete locations that clashed: for `__unify`, the
+locations of its left and right classes; for `__bind`, the location the class is
+already bound to and the one it was asked to take (spec [§14.6](#location-variables)).
 
-### 14.7 `__DynVal` <a id="dyn-val"></a>
+The endpoint stops through `runtime_error`, a C function of BlueScript's runtime,
+embedded with BlueScript's `code` template. It ends the program and reports, for
+example when a value at `every` is cast to `alice`,
+
+```text
+** runtime error: location error: every and alice
+```
+
+### 14.8 `__DynVal` <a id="dyn-val"></a>
 
 ```ts
 export class __DynVal {
@@ -6975,10 +7152,10 @@ export function __dynAt(payload: any, loc: string): __DynVal {
 * The payload is a BlueScript `any`. One `__DynVal`, rather than one class and
   one set of operations per base type, keeps the runtime small, and a BlueScript
   class cannot take a type parameter. An operation that needs the static type — a transfer or a
-  copy — is given its kind by the compiler (spec [§14.12](#dyn-transfer-runtime)).
+  copy — is given its kind by the compiler (spec [§14.13](#dyn-transfer-runtime)).
 * A payload that does not exist is `null`.
 
-### 14.8 Location Functions <a id="location-functions"></a>
+### 14.9 Location Functions <a id="location-functions"></a>
 
 ```ts
 export const __here: string = "alice";
@@ -7008,7 +7185,7 @@ this endpoint uses the payload of a value whose class is at `loc`, as returned b
 Locations are written as string literals, as in the communication API
 (spec [§13.2](#location-annotation-removal)).
 
-### 14.9 `__inject` and `__cast` <a id="inject-and-cast"></a>
+### 14.10 `__inject` and `__cast` <a id="inject-and-cast"></a>
 
 ```ts
 export function __inject(payload: any, loc: string): __DynVal {
@@ -7034,7 +7211,7 @@ export function __cast(v: __DynVal, loc: string): any {
   unbound value as well as checking a bound one. An endpoint that does not own
   the value at `loc` gets `null`, even when it holds a copy of the payload.
 
-### 14.10 Dynamic Operators <a id="dyn-operators"></a>
+### 14.11 Dynamic Operators <a id="dyn-operators"></a>
 
 Every binary operator has a runtime function of this form — `__dynPlus` for `+`:
 
@@ -7082,7 +7259,7 @@ export function __dynNot(v: __DynVal): __DynVal {
 
 `__dynNeg` is the same with `-v.payload`.
 
-### 14.11 Dynamic Numeric Conversion <a id="dyn-numeric-conversion"></a>
+### 14.12 Dynamic Numeric Conversion <a id="dyn-numeric-conversion"></a>
 
 ```ts
 export function __dynIntegerToFloat(v: __DynVal): __DynVal {
@@ -7115,7 +7292,7 @@ export function __dynFloatToInteger(v: __DynVal): __DynVal {
 A same-type conversion of a `dyn` value has no runtime function; nothing is
 generated for it (spec [§12.2](#dyn-lowering)).
 
-### 14.12 Dynamic Transfer Runtime <a id="dyn-transfer-runtime"></a>
+### 14.13 Dynamic Transfer Runtime <a id="dyn-transfer-runtime"></a>
 
 A dynamic transfer (spec [§11.5](#dynamic-transfer)) is performed by `__dynTransfer`, with four
 helpers that dispatch on the kind the compiler passes: `__copyPayload` copies an
@@ -7126,7 +7303,7 @@ code):
 ```ts
 function __copyPayload(kind: string, v: any): any {
   if (kind === "array") {
-    return copyArray(v);
+    return __copyArray(v);
   } else {
     return v;
   }
@@ -7225,7 +7402,7 @@ Every case creates exactly one fresh location variable, and none changes the
 source's. A copy is always fresh, so an array result never shares identity with
 its source (spec [§11.4](#local-copy)).
 
-### 14.13 Dynamic Array Operations <a id="dyn-array-operations"></a>
+### 14.14 Dynamic Array Operations <a id="dyn-array-operations"></a>
 
 ```ts
 export function __dynArrayGet(arr: __DynVal, i: __DynVal): __DynVal {
@@ -7293,7 +7470,7 @@ An array's payload stays consistent across endpoints as follows:
 3. those stale copies are never read: a runtime function checks the location
    before it touches a payload whenever the array is bound (spec [§3.5](#dyn)).
 
-### 14.14 Dynamic Print <a id="dyn-print"></a>
+### 14.15 Dynamic Print <a id="dyn-print"></a>
 
 ```ts
 export function __dynPrint(v: __DynVal): void {
@@ -7309,9 +7486,9 @@ export function __dynPrint(v: __DynVal): void {
   location, and every endpoint while it is bound to `every` or unbound
   (spec [§3.5](#dyn)).
 * It looks the location up with `__find` and never binds it, as
-  `__dynArrayLength` does (spec [§14.13](#dyn-array-operations)): printing a value adds no constraint.
-* `print` is BlueScript's own, supplied from outside like the communication API
-  (spec [§14](#runtime-support-functions)).
+  `__dynArrayLength` does (spec [§14.14](#dyn-array-operations)): printing a value adds no constraint.
+* `print` is BlueScript's own, from its standard library like the communication
+  API (spec [§14](#runtime-support-functions)).
 
 ## 15. Examples <a id="examples"></a>
 
@@ -7890,13 +8067,21 @@ This is an error if `carol` is not listed in `choreobs.json`.
 
 ```json
 {
-  "endpoints": ["alice", "every"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "every", "board": "host" }
+  ]
 }
 ```
 
 ```json
 {
-  "endpoints": ["alice", "dyn"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "dyn", "board": "host" }
+  ]
 }
 ```
 
@@ -8987,32 +9172,48 @@ Disallowed:
 
 ```json
 {
-  "endpoints": ["alice", "worker-1"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "worker-1", "board": "host" }
+  ]
 }
 ```
 
 ```json
 {
-  "endpoints": ["alice", "while"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "while", "board": "host" }
+  ]
 }
 ```
 
 ```json
 {
-  "endpoints": ["alice", "__internal"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "__internal", "board": "host" }
+  ]
 }
 ```
 
 A name that is not an identifier cannot be written after `@`, so it would name
-an endpoint no program could refer to — and it would still name an output file
-(spec [§2.3](#output-files)), which `../x` would place outside the output directory.
+an endpoint no program could refer to — and it would still name a directory in
+the workspace (spec [§2.3](#output-files)), which `../x` would place outside it.
 
 Allowed — the reserved runtime names (spec [§6.2](#function-names)) do not apply to endpoints,
-which reach the generated code only as string literals and file names:
+which reach the generated code only as string literals and directory names:
 
 ```json
 {
-  "endpoints": ["alice", "sendInteger"]
+  "name": "example",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "sendInteger", "board": "host" }
+  ]
 }
 ```
 
@@ -9024,20 +9225,26 @@ Disallowed:
 
 ```json
 {
-  "endpoints": ["alice", "bob"],
-  "implicitDyn": "no"
+  "name": "example",
+  "implicitDyn": "no",
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
 }
 ```
 
 ### 16.53 Reserved Input File Name <a id="reserved-input-file-name"></a>
 
 The basename of the input file must not begin with `__` (spec [§2.1](#input-files)): the
-compiler's runtime files use the prefix (spec [§2.3](#output-files)).
+compiler names its own files with the prefix, such as the runtime files
+(spec [§2.3](#output-files)). `choreobs compile` always compiles `src/index.cbs`, so the rule
+binds only a compiler that is handed a source file some other way.
 
-Disallowed:
+Disallowed, as the input file:
 
-```bash
-choreobs compile __runtime_x.cbs
+```text
+__main.cbs
 ```
 
 ### 16.54 Name Already Held in the Value Namespace <a id="err-name-already-held"></a>
@@ -9223,9 +9430,7 @@ Gradual locating (spec [§3.5](#dyn)) is part of v1. Not part of it:
 Future versions may add:
 
 * general location inference;
-* a `__locationError` that halts through `throw` or a platform halt function
-  instead of a loop (spec [§14.6](#location-errors));
-* path compression in `__root` (spec [§14.5](#location-variables));
+* path compression in `__root` (spec [§14.6](#location-variables));
 * building a `dyn` array of literals in one step (spec [§12.2](#dyn-lowering));
 * operations on array elements and `dyn` values that behave like the static
   ones rather than as on BlueScript's `any` (spec [§7.1.1](#array-types)), for example by bringing
@@ -9264,10 +9469,17 @@ on BlueScript behaviour that has not yet been confirmed. Each point should be
 settled by running a small `.bs` program on BlueScript, and the runtime changed
 where it does not hold.
 
-1. **Writing `__LocVar`** (spec [§14.5](#location-variables)): a field of the class's own type
+1. **Writing `__LocVar`** (spec [§14.6](#location-variables)): a field of the class's own type
    (`parent: __LocVar`), storing `this` in a field in the constructor, and `===`
    comparing objects by reference.
 2. **Garbage collection** of `__LocVar` and `__DynVal` objects that are no longer
    reachable.
-3. **How `__locationError` stops** (spec [§14.6](#location-errors)): whether `throw` is available,
-   and what the platform's halt function is if it is not.
+3. **How `__locationError` stops** (spec [§14.7](#location-errors)): that a `code` template calling
+   `runtime_error` ends the program on every board. It does on `host`; `esp32`
+   is unconfirmed.
+4. **`new Array<any>(v)` copies** (spec [§14.4](#copy-array-helper)): that, given an `any[]`, it
+   returns a new `any[]` of the same length holding the same elements, as
+   BlueScript's `gc_copy_array` reads.
+5. **Passing an `any` where an `any[]` is expected** (spec [§14.13](#dyn-transfer-runtime)):
+   `__copyPayload` hands its `any` payload to `__copyArray`, and `__sendAny` to
+   `sendArray`, each of which takes an `any[]`.

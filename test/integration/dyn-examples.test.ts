@@ -26,14 +26,14 @@ function expectEndpoints(
     const names = "alice" in expected.runtime ? expected.runtime[endpoint] : expected.runtime;
     assert.equal(
       bs(result, endpoint),
-      `import { ${names.join(", ")} } from "./__runtime_${endpoint}";\n\n${expected[endpoint]}`,
+      `import { ${names.join(", ")} } from "./__runtime";\n\n${expected[endpoint]}`,
     );
   }
 }
 
 /** `text` without its runtime import and the blank line after it, which must be there (spec §runtime-import). */
 function withoutRuntimeImport(text: string): string {
-  const header = /^import \{ [^}]* \} from "\.\/__runtime_\w+";\n\n/.exec(text);
+  const header = /^import \{ [^}]* \} from "\.\/__runtime";\n\n/.exec(text);
   assert.ok(header, `no runtime import in:\n${text}`);
   return text.slice(header[0].length);
 }

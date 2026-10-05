@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, defaultConfigPath, ConfigError } from "../../src/config/index.js";
+import {
+  loadConfig,
+  findProjectRoot,
+  compilerConfig,
+  ConfigError,
+  validateDeviceNames,
+} from "../../src/config/index.js";
 import { validateEndpoints } from "../../src/config/validate.js";
 
 /** The three rules an endpoint name that is not an identifier breaks. */
@@ -47,6 +53,13 @@ describe("config — validateEndpoints (spec §choreobs-json)", () => {
     );
   });
 
+  it("rejects names that differ only in case (spec §choreobs-json)", () => {
+    assert.deepEqual(
+      validateEndpoints(["Alice", "bob", "alice"]),
+      { message: "endpoints 'Alice' and 'alice' differ only in case", spec: ["choreobs-json"] },
+    );
+  });
+
   it("reports the first duplicate when several repeat", () => {
     assert.deepEqual(
       validateEndpoints(["a", "b", "b", "a"]),
@@ -78,7 +91,7 @@ describe("config — validateEndpoints (spec §choreobs-json)", () => {
   });
 
   it("rejects a name that would escape the output directory", () => {
-    // `index_<endpoint>.bs` is joined onto the source directory (spec §output-files).
+    // The name is the endpoint's directory in the workspace (spec §output-files).
     assert.deepEqual(
       validateEndpoints(["alice", "../pwned"]),
       { message: 'endpoint "../pwned" is not a valid identifier', spec: IDENTIFIER_RULES },
@@ -135,41 +148,56 @@ describe("config — validateEndpoints (spec §choreobs-json)", () => {
   });
 });
 
-describe("config — loadConfig", () => {
+/** A `choreobs.json` with `endpoints`, each a host endpoint unless written out. */
+function config(endpoints: readonly (string | object)[], extra: object = {}): string {
+  return JSON.stringify({
+    name: "test",
+    ...extra,
+    endpoints: endpoints.map((e) => (typeof e === "string" ? { name: e, board: "host" } : e)),
+  });
+}
+
+/** `loadConfig` on `contents` throws a ConfigError with `message` (after the path) and `spec`. */
+function rejects(contents: string, message: string | RegExp, spec: readonly string[] = ["choreobs-json"]): void {
+  withConfig(contents, (path) => {
+    assert.throws(
+      () => loadConfig(path),
+      (e: Error) => {
+        assert.ok(e instanceof ConfigError, String(e));
+        if (typeof message === "string") {
+          assert.equal(e.message, `${path}: ${message}`);
+        } else {
+          assert.match(e.message, message);
+        }
+        assert.deepEqual(e.spec, spec);
+        return true;
+      },
+    );
+  });
+}
+
+describe("config — loadConfig (spec §choreobs-json)", () => {
   it("loads a valid config", () => {
-    const config = withConfig(
-      JSON.stringify({ endpoints: ["alice", "bob"] }),
+    const loaded = withConfig(
+      config([{ name: "alice", board: "host" }, { name: "bob", board: "esp32", deviceName: "BOB" }]),
       loadConfig,
     );
-    assert.deepEqual(config.endpoints, ["alice", "bob"]);
+    assert.deepEqual(loaded, {
+      name: "test",
+      endpoints: [
+        { name: "alice", board: "host" },
+        { name: "bob", board: "esp32", deviceName: "BOB" },
+      ],
+    });
+    assert.deepEqual(compilerConfig(loaded), { endpoints: ["alice", "bob"] });
   });
 
   it("prefixes an endpoint-set error with the config path", () => {
-    withConfig(JSON.stringify({ endpoints: ["alice", "alice"] }), (path) => {
-      assert.throws(
-        () => loadConfig(path),
-        (e: Error) => {
-          assert.ok(e instanceof ConfigError);
-          assert.equal(e.message, `${path}: duplicate endpoint 'alice' in endpoints`);
-          assert.deepEqual(e.spec, ["choreobs-json"]);
-          return true;
-        },
-      );
-    });
+    rejects(config(["alice", "alice"]), "duplicate endpoint 'alice' in endpoints");
   });
 
   it("rejects 'every' with the config path", () => {
-    withConfig(JSON.stringify({ endpoints: ["every"] }), (path) => {
-      assert.throws(
-        () => loadConfig(path),
-        (e: Error) => {
-          assert.ok(e instanceof ConfigError);
-          assert.equal(e.message, `${path}: 'every' must not appear in endpoints`);
-          assert.deepEqual(e.spec, ["choreobs-json", "using-every-as-an-endpoint"]);
-          return true;
-        },
-      );
-    });
+    rejects(config(["every"]), "'every' must not appear in endpoints", ["choreobs-json", "using-every-as-an-endpoint"]);
   });
 
   it("rejects 'dyn' as an endpoint name (spec §using-every-as-an-endpoint)", () => {
@@ -179,45 +207,114 @@ describe("config — loadConfig", () => {
     });
   });
 
+  it("rejects names that differ only in case", () => {
+    rejects(config(["Alice", "alice"]), "endpoints 'Alice' and 'alice' differ only in case");
+  });
+
   it("reads implicitDyn, and leaves it out when absent (spec §strict-mode)", () => {
-    withConfig(JSON.stringify({ endpoints: ["alice"], implicitDyn: false }), (path) => {
-      assert.deepEqual(loadConfig(path), { endpoints: ["alice"], implicitDyn: false });
+    withConfig(config(["alice"], { implicitDyn: false }), (path) => {
+      assert.equal(loadConfig(path).implicitDyn, false);
+      assert.deepEqual(compilerConfig(loadConfig(path)), { endpoints: ["alice"], implicitDyn: false });
     });
-    withConfig(JSON.stringify({ endpoints: ["alice"] }), (path) => {
-      assert.deepEqual(loadConfig(path), { endpoints: ["alice"] });
+    withConfig(config(["alice"]), (path) => {
+      assert.ok(!("implicitDyn" in loadConfig(path)));
+      assert.deepEqual(compilerConfig(loadConfig(path)), { endpoints: ["alice"] });
     });
   });
 
   it("rejects a non-boolean implicitDyn (spec §invalid-implicit-dyn)", () => {
-    withConfig(JSON.stringify({ endpoints: ["alice"], implicitDyn: "no" }), (path) => {
-      assert.throws(
-        () => loadConfig(path),
-        (e: Error) => {
-          assert.ok(e instanceof ConfigError);
-          assert.equal(e.message, `${path}: "implicitDyn" must be a boolean`);
-          assert.deepEqual(e.spec, ["choreobs-json", "invalid-implicit-dyn"]);
-          return true;
-        },
-      );
+    rejects(config(["alice"], { implicitDyn: "no" }), `"implicitDyn" must be a boolean`, ["choreobs-json", "invalid-implicit-dyn"]);
+  });
+
+  it("requires a non-empty name", () => {
+    for (const name of [undefined, "", 3]) {
+      rejects(JSON.stringify({ name, endpoints: [] }), `"name" must be a non-empty string`);
+    }
+  });
+
+  it("rejects a document that is not an object, or not JSON", () => {
+    rejects("[]", "config must be a JSON object");
+    withConfig("{", (path) => {
+      assert.throws(() => loadConfig(path), (e: Error) => e instanceof ConfigError && e.message.startsWith(`${path}: `));
     });
   });
 
   it("rejects a non-array endpoints field", () => {
-    withConfig(JSON.stringify({ endpoints: "alice" }), (path) => {
-      assert.throws(() => loadConfig(path), /must be an array of strings/);
-    });
+    rejects(JSON.stringify({ name: "test", endpoints: "alice" }), `"endpoints" must be an array of endpoint objects`);
   });
 
-  it("rejects a non-string endpoint entry", () => {
-    withConfig(JSON.stringify({ endpoints: ["alice", 1] }), (path) => {
-      assert.throws(() => loadConfig(path), /each endpoint must be a string/);
-    });
-  });
-
-  it("defaultConfigPath sits next to the .cbs file", () => {
-    assert.equal(
-      defaultConfigPath(join("some", "dir", "index.cbs")),
-      join("some", "dir", "choreobs.json"),
+  it("rejects the bare-string entries of earlier versions, saying how to write them", () => {
+    rejects(
+      JSON.stringify({ name: "test", endpoints: ["alice"] }),
+      `endpoint "alice" is a bare string, the format of earlier versions; write it as { "name": "alice", "board": "host" } (or "esp32")`,
     );
+  });
+
+  it("rejects an entry that is not an object, or has no string name", () => {
+    rejects(JSON.stringify({ name: "test", endpoints: [1] }), `each endpoint must be an object with a "name" and a "board"`);
+    rejects(config([{ name: 1, board: "host" }]), `each endpoint's "name" must be a string`);
+  });
+
+  it("requires a known board", () => {
+    rejects(config([{ name: "alice" }]), `endpoint "alice": "board" must be "esp32" or "host"`);
+    rejects(config([{ name: "alice", board: "arduino" }]), `endpoint "alice": "board" must be "esp32" or "host"`);
+  });
+
+  it("allows a deviceName on an esp32 endpoint only, and only a non-empty string", () => {
+    rejects(config([{ name: "alice", board: "host", deviceName: "A" }]), `endpoint "alice": "deviceName" is only for an "esp32" endpoint`);
+    rejects(config([{ name: "alice", board: "esp32", deviceName: "" }]), `endpoint "alice": "deviceName" must be a non-empty string`);
+    rejects(config([{ name: "alice", board: "esp32", deviceName: 7 }]), `endpoint "alice": "deviceName" must be a non-empty string`);
+  });
+
+  it("rejects two esp32 endpoints with one device name, a missing one counting as BLUESCRIPT", () => {
+    rejects(
+      config([{ name: "a", board: "esp32" }, { name: "b", board: "esp32" }]),
+      `endpoints 'a' and 'b' have the same device name 'BLUESCRIPT'; give each esp32 endpoint a "deviceName" of its own`,
+    );
+    rejects(
+      config([{ name: "a", board: "esp32", deviceName: "BLUESCRIPT" }, { name: "b", board: "esp32" }]),
+      /endpoints 'a' and 'b' have the same device name 'BLUESCRIPT'/,
+    );
+    rejects(
+      config([{ name: "a", board: "esp32", deviceName: "X" }, { name: "b", board: "esp32", deviceName: "X" }]),
+      /endpoints 'a' and 'b' have the same device name 'X'/,
+    );
+  });
+
+  it("lets host endpoints share the absence of a device name", () => {
+    assert.equal(
+      validateDeviceNames([
+        { name: "a", board: "host" },
+        { name: "b", board: "host" },
+        { name: "c", board: "esp32" },
+      ]),
+      undefined,
+    );
+  });
+});
+
+describe("config — findProjectRoot (spec §input-files)", () => {
+  it("finds choreobs.json in the directory itself or the nearest parent", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "choreobs-root-")));
+    try {
+      writeFileSync(join(root, "choreobs.json"), config([]), "utf8");
+      mkdirSync(join(root, "src", "deep"), { recursive: true });
+      assert.equal(findProjectRoot(root), root);
+      assert.equal(findProjectRoot(join(root, "src", "deep")), root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when no directory up to the root holds one", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "choreobs-none-")));
+    try {
+      assert.throws(
+        () => findProjectRoot(dir),
+        (e: Error) => e instanceof ConfigError && /cannot find choreobs\.json/.test(e.message),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

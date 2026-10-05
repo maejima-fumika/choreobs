@@ -1,3 +1,9 @@
 {
-  "endpoints": ["sensor1", "sensor2", "gateway", "server"]
+  "name": "sensor-pipeline",
+  "endpoints": [
+    { "name": "sensor1", "board": "host" },
+    { "name": "sensor2", "board": "host" },
+    { "name": "gateway", "board": "host" },
+    { "name": "server", "board": "host" }
+  ]
 }

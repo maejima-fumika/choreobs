@@ -16,6 +16,11 @@ function capitalize(comm: CommKind): string {
   return comm.charAt(0).toUpperCase() + comm.slice(1);
 }
 
+/**
+ * The copy helper for `comm`. It lives in the runtime file, not in BlueScript,
+ * so it takes the compiler's `__` prefix (spec §copy-array-helper). Only arrays
+ * are ever copied: this names `__copyArray` alone in practice.
+ */
 export function copyFunction(comm: CommKind): string {
-  return `copy${capitalize(comm)}`;
+  return `__copy${capitalize(comm)}`;
 }

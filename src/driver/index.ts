@@ -1,9 +1,9 @@
 export {
-  compileFile,
+  compileProject,
   compileSource,
-  writeOutputs,
   type CompileResult,
   type CompileOutput,
-  type CompileOptions,
   type CompileDiagnostic,
+  type DriverDiagnostic,
+  type ProjectCompileResult,
 } from "./compile.js";

@@ -52,9 +52,8 @@ So the driver treats every outcome other than success as something to look at:
   program, so the projection contradicts itself. Always a compiler bug.
 - **bad output** — choreographic residue (`@`, `<-`, `absent`) survived
   projection, braces are unbalanced, the runtime files are not written for
-  every endpoint exactly when a program imports them, or hold the
-  dynamic-location runtime when no program imports from it or lack it when one
-  does (spec §runtime-files),
+  every endpoint, or hold the dynamic-location runtime when no program imports
+  from it or lack it when one does (spec §runtime-files),
   compilation is not deterministic, the output depends on the order endpoints
   are declared in, or a program written for strict mode compiles differently
   without it (spec §strict-mode).

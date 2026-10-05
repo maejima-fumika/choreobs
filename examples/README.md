@@ -1,20 +1,32 @@
 # ChoreoBS examples
 
-Each directory is a self-contained ChoreoBS project: an `index.cbs` and the
-`choreobs.json` that declares its endpoints (spec §input-files).
+Each directory is a self-contained ChoreoBS project: a `src/index.cbs` and the
+`choreobs.json` that declares its endpoints, all of them on the `host` board
+(spec §input-files, §choreobs-json).
 
-Compile one with:
+The BlueScript workspace the compiler writes into is not committed
+(spec §output-files). To compile and run an example, make it first, from the
+example's directory, with `choreobs add-endpoint` for each endpoint listed in
+its `choreobs.json`. That makes the workspace too, and asks nothing, since
+`choreobs.json` already gives each endpoint's board (spec §commands):
 
 ```bash
-npx tsx src/cli/main.ts compile examples/<name>/index.cbs
+cd examples/map-reduce
+choreobs add-endpoint driver
+choreobs add-endpoint worker1
+choreobs add-endpoint worker2
+choreobs run
 ```
 
-This writes `index_<endpoint>.bs` next to the source, one per endpoint, and
-`__runtime_<endpoint>.bs` beside them when the programs call a runtime helper
-(spec §runtime-files). Those outputs are build artifacts and are not committed.
+`choreobs run` compiles, then runs every endpoint's program together with
+`bscript workspace run`. Compilation alone is `choreobs compile`, which writes
+each endpoint's program to `workspace/<endpoint>/src/index.bs`, and its runtime
+file `__runtime.bs` beside it (spec §runtime-files). `choreobs` itself comes from `npm run build && npm link`
+at the root of this repository.
 
 `test/integration/examples.test.ts` compiles every directory here as part of
-`npm test`, so an example that stops compiling fails the suite.
+`npm test`, without a workspace, so an example that stops compiling fails the
+suite.
 
 ## The examples
 

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { finalizeAbsentProgram } from "../../src/finalize/index.js";
 import { emit } from "../../src/emit/index.js";
-import { compileFile, writeOutputs } from "../../src/driver/index.js";
+import { writeProject } from "../../src/workspace/index.js";
+import { scaffold, withTempDir } from "../support/project.js";
 import { compile, bs, expectSuccess } from "../support/compile.js";
 import { projectSource } from "../support/pipeline.js";
 
@@ -79,7 +79,7 @@ let x: integer@alice = add(1@alice, 2@alice);
     assert.doesNotMatch(bob, /add/);
     assert.equal(
       bob.trim(),
-      'import { __nothing2 } from "./__runtime_bob";\n\n__nothing2(null, null);',
+      'import { __nothing2 } from "./__runtime";\n\n__nothing2(null, null);',
     );
   });
 
@@ -114,38 +114,24 @@ add(10@alice);
     assert.match(code, /return a \+ b;/);
   });
 
-  it("compile writes index_<endpoint>.bs files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "choreobs-test-"));
-    try {
-      const cbsPath = join(dir, "index.cbs");
-      const configPath = join(dir, "choreobs.json");
-      const source = `
+  it("compile writes each endpoint's program into its BlueScript project (spec §output-files)", () => {
+    withTempDir((root) => {
+      scaffold(
+        root,
+        [{ name: "alice", board: "host" }, { name: "bob", board: "host" }],
+        `
 let x: integer@alice = 10@alice;
 let y: integer@bob <- x;
-`;
-      writeFileSync(cbsPath, source, "utf8");
-      writeFileSync(
-        configPath,
-        JSON.stringify({ endpoints: ["alice", "bob"] }),
-        "utf8",
+`,
       );
+      const result = writeProject(root);
+      assert.deepEqual(result.errors, []);
 
-      const result = compileFile(cbsPath);
-      assert.equal(result.success, true);
-      assert.equal(result.outputs.length, 2);
-
-      writeOutputs(result.outputs);
-
-      const alicePath = join(dir, "index_alice.bs");
-      const bobPath = join(dir, "index_bob.bs");
-      const aliceBs = readFileSync(alicePath, "utf8");
-      const bobBs = readFileSync(bobPath, "utf8");
-
+      const aliceBs = readFileSync(join(root, "workspace/alice/src/index.bs"), "utf8");
+      const bobBs = readFileSync(join(root, "workspace/bob/src/index.bs"), "utf8");
       assert.match(aliceBs, /sendInteger\("bob", "__top_0", x\)/);
       assert.match(bobBs, /receiveInteger\("alice", "__top_0"\)/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 
   it("emits a scalar local copy as local assignment (spec §local-copy)", () => {
@@ -172,7 +158,7 @@ let ys: float[]@alice <- xs;
       "alice",
     );
     assert.match(alice, /let xs: any\[] = new Array<any>\(\[1\.1, 2\.2\]\);/);
-    assert.match(alice, /let ys: any\[] = copyArray\(xs\);/);
+    assert.match(alice, /let ys: any\[] = __copyArray\(xs\);/);
     assert.doesNotMatch(alice, /sendArray/);
     assert.doesNotMatch(alice, /receiveArray/);
     assert.doesNotMatch(alice, /broadcastArray/);
@@ -194,7 +180,7 @@ let avg: float@alice = average(arrAlice);
 `,
       "alice",
     );
-    assert.match(alice, /copyArray\(arr\)/);
+    assert.match(alice, /let arrAlice: any\[\] = __copyArray\(arr\);/);
     assert.match(alice, /average\(arrAlice\)/);
     assert.match(alice, /function average\(arr: any\[\]\): float \{/);
     assert.match(alice, /return sum \/ \(\(arr\.length as integer\) as float\);/);
@@ -280,7 +266,7 @@ let d: boolean@alice = a && (b || a);
     assert.match(alice, /let d: boolean = __and\(a, \(__or\(b, a\)\)\);/);
     assert.doesNotMatch(alice, /&&|\|\|/);
     // Imported from the runtime file like any other helper (spec §runtime-import).
-    assert.match(alice, /^import \{ __and, __or \} from "\.\/__runtime_alice";\n\n/);
+    assert.match(alice, /^import \{ __and, __or \} from "\.\/__runtime";\n\n/);
   });
 
   describe("nothing(...) as the fixed-arity helpers (spec §nothing-code-generation)", () => {
@@ -322,8 +308,8 @@ f(${args});
     });
 
     it("imports exactly the helpers the nesting uses", () => {
-      assert.match(bobCalling(6), /^import \{ __nothing2, __nothing5 \} from "\.\/__runtime_bob";$/m);
-      assert.match(bobCalling(10), /^import \{ __nothing2, __nothing5 \} from "\.\/__runtime_bob";$/m);
+      assert.match(bobCalling(6), /^import \{ __nothing2, __nothing5 \} from "\.\/__runtime";$/m);
+      assert.match(bobCalling(10), /^import \{ __nothing2, __nothing5 \} from "\.\/__runtime";$/m);
     });
 
     it("keeps the IR's own nesting, level by level", () => {

@@ -35,9 +35,7 @@ try {
     for (const out of result.outputs) {
       console.log(`\n--- ${out.endpoint} ---\n${out.source}`);
     }
-    if (result.runtimeOutputs.length > 0) {
-      console.log(`\n(and a runtime file for each of the ${result.runtimeOutputs.length} endpoints)`);
-    }
+    console.log(`\n(and a runtime file for each of the ${result.runtimeOutputs.length} endpoints)`);
   }
 } catch (e) {
   console.log(`CRASH: ${e instanceof Error ? e.stack : String(e)}`);

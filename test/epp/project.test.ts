@@ -262,7 +262,7 @@ let ys: float[]@alice <- xs;
     if (ysLet?.kind === "LetStatement") {
       assert.equal(ysLet.initializer.kind, "CallExpression");
       if (ysLet.initializer.kind === "CallExpression") {
-        assert.equal(ysLet.initializer.callee, "copyArray");
+        assert.equal(ysLet.initializer.callee, "__copyArray");
         assert.equal(ysLet.initializer.args[0]?.kind, "IdentifierExpression");
       }
     }

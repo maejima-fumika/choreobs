@@ -151,7 +151,9 @@ export function runtimeLocationName(location: Location): string {
   }
 }
 
-/** The runtime file for `endpoint`, imported without its extension: BlueScript appends `.bs`. */
-export function runtimeModuleName(endpoint: string): string {
-  return `__runtime_${endpoint}`;
-}
+/**
+ * The runtime file, imported without its extension: BlueScript appends `.bs`.
+ * Each endpoint's sits in that endpoint's own project, next to its program, so
+ * they all have this one name (spec §runtime-import).
+ */
+export const RUNTIME_MODULE = "__runtime";

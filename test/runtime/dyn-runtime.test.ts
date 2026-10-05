@@ -112,36 +112,74 @@ describe("runtime file (spec §runtime-files)", () => {
     assertNoChoreoResidue(runtimeSource("alice", true));
   });
 
-  it("halts on a location error instead of returning (spec §location-errors)", () => {
+  it("stops on a location error through runtime_error (spec §location-errors)", () => {
     assert.match(
       runtimeSource("alice", true),
-      /export function __locationError\(\): void \{\n  while \(true\) \{\n  \}\n\}/,
+      /export function __locationError\(a: string, b: string\): void \{\n  const message = "location error: " \+ a \+ " and " \+ b;\n  code`runtime_error\(gc_string_to_cstr\(\$\{message\}\)\);`;\n\}/,
     );
+    const source = runtimeSource("alice", true);
+    assert.match(source, /__locationError\(ra\.bound, rb\.bound\);/);
+    assert.match(source, /__locationError\(r\.bound, loc\);/);
   });
 
   it("is written for every endpoint of a program that uses dyn", () => {
-    const result = compile(`let x: integer@dyn = 1@dyn;`, aliceBobCarol, "dir/index.cbs");
+    const result = compile(`let x: integer@dyn = 1@dyn;`, aliceBobCarol);
     expectSuccess(result);
-    assert.deepEqual(
-      result.runtimeOutputs.map((o) => [o.endpoint, o.path]),
-      [
-        ["alice", "dir/__runtime_alice.bs"],
-        ["bob", "dir/__runtime_bob.bs"],
-        ["carol", "dir/__runtime_carol.bs"],
-      ],
-    );
+    assert.deepEqual(result.runtimeOutputs.map((o) => o.endpoint), ["alice", "bob", "carol"]);
     assert.equal(result.runtimeOutputs[1]!.source, runtimeSource("bob", true));
     assert.equal(result.outputs.length, 3);
-    assert.match(result.outputs[2]!.source, /^import \{ __DynVal, __dynUnbound \} from "\.\/__runtime_carol";\n\n/);
+    assert.match(result.outputs[2]!.source, /^import \{ __DynVal, __dynUnbound \} from "\.\/__runtime";\n\n/);
   });
 
-  it("is not written, and nothing is imported, for a program that calls no runtime helper (spec §runtime-files)", () => {
+  it("is written with the core helpers even when nothing imports from it (spec §runtime-files)", () => {
     const result = compile(`let x: integer@alice = 1@alice;
 let y: integer@bob <- x;`);
     expectSuccess(result);
-    assert.equal(result.runtimeOutputs.length, 0);
+    assert.deepEqual(
+      result.runtimeOutputs.map((o) => [o.endpoint, o.source]),
+      [
+        ["alice", runtimeSource("alice", false)],
+        ["bob", runtimeSource("bob", false)],
+      ],
+    );
     for (const out of result.outputs) {
       assert.doesNotMatch(out.source, /import/);
+    }
+  });
+
+  it("imports the copy helper where a transfer copies an array (spec §copy-array-helper)", () => {
+    const result = compile(`let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@alice <- xs;`);
+    expectSuccess(result);
+    assert.match(result.outputs[0]!.source, /^import \{ __copyArray \} from "\.\/__runtime";\n\n/);
+    assert.match(result.outputs[0]!.source, /let ys: any\[\] = __copyArray\(xs\);/);
+    assert.ok(
+      runtimeSource("alice", false).includes(
+        "export function __copyArray(v: any[]): any[] {\n  return new Array<any>(v);\n}\n",
+      ),
+    );
+    // The copy helper is a core helper: it does not pull in the dynamic-location runtime.
+    assert.equal(result.runtimeOutputs[0]!.source, runtimeSource("alice", false));
+  });
+
+  it("imports every compiler name an endpoint program calls (spec §runtime-import)", () => {
+    const result = compile(`let xs: integer[]@alice = [1, 2]@alice;
+let ys: integer[]@every <- xs;
+let a: boolean@alice = true@alice;
+let b: boolean@alice = a && a || a;
+let d = 3;
+print(d + 1);`);
+    expectSuccess(result);
+    for (const out of result.outputs) {
+      const imported = /^import \{ ([^}]*) \}/.exec(out.source)?.[1]?.split(", ") ?? [];
+      const body = out.source.replace(/^import .*\n/, "");
+      const called = [...body.matchAll(/\b(__\w+)\(/g)]
+        .map((m) => m[1]!)
+        .filter((name) => !name.startsWith("__transfer_"));
+      assert.ok(called.length > 0, out.endpoint);
+      for (const name of called) {
+        assert.ok(imported.includes(name), `${out.endpoint} calls ${name} without importing it`);
+      }
     }
   });
 
@@ -156,7 +194,7 @@ let b: boolean@alice = a && a;`);
         ["bob", runtimeSource("bob", false)],
       ],
     );
-    assert.match(result.outputs[0]!.source, /^import \{ __and \} from "\.\/__runtime_alice";\n\n/);
+    assert.match(result.outputs[0]!.source, /^import \{ __and \} from "\.\/__runtime";\n\n/);
     // `bob` holds none of it, so it imports nothing, and is given the file all the same.
     assert.doesNotMatch(result.outputs[1]!.source, /import/);
   });
@@ -168,7 +206,7 @@ let d: boolean@dyn = true@dyn;`);
     expectSuccess(result);
     assert.match(
       result.outputs[0]!.source,
-      /^import \{ __and, __or, __DynVal, __dynUnbound \} from "\.\/__runtime_alice";\n\n/,
+      /^import \{ __and, __or, __DynVal, __dynUnbound \} from "\.\/__runtime";\n\n/,
     );
     assert.equal(result.runtimeOutputs[0]!.source, runtimeSource("alice", true));
   });
@@ -176,14 +214,14 @@ let d: boolean@dyn = true@dyn;`);
   it("imports what a function signature uses even when nothing calls the runtime", () => {
     const result = compile(`function f(a: integer@dyn): void {}`);
     expectSuccess(result);
-    assert.match(result.outputs[0]!.source, /^import \{ __DynVal \} from "\.\/__runtime_alice";/);
+    assert.match(result.outputs[0]!.source, /^import \{ __DynVal \} from "\.\/__runtime";/);
     assert.equal(result.runtimeOutputs.length, 2);
   });
 });
 
 describe("input file names (spec §reserved-input-file-name)", () => {
   it("rejects a name that takes the compiler's __ prefix", () => {
-    const result = compile(`let x: integer@alice = 1@alice;`, undefined, "dir/__runtime_x.cbs");
+    const result = compile(`let x: integer@alice = 1@alice;`, undefined, "dir/__main.cbs");
     assert.equal(result.success, false);
     assert.ok(result.errors[0]!.message.includes("must not begin with '__'"));
     assert.deepEqual(result.errors[0]!.spec, ["input-files", "reserved-input-file-name"]);

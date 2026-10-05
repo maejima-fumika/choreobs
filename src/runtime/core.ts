@@ -1,4 +1,6 @@
 import type { LogicalOperator } from "../ast/operators.js";
+import { ARRAY_COMM_KIND } from "../comm/kind.js";
+import { copyFunction } from "../emit/comm.js";
 import { specRef } from "../spec/ref.js";
 
 /**
@@ -68,9 +70,17 @@ export const LOGICAL_HELPERS: Readonly<Record<LogicalOperator, string>> = {
   "||": "__or",
 };
 
+/**
+ * The copy helper, `__copyArray`: a fresh copy of an array, which a transfer
+ * makes where the value is already there (spec §copy-array-helper,
+ * §local-copy). BlueScript has no copy of its own.
+ */
+export const COPY_ARRAY_HELPER = copyFunction(ARRAY_COMM_KIND);
+
 /** Everything a generated file may import from the core helpers, in import order (spec §runtime-import). */
 export const CORE_RUNTIME_EXPORTS: readonly string[] = [
   ...NOTHING_HELPERS,
   LOGICAL_HELPERS["&&"],
   LOGICAL_HELPERS["||"],
+  COPY_ARRAY_HELPER,
 ];

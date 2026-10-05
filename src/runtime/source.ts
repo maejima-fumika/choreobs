@@ -9,7 +9,7 @@ import {
 } from "../emit/comm.js";
 import { ARRAY_COMM_KIND } from "../comm/kind.js";
 import { ALL_COMM_KINDS } from "./names.js";
-import { LOGICAL_HELPERS, NOTHING_HELPERS } from "./core.js";
+import { COPY_ARRAY_HELPER, LOGICAL_HELPERS, NOTHING_HELPERS } from "./core.js";
 import {
   DYN_BINARY,
   DYN_CONVERSION,
@@ -20,16 +20,16 @@ import {
 } from "./dyn.js";
 
 /**
- * The BlueScript source of `__runtime_<endpoint>.bs` (spec §runtime-files): the
- * core helpers, which every program may call (spec §nothing, §and-or-helpers),
- * and then, when `dyn` is set, the dynamic-location runtime — the
- * representation of dynamically located values and the operations on them
- * (spec §dyn-runtime–§dyn-print).
+ * The BlueScript source of an endpoint's `__runtime.bs` (spec §runtime-files):
+ * the core helpers, which every program may call (spec §nothing,
+ * §and-or-helpers, §copy-array-helper), and then, when `dyn` is set, the
+ * dynamic-location runtime — the representation of dynamically located values
+ * and the operations on them (spec §dyn-runtime–§dyn-print).
  *
  * Every endpoint gets the same text except for the header comment that names
  * it and, in the dynamic-location runtime, `__here`. The communication API and
- * the copy helper are not here; they are supplied from outside, as for every
- * program (spec §runtime-support-functions).
+ * `print` are not here; they come from BlueScript's standard library, as for
+ * every program (spec §runtime-support-functions).
  *
  * Unverified BlueScript behaviour this relies on is listed in
  * spec §unverified-bluescript-assumptions.
@@ -41,6 +41,7 @@ export function runtimeSource(endpoint: string, dyn: boolean): string {
     "",
     nothingHelpers(),
     logicalHelpers(),
+    COPY_HELPER,
     ...(dyn ? dynRuntime(endpoint) : []),
   ].join("\n");
 }
@@ -119,6 +120,18 @@ function logicalHelpers(): string {
     .join("\n");
 }
 
+// --- §copy-array-helper ------------------------------------------------------
+
+/**
+ * `__copyArray`: BlueScript's copying constructor, given an array, makes a new
+ * `any[]` with the same elements. Shallow is enough, since no element is an
+ * array (spec §copy-array-helper).
+ */
+const COPY_HELPER = `export function ${COPY_ARRAY_HELPER}(v: any[]): any[] {
+  return new Array<any>(v);
+}
+`;
+
 // --- §location-variables -----------------------------------------------------
 
 const LOCATION_VARIABLES = `export class __LocVar {
@@ -153,7 +166,7 @@ export function __unify(a: __LocVar, b: __LocVar): string {
   }
   if (ra.bound !== "" && rb.bound !== "") {
     if (ra.bound !== rb.bound) {
-      __locationError();
+      __locationError(ra.bound, rb.bound);
     }
     return ra.bound;
   }
@@ -175,19 +188,20 @@ export function __bind(v: __LocVar, loc: string): void {
   if (r.bound === "") {
     r.bound = loc;
   } else if (r.bound !== loc) {
-    __locationError();
+    __locationError(r.bound, loc);
   }
 }
 `;
 
 // --- §location-errors --------------------------------------------------------
 
-// Stops this endpoint for good. Every endpoint adds the same constraints in
-// the same order, so every endpoint stops at the same operation. Whether
-// BlueScript offers a better way to halt is open (spec §unverified-bluescript-assumptions).
-const LOCATION_ERROR = `export function __locationError(): void {
-  while (true) {
-  }
+// Stops this endpoint with a runtime error naming the two locations that
+// clashed, through BlueScript's C function `runtime_error`, embedded with a
+// `code` template. Every endpoint adds the same constraints in the same order,
+// so every endpoint stops at the same operation.
+const LOCATION_ERROR = `export function __locationError(a: string, b: string): void {
+  const message = "location error: " + a + " and " + b;
+  code\`runtime_error(gc_string_to_cstr(\${message}));\`;
 }
 `;
 

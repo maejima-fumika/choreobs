@@ -32,12 +32,10 @@ export function inspectOutputs(
   if (result.outputs.length !== endpoints.length) {
     return `expected ${endpoints.length} outputs, got ${result.outputs.length}`;
   }
-  // The runtime comes for every endpoint or for none, and exactly when some
-  // endpoint's program imports from it (spec §runtime-files, §runtime-import).
-  const imports = result.outputs.some((o) => o.source.startsWith("import "));
-  const expectedRuntime = imports ? endpoints.length : 0;
-  if (result.runtimeOutputs.length !== expectedRuntime) {
-    return `expected ${expectedRuntime} runtime files, got ${result.runtimeOutputs.length}`;
+  // The runtime comes for every endpoint, whether or not its program imports
+  // from it (spec §runtime-files).
+  if (result.runtimeOutputs.length !== endpoints.length) {
+    return `expected ${endpoints.length} runtime files, got ${result.runtimeOutputs.length}`;
   }
   // Each holds the dynamic-location runtime exactly when some program imports
   // a name of it (spec §runtime-files).

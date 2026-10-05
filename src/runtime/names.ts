@@ -1,11 +1,5 @@
 import type { CommKind } from "../ir/projected.js";
-import { ARRAY_COMM_KIND } from "../comm/kind.js";
-import {
-  broadcastFunction,
-  copyFunction,
-  receiveFunction,
-  sendFunction,
-} from "../emit/comm.js";
+import { broadcastFunction, receiveFunction, sendFunction } from "../emit/comm.js";
 
 /**
  * Names the generated BlueScript relies on, and the sentinels EPP uses
@@ -78,9 +72,8 @@ export const RESERVED_RUNTIME_NAMES: ReadonlySet<string> = new Set<string>([
     receiveFunction(comm),
     broadcastFunction(comm),
   ]),
-  // Only arrays are ever copied (spec §communication-api): there is no
-  // `copyInteger`, so that name is left to the program (spec §reserved-runtime-names).
-  copyFunction(ARRAY_COMM_KIND),
+  // The copy helper is the runtime file's `__copyArray`, under the prefix
+  // below, so `copyArray` is left to the program (spec §reserved-runtime-names).
 ]);
 
 export function isReservedRuntimeName(name: string): boolean {

@@ -1,13 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import {
-  compileFile,
-  writeOutputs,
-} from "../../src/driver/index.js";
-import { aliceBob } from "../support/config.js";
+import { compileProject } from "../../src/driver/index.js";
+import { projectConfig, withTempDir, writeFiles } from "../support/project.js";
 import {
   compile,
   bs,
@@ -152,7 +146,7 @@ let xs: float[]@alice = [1.1, 2.2]@alice;
 let ys: float[]@alice <- xs;
 `);
       expectSuccess(result);
-      assert.match(bs(result, "alice"), /let ys: any\[\] = copyArray\(xs\);/);
+      assert.match(bs(result, "alice"), /let ys: any\[\] = __copyArray\(xs\);/);
       assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
     });
 
@@ -178,7 +172,7 @@ ys <- xs;
       const alice = bs(result, "alice");
       assert.match(alice, /broadcastArray\("__top_0", xs\);/);
       // The sender must not alias `xs`; it copies like every receiver does.
-      assert.match(alice, /ys = copyArray\(xs\);/);
+      assert.match(alice, /ys = __copyArray\(xs\);/);
       assert.match(bs(result, "bob"), /ys = receiveArray\("alice", "__top_0"\);/);
     });
 
@@ -303,53 +297,38 @@ let x: integer@alice = 2@alice;
       assert.equal(bs(result, "carol"), "");
     });
 
-    it("names outputs index_<endpoint>.bs next to the source file", () => {
-      const result = compile(`let x: integer@alice = 1@alice;`, aliceBob, "prog.cbs");
-      expectSuccess(result);
-      const alice = result.outputs.find((o) => o.endpoint === "alice");
-      assert.ok(alice?.path.endsWith("prog_alice.bs"));
-    });
-
-    it("compileFile reads choreobs.json and writes .bs to disk", () => {
-      const dir = mkdtempSync(join(tmpdir(), "choreobs-integ-"));
-      try {
-        const cbsPath = join(dir, "index.cbs");
-        const configPath = join(dir, "choreobs.json");
-        writeFileSync(
-          cbsPath,
-          `let x: integer@alice = 1@alice;\nlet y: integer@bob <- x;\n`,
-          "utf8",
-        );
-        writeFileSync(
-          configPath,
-          JSON.stringify({ endpoints: ["alice", "bob"] }),
-          "utf8",
-        );
-
-        const result = compileFile(cbsPath);
+    it("compileProject reads choreobs.json and src/index.cbs (spec §input-files)", () => {
+      withTempDir((root) => {
+        writeFiles(root, {
+          "choreobs.json": projectConfig(["alice", "bob"], { implicitDyn: false }),
+          "src/index.cbs": `let x: integer@alice = 1@alice;\nlet y: integer@bob <- x;\n`,
+        });
+        const result = compileProject(root);
         expectSuccess(result);
-        writeOutputs(result.outputs);
-
-        const aliceBs = readFileSync(join(dir, "index_alice.bs"), "utf8");
-        const bobBs = readFileSync(join(dir, "index_bob.bs"), "utf8");
-        assert.match(aliceBs, /sendInteger\("bob", "__top_0", x\)/);
-        assert.match(bobBs, /receiveInteger\("alice", "__top_0"\)/);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
+        assert.equal(result.config?.implicitDyn, false);
+        assert.match(bs(result, "alice"), /sendInteger\("bob", "__top_0", x\)/);
+        assert.match(bs(result, "bob"), /receiveInteger\("alice", "__top_0"\)/);
+        assert.deepEqual(result.runtimeOutputs.map((o) => o.endpoint), ["alice", "bob"]);
+      });
     });
 
     it("fails when choreobs.json is missing", () => {
-      const dir = mkdtempSync(join(tmpdir(), "choreobs-integ-"));
-      try {
-        const cbsPath = join(dir, "solo.cbs");
-        writeFileSync(cbsPath, `let x: integer@alice = 1@alice;`, "utf8");
-        const result = compileFile(cbsPath);
+      withTempDir((root) => {
+        writeFiles(root, { "src/index.cbs": `let x: integer@alice = 1@alice;` });
+        const result = compileProject(root);
         expectFailure(result);
         assert.ok(result.errors.some((e) => e.message.includes("choreobs.json")));
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
+      });
+    });
+
+    it("reports a missing src/index.cbs as a diagnostic, not a crash", () => {
+      withTempDir((root) => {
+        writeFiles(root, { "choreobs.json": projectConfig(["alice"]) });
+        const result = compileProject(root);
+        expectFailure(result);
+        assert.match(result.errors[0]!.message, /cannot read .*index\.cbs/);
+        assert.deepEqual(result.errors[0]!.spec, ["input-files"]);
+      });
     });
   });
 
@@ -456,7 +435,7 @@ let n: integer@alice = f();
 `);
       expectSuccess(result);
       // A transfer at one location is a fresh copy, and emits no communication.
-      assert.match(bs(result, "alice"), /let ys: any\[\] = copyArray\(xs\);/);
+      assert.match(bs(result, "alice"), /let ys: any\[\] = __copyArray\(xs\);/);
       assert.doesNotMatch(bs(result, "alice"), /send|receive|broadcast/);
     });
 
@@ -544,7 +523,7 @@ let xs: integer[]@every <- makeArray();
         .filter((l) => l.includes("makeArray()") && !l.startsWith("function"));
       assert.equal(calls.length, 1, alice);
       assert.match(alice, /broadcastArray\("__top_0", __transfer_0\);/);
-      assert.match(alice, /let xs: any\[\] = copyArray\(__transfer_0\);/);
+      assert.match(alice, /let xs: any\[\] = __copyArray\(__transfer_0\);/);
     });
 
     it("§transfer-typing uses a plain identifier source directly, with no temporary", () => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { compileFile } from "../../src/driver/index.js";
+import { compileProject } from "../../src/driver/index.js";
 import { assertNoChoreoResidue } from "../support/compile.js";
 
 const EXAMPLES = join(import.meta.dirname, "..", "..", "examples");
@@ -22,7 +22,7 @@ describe("examples/ compile end to end", () => {
 
   for (const dir of dirs) {
     it(`compiles ${dir}`, () => {
-      const result = compileFile(join(EXAMPLES, dir, "index.cbs"));
+      const result = compileProject(join(EXAMPLES, dir));
       assert.equal(
         result.success,
         true,
@@ -30,7 +30,7 @@ describe("examples/ compile end to end", () => {
       );
       assert.ok(result.outputs.length > 0, "expected projected outputs");
       for (const out of result.outputs) {
-        assertNoChoreoResidue(out.source, out.path);
+        assertNoChoreoResidue(out.source, `${dir}: ${out.endpoint}`);
       }
     });
   }

@@ -3,4 +3,5 @@
 /test-project
 tsconfig.tsbuildinfo
 /examples/**/*.bs
+/examples/*/workspace/
 /scratchpad

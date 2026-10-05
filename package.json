@@ -8,7 +8,6 @@
     "typecheck": "tsc -p tsconfig.test.json",
     "start:prod": "node dist/index.js",
     "test": "node --import tsx --test $(find test -name '*.test.ts' | sort)",
-    "compile": "tsx src/cli/main.ts compile",
     "spec:sections": "tsx scripts/spec/sections.ts",
     "spec:check": "tsx scripts/spec/check.ts",
     "spec:fmt": "tsx scripts/spec/fmt.ts && npm run spec:sections",
@@ -26,5 +25,8 @@
     "@types/node": "^25.9.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "inquirer": "^12.11.1"
   }
 }

@@ -10,7 +10,7 @@ import type {
 } from "../ir/projected.js";
 import { emitType } from "./types.js";
 import { runtimeImports } from "../runtime/imports.js";
-import { runtimeModuleName } from "../runtime/dyn.js";
+import { RUNTIME_MODULE } from "../runtime/dyn.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
 import { ARRAY_SENTINEL, PUSH_SENTINEL } from "../runtime/names.js";
 import { LOGICAL_HELPERS, nestNothing } from "../runtime/core.js";
@@ -242,7 +242,7 @@ class BlueScriptEmitter {
 }
 
 /**
- * `import { … } from "./__runtime_<endpoint>";` and a blank line, for a program
+ * `import { … } from "./__runtime";` and a blank line, for a program
  * that uses anything from the runtime file (spec §runtime-import); nothing
  * otherwise. The module name has no extension because BlueScript appends `.bs`
  * itself.
@@ -251,7 +251,7 @@ function runtimeImportLine(program: ProjectedProgram, names: readonly string[]):
   if (names.length === 0) {
     return "";
   }
-  const line = `import { ${names.join(", ")} } from "./${runtimeModuleName(program.endpoint)}";\n`;
+  const line = `import { ${names.join(", ")} } from "./${RUNTIME_MODULE}";\n`;
   return program.functions.length > 0 || program.body.length > 0 ? `${line}\n` : line;
 }
 

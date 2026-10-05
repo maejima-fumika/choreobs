@@ -1,6 +1,7 @@
 import { isIdentifierName } from "../lexer/index.js";
 import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
 import type { SpecCited } from "../spec/ref.js";
+import { effectiveDeviceName, type EndpointConfig, type ProjectConfig } from "./types.js";
 
 /** Why an endpoint set is rejected, and the rules it breaks. */
 export interface EndpointsProblem extends SpecCited {
@@ -35,10 +36,11 @@ export function validateEndpoints(
       };
     }
   }
-  // An endpoint name is written after `@` in the source (spec §types) and is
-  // pasted into the output file name (spec §output-files). A name that is not an
-  // identifier can therefore never be referred to by any program, and still
-  // names a file — `../x` would put that file outside the output directory.
+  // An endpoint name is written after `@` in the source (spec §types) and
+  // names the endpoint's directory in the workspace (spec §output-files). A name
+  // that is not an identifier can therefore never be referred to by any
+  // program, and still names a directory — `../x` would put it outside the
+  // workspace.
   for (const name of endpoints) {
     if (!isIdentifierName(name)) {
       return {
@@ -57,8 +59,8 @@ export function validateEndpoints(
       };
     }
   }
-  // A repeated endpoint would give two output files the same name and make one
-  // endpoint both sender and receiver of the same tag (spec §choreobs-json).
+  // A repeated endpoint would give two endpoints the same directory and make
+  // one endpoint both sender and receiver of the same tag (spec §choreobs-json).
   const seen = new Set<string>();
   for (const name of endpoints) {
     if (seen.has(name)) {
@@ -69,5 +71,56 @@ export function validateEndpoints(
     }
     seen.add(name);
   }
+  // Names that differ only in case are distinct identifiers, but a file system
+  // that ignores case — macOS's default — gives them one directory.
+  const byFolded = new Map<string, string>();
+  for (const name of endpoints) {
+    const other = byFolded.get(name.toLowerCase());
+    if (other !== undefined) {
+      return {
+        message: `endpoints '${other}' and '${name}' differ only in case`,
+        spec: ["choreobs-json"],
+      };
+    }
+    byFolded.set(name.toLowerCase(), name);
+  }
   return undefined;
+}
+
+/**
+ * No two `esp32` endpoints may go by the same device name, a missing one
+ * counting as BlueScript's default: nothing would decide which board runs
+ * which endpoint's program (spec §choreobs-json).
+ */
+export function validateDeviceNames(
+  endpoints: readonly EndpointConfig[],
+): EndpointsProblem | undefined {
+  const owners = new Map<string, string>();
+  for (const endpoint of endpoints) {
+    const deviceName = effectiveDeviceName(endpoint);
+    if (deviceName === undefined) {
+      continue;
+    }
+    const owner = owners.get(deviceName);
+    if (owner !== undefined) {
+      return {
+        message: `endpoints '${owner}' and '${endpoint.name}' have the same device name '${deviceName}'; give each esp32 endpoint a "deviceName" of its own`,
+        spec: ["choreobs-json"],
+      };
+    }
+    owners.set(deviceName, endpoint.name);
+  }
+  return undefined;
+}
+
+/**
+ * Every rule of spec §choreobs-json that relates entries to one another, for a
+ * configuration whose entries are each well formed: the one `loadConfig` reads,
+ * and the one `choreobs add-endpoint` is about to write.
+ */
+export function validateProject(config: ProjectConfig): EndpointsProblem | undefined {
+  return (
+    validateEndpoints(config.endpoints.map((endpoint) => endpoint.name)) ??
+    validateDeviceNames(config.endpoints)
+  );
 }
