@@ -12,6 +12,11 @@ import { specNumber } from "../../src/spec/ref.js";
  * the generator's own type and location environment, so it must be rejected.
  * An accepted program is a soundness hole. Seeds are fixed so failures
  * reproduce; widen the search with the script, not this test.
+ *
+ * A violation that may land in a local function body is also looked for
+ * there, past the first samples if need be: a local function reads some
+ * omissions differently (spec §local-function-location-inference), so a violation that holds
+ * elsewhere need not hold there.
  */
 const ENDPOINTS = ["alice", "bob", "carol"];
 const SAMPLES_PER_VIOLATION = 3;
@@ -20,8 +25,16 @@ const MAX_SEEDS = 80;
 describe("injected rule violations are rejected (mutation fuzz corpus)", () => {
   for (const violation of VIOLATIONS) {
     it(`${violation.id} (${specNumber(violation.spec)})`, () => {
+      // `where: "local"` samples nothing else; a strict violation is never put
+      // in a local function (see `ViolationInfo.strict`).
+      const wantLocal = violation.where === undefined && violation.strict !== true;
       let checked = 0;
-      for (let seed = 1; seed <= MAX_SEEDS && checked < SAMPLES_PER_VIOLATION; seed += 1) {
+      let checkedLocal = false;
+      for (
+        let seed = 1;
+        seed <= MAX_SEEDS && (checked < SAMPLES_PER_VIOLATION || (wantLocal && !checkedLocal));
+        seed += 1
+      ) {
         const program = generate({
           seed,
           endpoints: ENDPOINTS,
@@ -30,7 +43,12 @@ describe("injected rule violations are rejected (mutation fuzz corpus)", () => {
         if (program.injected === undefined) {
           continue;
         }
+        const local = program.injected.context.startsWith("local-fn");
+        if (checked >= SAMPLES_PER_VIOLATION && !local) {
+          continue;
+        }
         checked += 1;
+        checkedLocal ||= local;
         const result = compileSource(program.source, "index.cbs", {
           endpoints: ENDPOINTS,
           implicitDyn: program.implicitDyn,
@@ -50,6 +68,10 @@ describe("injected rule violations are rejected (mutation fuzz corpus)", () => {
       assert.ok(
         checked > 0,
         `no seed up to ${MAX_SEEDS} could inject ${violation.id}`,
+      );
+      assert.ok(
+        !wantLocal || checkedLocal,
+        `no seed up to ${MAX_SEEDS} injected ${violation.id} in a local function`,
       );
     });
   }

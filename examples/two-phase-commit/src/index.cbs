@@ -11,34 +11,34 @@
 // coordinator
 // ---------------------------------------------------------------------------
 
-function proposeAmount@coordinator(attempt: integer@coordinator): integer@coordinator {
+function proposeAmount@coordinator(attempt: integer): integer {
     // Later attempts propose progressively smaller transfers.
-    let base = 120@coordinator;
-    let step = 30@coordinator;
+    let base = 120;
+    let step = 30;
     return base - step * attempt;
 }
 
 function combineVotes@coordinator(
-    voteA: boolean@coordinator,
-    voteB: boolean@coordinator,
-    voteC: boolean@coordinator
-): boolean@coordinator {
+    voteA: boolean,
+    voteB: boolean,
+    voteC: boolean
+): boolean {
     return voteA && voteB && voteC;
 }
 
-function newOutcomeLog@coordinator(): integer[]@coordinator {
-    let log: integer[]@coordinator = []@coordinator;
+function newOutcomeLog@coordinator(): integer[] {
+    let log: integer[] = [];
     return log;
 }
 
 function recordOutcome@coordinator(
-    log: integer[]@coordinator,
-    committed: boolean@coordinator
+    log: integer[],
+    committed: boolean
 ): void {
     if (committed) {
-        log.push(1@coordinator);
+        log.push(1);
     } else {
-        log.push(0@coordinator);
+        log.push(0);
     }
 }
 
@@ -46,16 +46,16 @@ function recordOutcome@coordinator(
 // alice: a participant with a hard balance limit
 // ---------------------------------------------------------------------------
 
-function aliceBalance@alice(): integer@alice {
-    return 100@alice;
+function aliceBalance@alice(): integer {
+    return 100;
 }
 
-function aliceCanAfford@alice(amount: integer@alice): boolean@alice {
+function aliceCanAfford@alice(amount: integer): boolean {
     let balance = aliceBalance();
     return amount <= balance;
 }
 
-function aliceApply@alice(amount: integer@alice, committed: boolean@alice): integer@alice {
+function aliceApply@alice(amount: integer, committed: boolean): integer {
     let balance = aliceBalance();
     if (committed) {
         return balance - amount;
@@ -68,23 +68,23 @@ function aliceApply@alice(amount: integer@alice, committed: boolean@alice): inte
 // bob: a participant that also refuses amounts that are not a multiple of ten
 // ---------------------------------------------------------------------------
 
-function bobBalance@bob(): integer@bob {
-    return 500@bob;
+function bobBalance@bob(): integer {
+    return 500;
 }
 
-function bobIsRound@bob(amount: integer@bob): boolean@bob {
-    let remainder = amount % 10@bob;
-    return remainder === 0@bob;
+function bobIsRound@bob(amount: integer): boolean {
+    let remainder = amount % 10;
+    return remainder === 0;
 }
 
-function bobCanAfford@bob(amount: integer@bob): boolean@bob {
+function bobCanAfford@bob(amount: integer): boolean {
     let balance = bobBalance();
     let affordable = amount <= balance;
     let round = bobIsRound(amount);
     return affordable && round;
 }
 
-function bobApply@bob(amount: integer@bob, committed: boolean@bob): integer@bob {
+function bobApply@bob(amount: integer, committed: boolean): integer {
     let balance = bobBalance();
     if (committed) {
         return balance - amount;
@@ -97,22 +97,23 @@ function bobApply@bob(amount: integer@bob, committed: boolean@bob): integer@bob 
 // carol: a participant with a per-transaction ceiling computed recursively
 // ---------------------------------------------------------------------------
 
-// Local functions may recurse as long as the return type is written out.
-function carolCeiling@carol(depth: integer@carol): integer@carol {
-    if (depth <= 0@carol) {
-        return 10@carol;
+// Local functions may recurse as long as the return type is written out. Its
+// location may be left out, like any location inside a local function.
+function carolCeiling@carol(depth: integer): integer {
+    if (depth <= 0) {
+        return 10;
     }
-    let inner = carolCeiling(depth - 1@carol);
-    return inner * 2@carol;
+    let inner = carolCeiling(depth - 1);
+    return inner * 2;
 }
 
-function carolCanAfford@carol(amount: integer@carol): boolean@carol {
-    let ceiling = carolCeiling(3@carol);
+function carolCanAfford@carol(amount: integer): boolean {
+    let ceiling = carolCeiling(3);
     return amount <= ceiling;
 }
 
-function carolApply@carol(amount: integer@carol, committed: boolean@carol): integer@carol {
-    let ceiling = carolCeiling(3@carol);
+function carolApply@carol(amount: integer, committed: boolean): integer {
+    let ceiling = carolCeiling(3);
     if (committed) {
         return ceiling - amount;
     } else {

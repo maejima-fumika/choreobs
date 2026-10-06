@@ -53,7 +53,8 @@ let y: integer = receiveInteger("alice", "__top_0");
 ```
 
 A location left out altogether is `dyn` (spec [§8.2](#omitted-locations)): `let x = 10;` declares
-`x : integer@dyn`, whose location is decided when the program runs.
+`x : integer@dyn`, whose location is decided when the program runs. Inside a
+local function it is the function's own location instead (spec [§7.20.8](#local-function-location-inference)).
 
 ***
 
@@ -934,9 +935,10 @@ ForStatement ::=
 ```
 
 The condition is required. An omitted one would have to mean an implicit `true`,
-and a literal takes no location from its context (spec [§8.1](#explicit-location-annotations)): it would be
-`true@dyn`, which turns a plain loop into one checked at run time on every
-iteration. `while (true@every)` expresses an unbounded loop explicitly instead.
+and outside a local function a literal takes no location from its context
+(spec [§8.1](#explicit-location-annotations)): it would be `true@dyn`, which turns a plain loop into one checked at
+run time on every iteration. `while (true@every)` expresses an unbounded loop
+explicitly instead.
 
 ```ebnf
 ForInit ::= LetStatementNoSemicolon
@@ -1189,7 +1191,8 @@ elements inside the array literal are elaborated as located at `L`.
 
 This reaches the literal elements **directly** inside the brackets, and nothing
 else. An element that is a compound expression is not elaborated, so a literal
-inside it is an ordinary unlocated literal, `@dyn` (spec [§8.2](#omitted-locations)):
+inside it is an ordinary unlocated literal: `@dyn` (spec [§8.2](#omitted-locations)), or the function's
+location inside a local function (spec [§7.20.8](#local-function-location-inference)):
 
 ```ts
 [1, 2]@alice                   // static: both elements are direct literals
@@ -2640,8 +2643,10 @@ let f4: float@dyn = 3 as float;            // 3 is 3@dyn: __dynIntegerToFloat(__
 let i1: integer@dyn = iDyn as integer;     // nothing
 ```
 
-An unlocated literal inside `as` gets no special treatment: it is `c@dyn`, like any
-other unlocated literal (spec [§8.2](#omitted-locations)), and is converted as a `dyn` value.
+An unlocated literal inside `as` gets no special treatment: like any other
+unlocated literal it is `c@dyn` (spec [§8.2](#omitted-locations)), and is converted as a `dyn` value —
+or, inside a local function, it is at the function's location
+(spec [§7.20.8](#local-function-location-inference)).
 
 `as` is only ever applied where a value exists. A static conversion is projected
 only where its operand resides (spec [§12.8](#binary-and-unary-operation-projection)), so `inj<q>(e as float)` converts at
@@ -2682,7 +2687,7 @@ The one expression that does take its element type from the type it is checked a
 
 #### Array Literal Typing <a id="array-literal-typing"></a>
 
-For an array literal `[e1, ..., en]@L`, the element locations and `L` must be pairwise consistent (spec [§7.7](#location-consistency-and-join)), and each element is coerced to the element type at `L` (spec [§7.8](#coercion)). Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types. An array literal without an annotation is at `dyn` (spec [§5.16](#array-literals)).
+For an array literal `[e1, ..., en]@L`, the element locations and `L` must be pairwise consistent (spec [§7.7](#location-consistency-and-join)), and each element is coerced to the element type at `L` (spec [§7.8](#coercion)). Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types. An array literal without an annotation is at `dyn`, or at the function's location inside a local function (spec [§5.16](#array-literals)).
 
 The inferred element type of a non-empty array literal is the base type shared by all of its elements. Elements of different base types are invalid; this includes mixing `integer` and `float`, which are unrelated (spec [§7.5](#subtyping)).
 
@@ -2708,7 +2713,8 @@ let mixed = [1, 2.5]@alice;
 
 Write the elements at one type, converting where needed (spec [§7.15](#numeric-conversion)). Only an
 element that is itself a bare literal takes the array's location, so a literal
-inside a conversion is an ordinary unlocated literal, at `dyn`:
+inside a conversion is an ordinary unlocated literal, at `dyn` outside a local
+function (spec [§8.2](#omitted-locations)):
 
 ```ts
 let ys = [1.0, 2.5]@alice;
@@ -3079,8 +3085,10 @@ performs it, and the endpoints that hold the payload print it: the owner once
 the value is bound to an individual location, and every endpoint while it is
 bound to `every` or still unbound (spec [§3.5](#dyn)). A print adds no constraint and
 binds nothing: printing a value does not decide where it is. Outside strict
-mode, then, `print(1);` prints at every endpoint, since the omitted location
-makes `1` an unbound `1@dyn` (spec [§8.2](#omitted-locations)).
+mode, then, `print(1);` at top level prints at every endpoint, since the omitted
+location makes `1` an unbound `1@dyn` (spec [§8.2](#omitted-locations)). Inside a local function at
+`P` it prints at `P` only, in either mode: there `1` is `1@P`
+(spec [§7.20.8](#local-function-location-inference)).
 
 Internally the result travels with the argument's location `L`, which tells
 endpoint projection where the print happens (spec [§12.17](#print-projection)), as a push's does
@@ -3443,12 +3451,16 @@ function add2@alice(a: integer, b: integer) {   // a, b : integer@alice
 
 Inside a local function declared at an individual location `P`
 (spec [§10.1](#function-kinds)), a location that is left out, and that nothing else determines,
-is `P`. This covers each omission listed in [§8.2](#omitted-locations):
+is `P`. These are the omissions that [§8.2](#omitted-locations) makes `dyn` elsewhere, as they occur
+in a local function:
 
 * a literal, and an array literal together with its unlocated literal elements;
-* a parameter type, and a return type written without its location;
-* the type of a `let`, of a `for` initializer `let`, and of the destination of
-  a transfer `let`.
+* a parameter type;
+* the destination of a transfer `let`;
+* a return type written without its location.
+
+The type of a `let` or a `for` initializer `let` needs no rule of its own: it
+takes its location from its initializer (spec [§7.20.1](#let-type-inference)), which is at `P`.
 
 ```ts
 function sum@alice(a: integer, b: integer): integer {
@@ -3843,8 +3855,9 @@ null@every
 
 ### 8.6 `@dyn` Literals <a id="dyn-literals"></a>
 
-A literal at `dyn` — written `c@dyn`, or written with no location at all
-(spec [§8.2](#omitted-locations)) — is a fresh, unbound dynamically located value (spec [§3.5](#dyn)):
+A literal at `dyn` — written `c@dyn`, or written with no location at all outside
+a local function (spec [§8.2](#omitted-locations)) — is a fresh, unbound dynamically located value
+(spec [§3.5](#dyn)):
 
 ```ts
 3@dyn;
@@ -3861,7 +3874,8 @@ is a dynamic operation (spec [§7.9](#dynamic-operations)): it creates a locatio
 (spec [§12.2](#dyn-lowering)).
 
 `@dyn` literals are allowed in choreography contexts. They are not allowed inside
-local function bodies (spec [§8.4](#local-function-strict-location-rule)).
+local function bodies (spec [§8.4](#local-function-strict-location-rule)); a literal written with no location there is
+not one, but is at the function's location (spec [§7.20.8](#local-function-location-inference)).
 
 ***
 
@@ -3874,8 +3888,8 @@ In v1, statement-ending semicolons are required.
 Required, inside a function at `alice`:
 
 ```ts
-let x: integer@alice = 1@alice;
-x = x + 1@alice;
+let x: integer = 1;
+x = x + 1;
 return x;
 ```
 
@@ -3888,7 +3902,7 @@ function f@alice(): void {
 ```
 
 ```ts
-function g@alice(c: boolean@alice): void {
+function g@alice(c: boolean): void {
     if (c) {
         return;
     }
@@ -3897,15 +3911,15 @@ function g@alice(c: boolean@alice): void {
         return;
     }
 
-    for (let i = 0@alice; i < 10@alice; i = i + 1@alice) {
+    for (let i = 0; i < 10; i = i + 1) {
         return;
     }
 }
 ```
 
-The bodies are written out in full here because the location rules still apply
-inside them: every literal carries its own location (spec [§8.1](#explicit-location-annotations)), and `return`
-only appears inside a function (spec [§5.12](#return-statement)).
+These are written inside functions because `return` only appears in one
+(spec [§5.12](#return-statement)). The locations they leave out are `alice`, the function's own
+(spec [§7.20.8](#local-function-location-inference)).
 
 ### 9.2 Let Statements <a id="let-statements"></a>
 
@@ -4076,7 +4090,8 @@ function f@alice(...) {
 - Holds no `dyn` (spec [§8.4](#local-function-strict-location-rule)); a location it leaves out is its own
   (spec [§7.20.8](#local-function-location-inference)).
 - Allows return type inference.
-- Recursion is allowed only when the recursive function has an explicit return type.
+- Recursion is allowed only when the recursive function writes its return type;
+  the type's location may be left out (spec [§7.20.9](#inference-and-recursion)).
 
 ### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
@@ -8564,7 +8579,8 @@ let y <- x;
 
 Transfer declarations require an explicit destination type. Its location may be
 left out, making the destination `dyn` (spec [§7.20.3](#transfer-let-does-not-infer-destination-type)) — except in strict mode,
-where that is an error too — but its base type may not.
+where that is an error too — or, inside a local function, the function's
+location in either mode (spec [§7.20.8](#local-function-location-inference)). Its base type may not be left out.
 
 ### 16.19 Cannot Infer Function Return Type <a id="cannot-infer-function-return-type"></a>
 
@@ -8629,7 +8645,9 @@ function good@alice(c: boolean@alice) {
 
 In strict mode (spec [§8.3](#strict-mode)), returns at two different concrete locations have no
 inferred location. Otherwise the return type is `dyn` (spec [§7.20.4](#function-return-type-inference)). The
-same holds for a return type written without its location.
+same holds for a choreography function's return type written without its
+location; a local function's is at the function's location and is not inferred
+from the returns (spec [§7.20.8](#local-function-location-inference)).
 
 ```ts
 function bad(c: boolean@every) {
@@ -8662,7 +8680,8 @@ function add@alice(a, b) {
 ```
 
 Parameter types are not inferred in ChoreoBS v1. Only the location of a parameter
-type may be left out, in a choreography function (spec [§7.20.7](#parameter-types-are-not-inferred)).
+type may be left out (spec [§7.20.7](#parameter-types-are-not-inferred)): it is then `dyn` in a choreography function,
+and the function's location in a local one (spec [§7.20.8](#local-function-location-inference)).
 
 ***
 
@@ -8798,16 +8817,6 @@ add(10@bob);
 ```
 
 This is invalid because `match(bob, alice) = false`.
-
-Disallowed:
-
-```cbs
-function bad@alice(x: integer@every): integer@alice {
-    return x;
-}
-```
-
-This remains invalid because local function parameters must not be located at `every`.
 
 ### 16.29 Unsupported Array Element Type <a id="unsupported-array-element-type"></a>
 
@@ -9527,7 +9536,8 @@ The following features are not part of ChoreoBS v1.
 Gradual locating (spec [§3.5](#dyn)) is part of v1. Not part of it:
 
 * general location inference — a location is only ever written, taken from an
-  initializer or from returns, or `dyn` (spec [§8.1](#explicit-location-annotations));
+  initializer or from returns, taken inside a local function from the function,
+  or `dyn` (spec [§8.1](#explicit-location-annotations));
 * gradual base types: only locations are gradual (spec [§7.5](#subtyping));
 * `dyn` or `@every` values inside local functions, and local function parameters
   or return types at `every` or `dyn` (spec [§8.4](#local-function-strict-location-rule));

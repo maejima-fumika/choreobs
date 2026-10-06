@@ -165,6 +165,9 @@ function boo(flag: boolean@every) {
 function bar(): integer {
     return 3@alice;
 }
+function baz@bob(x: integer) {
+    return x + 1;
+}
 `;
 
   it("completes the example of spec §omitted-locations", () => {
@@ -175,6 +178,9 @@ function bar(): integer {
     assert.equal(formatLocatedType(fnNamed(typed, "foo").returnType), "void");
     assert.equal(formatLocatedType(fnNamed(typed, "boo").returnType), "integer@dyn");
     assert.equal(formatLocatedType(fnNamed(typed, "bar").returnType), "integer@alice");
+    // A local function's omissions are its location (spec §local-function-location-inference).
+    assert.deepEqual(types(...fnNamed(typed, "baz").params.map((p) => p.type)), ["integer@bob"]);
+    assert.equal(formatLocatedType(fnNamed(typed, "baz").returnType), "integer@bob");
   });
 
   it("makes an unannotated array literal dyn, with its bare elements", () => {
@@ -257,15 +263,11 @@ describe("where dyn is not allowed (spec §local-function-strict-location-rule)"
       `function f@alice(): void { let x: integer@dyn = 1@alice; }`,
       `function f@alice(): void { let x: integer@alice = 1@dyn; }`,
       `function f@alice(): void { [1]@dyn; }`,
+      `function f@alice(): void { let x = 1@dyn; }`,
+      `function f@alice(): void { let x: integer = 1@dyn; }`,
     ]) {
       expectCheckError(source, { message: LOCAL, spec: "dyn-in-a-local-function" });
     }
-  });
-
-  it("keeps omission an error in a local function", () => {
-    expectCheckError(`function f@alice(): void { let x: integer@alice = 1; }`, { message: "location annotation required on literal" });
-    expectCheckError(`function f@alice(a: integer): void {}`, { message: "location annotation required on type" });
-    expectCheckError(`function f@alice(): integer { return 1@alice; }`, { message: "location annotation required on type" });
   });
 
   it("rejects dyn as a function location", () => {

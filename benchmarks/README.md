@@ -77,7 +77,8 @@ location* is a written location outside a local function: a type annotation,
 a located literal, an array literal's location, or a choreography function's
 parameter or return type. `@every` locations count too. Local functions can
 never hold `dyn` (spec §local-function-strict-location-rule), so their
-locations are not dyn-able.
+locations are not dyn-able. Leaving one out does not make it `dyn` either: it is
+the function's own location (spec §local-function-location-inference).
 
 **Local functions are leaf kernels only.** A local function is used only for an
 inner loop over one endpoint's data that involves no other role: sorting,

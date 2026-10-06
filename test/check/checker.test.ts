@@ -32,115 +32,6 @@ let y: integer@bob <- x;
     assert.equal(recv.commTag, "__top_0");
   });
 
-  describe("locations are never inferred from context (spec §explicit-location-annotations)", () => {
-    it("rejects an omitted parameter location in a local function", () => {
-      const { typed, errors } = checkSource(`
-function add@alice(a: integer, b: integer@alice): integer@alice {
-  return a + b;
-}
-`);
-      assert.equal(typed, null);
-      assert.ok(
-        errors.some((e) =>
-          e.message.includes("location annotation required on type"),
-        ),
-        JSON.stringify(errors),
-      );
-    });
-
-    it("rejects an omitted return type location in a local function", () => {
-      const { typed, errors } = checkSource(`
-function f@alice(): integer {
-  return 1@alice;
-}
-`);
-      assert.equal(typed, null);
-      assert.ok(
-        errors.some((e) =>
-          e.message.includes("location annotation required on type"),
-        ),
-        JSON.stringify(errors),
-      );
-    });
-
-    it("rejects an omitted literal location in a local function", () => {
-      const { typed, errors } = checkSource(`
-function f@alice(): integer@alice {
-  return 1;
-}
-`);
-      assert.equal(typed, null);
-      assert.ok(
-        errors.some((e) =>
-          e.message.includes("location annotation required on literal"),
-        ),
-        JSON.stringify(errors),
-      );
-    });
-
-    it("rejects an omitted array literal location in a local function", () => {
-      const { typed, errors } = checkSource(`
-function f@alice(): integer@alice {
-  let xs: integer[]@alice = [1@alice];
-  return 1@alice;
-}
-`);
-      assert.equal(typed, null);
-      assert.ok(
-        errors.some((e) =>
-          e.message.includes("array literal location annotation required"),
-        ),
-        JSON.stringify(errors),
-      );
-    });
-
-    it("still infers a return type when the annotation is absent entirely (§function-return-type-inference)", () => {
-      const { typed, errors } = checkSource(`
-function f@alice(a: integer@alice) {
-  return a;
-}
-`);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-      const fn = typed?.items[0];
-      assert.ok(fn && "decl" in fn);
-      if (fn && "decl" in fn) {
-        assert.equal(fn.returnType.base, "integer");
-        assert.equal(fn.returnType.location.kind, "individual");
-      }
-    });
-
-    it("still infers void for a body with no returns (§function-return-type-inference)", () => {
-      const { typed, errors } = checkSource(`
-function noop@alice() {
-}
-`);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-      const fn = typed?.items[0];
-      if (fn && "decl" in fn) {
-        assert.equal(fn.returnType.base, "void");
-        if (fn.returnType.location.kind === "individual") {
-          assert.equal(fn.returnType.location.name, "alice");
-        }
-      }
-    });
-
-    it("still fills array literal elements from the literal's own annotation (§array-literals)", () => {
-      const { errors } = checkSource(`
-let xs: integer[]@alice = [1, 2, 3]@alice;
-`);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-    });
-
-    it("accepts a void return type, which carries no location", () => {
-      const { errors } = checkSource(`
-function f@alice(): void {
-  return;
-}
-`);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-    });
-  });
-
   it("rejects assignment across locations (spec §invalid-assignment-across-locations)", () => {
     const { typed, errors } = checkSource(`
 let x: integer@alice = 1@alice;
@@ -1169,10 +1060,10 @@ let x: string@bob <- y;
       // Before fail-fast the checker invented a location for the parameter and
       // then also complained about everything derived from it.
       const { typed, errors } = checkSource(`
-function f@alice(a: integer): integer@alice {
+function f(a: integer): integer@alice {
   return a;
 }
-`);
+`, aliceBobStrict);
       assert.equal(typed, null);
       assert.equal(errors.length, 1, JSON.stringify(errors));
       assert.ok(
@@ -1259,20 +1150,19 @@ let y: integer <- x;
       );
     });
 
-    it("does not infer a parameter or return type location", () => {
-      for (const src of [
-        `function f@alice(a: integer): integer@alice { return a; }`,
-        `function f@alice(a: integer@alice): integer { return a; }`,
-      ]) {
-        const { typed, errors } = checkSource(src);
-        assert.equal(typed, null, src);
-        assert.ok(
-          errors.some((e) =>
-            e.message.includes("location annotation required on type"),
-          ),
-          `${src} => ${JSON.stringify(errors)}`,
-        );
-      }
+    it("does not infer a parameter location from its uses", () => {
+      // In strict mode, so that the omission is reported rather than `dyn`;
+      // in a local function the location would be the function's own
+      // (spec §local-function-location-inference).
+      const src = `function f(a: integer): integer@alice { let b: integer@alice = a; return b; }`;
+      const { typed, errors } = checkSource(src, aliceBobStrict);
+      assert.equal(typed, null, src);
+      assert.ok(
+        errors.some((e) =>
+          e.message.includes("location annotation required on type"),
+        ),
+        `${src} => ${JSON.stringify(errors)}`,
+      );
     });
 
     it("keeps array invariance when the location is inferred", () => {
@@ -1413,10 +1303,10 @@ function fact@alice(n: integer@alice): integer@alice {
 
   it("rejects location omission where there is nothing to infer from (spec §location-annotation-omission)", () => {
     const { typed, errors } = checkSource(`
-function f@alice(a: integer): integer@alice {
+function f(a: integer): integer@alice {
   return a;
 }
-`);
+`, aliceBobStrict);
     assert.equal(typed, null);
     assert.ok(
       errors.some((e) =>

@@ -11,29 +11,29 @@
 // actuator: the plant being controlled
 // ---------------------------------------------------------------------------
 
-function initialPosition@actuator(): float@actuator {
-    return 0.0@actuator;
+function initialPosition@actuator(): float {
+    return 0.0;
 }
 
-function applyStep@actuator(position: float@actuator, command: float@actuator): float@actuator {
+function applyStep@actuator(position: float, command: float): float {
     // The plant only ever moves a bounded amount per step.
-    let limit = 4.0@actuator;
+    let limit = 4.0;
     if (command > limit) {
         return position + limit;
     }
-    let lower = 0.0@actuator - limit;
+    let lower = 0.0 - limit;
     if (command < lower) {
         return position + lower;
     }
     return position + command;
 }
 
-function actuatorHistory@actuator(): float[]@actuator {
-    let history: float[]@actuator = []@actuator;
+function actuatorHistory@actuator(): float[] {
+    let history: float[] = [];
     return history;
 }
 
-function remember@actuator(history: float[]@actuator, position: float@actuator): void {
+function remember@actuator(history: float[], position: float): void {
     history.push(position);
 }
 
@@ -41,32 +41,32 @@ function remember@actuator(history: float[]@actuator, position: float@actuator):
 // controller: the proportional law
 // ---------------------------------------------------------------------------
 
-function target@controller(): float@controller {
-    return 20.0@controller;
+function target@controller(): float {
+    return 20.0;
 }
 
-function gain@controller(): float@controller {
-    return 0.6@controller;
+function gain@controller(): float {
+    return 0.6;
 }
 
-function commandFor@controller(position: float@controller): float@controller {
+function commandFor@controller(position: float): float {
     let goal = target();
     let k = gain();
     let error = goal - position;
     return k * error;
 }
 
-function absError@controller(position: float@controller): float@controller {
+function absError@controller(position: float): float {
     let goal = target();
     let error = goal - position;
-    if (error < 0.0@controller) {
-        return 0.0@controller - error;
+    if (error < 0.0) {
+        return 0.0 - error;
     }
     return error;
 }
 
-function settled@controller(position: float@controller): boolean@controller {
-    let tolerance = 0.5@controller;
+function settled@controller(position: float): boolean {
+    let tolerance = 0.5;
     let error = absError(position);
     return error < tolerance;
 }
@@ -75,30 +75,30 @@ function settled@controller(position: float@controller): boolean@controller {
 // monitor: an independent audit trail
 // ---------------------------------------------------------------------------
 
-function newTrail@monitor(): float[]@monitor {
-    let trail: float[]@monitor = []@monitor;
+function newTrail@monitor(): float[] {
+    let trail: float[] = [];
     return trail;
 }
 
-function observe@monitor(trail: float[]@monitor, position: float@monitor): void {
+function observe@monitor(trail: float[], position: float): void {
     trail.push(position);
 }
 
 // A local function may use the transfer operator, but both sides are at the
 // monitor, so it is a plain local copy — and for an array that means a fresh
 // array rather than an alias.
-function snapshot@monitor(trail: float[]@monitor): float[]@monitor {
-    let copy: float[]@monitor <- trail;
+function snapshot@monitor(trail: float[]): float[] {
+    let copy: float[] <- trail;
     return copy;
 }
 
-function trailLength@monitor(trail: float[]@monitor): integer@monitor {
+function trailLength@monitor(trail: float[]): integer {
     return trail.length;
 }
 
-function maxSeen@monitor(trail: float[]@monitor): float@monitor {
-    let best = 0.0@monitor;
-    for (let i = 0@monitor; i < trail.length; i = i + 1@monitor) {
+function maxSeen@monitor(trail: float[]): float {
+    let best = 0.0;
+    for (let i = 0; i < trail.length; i = i + 1) {
         if (best < trail[i]) {
             best = trail[i];
         }

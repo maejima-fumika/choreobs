@@ -8,18 +8,18 @@
 // sensor1: reading and calibration
 // ---------------------------------------------------------------------------
 
-function readRaw1@sensor1(tick: integer@sensor1): float@sensor1 {
+function readRaw1@sensor1(tick: integer): float {
     // Stands in for a hardware read; the value drifts with the tick.
-    let base = 21.5@sensor1;
-    let drift = 0.25@sensor1;
+    let base = 21.5;
+    let drift = 0.25;
     return base + drift * (tick as float);
 }
 
-function bias1@sensor1(): float@sensor1 {
-    return 0.5@sensor1;
+function bias1@sensor1(): float {
+    return 0.5;
 }
 
-function calibrate1@sensor1(raw: float@sensor1): float@sensor1 {
+function calibrate1@sensor1(raw: float): float {
     let b = bias1();
     return raw + b;
 }
@@ -28,17 +28,17 @@ function calibrate1@sensor1(raw: float@sensor1): float@sensor1 {
 // sensor2: same shape, different constants
 // ---------------------------------------------------------------------------
 
-function readRaw2@sensor2(tick: integer@sensor2): float@sensor2 {
-    let base = 19.0@sensor2;
-    let drift = 0.4@sensor2;
+function readRaw2@sensor2(tick: integer): float {
+    let base = 19.0;
+    let drift = 0.4;
     return base + drift * (tick as float);
 }
 
-function bias2@sensor2(): float@sensor2 {
-    return 0.75@sensor2;
+function bias2@sensor2(): float {
+    return 0.75;
 }
 
-function calibrate2@sensor2(raw: float@sensor2): float@sensor2 {
+function calibrate2@sensor2(raw: float): float {
     let b = bias2();
     return raw + b;
 }
@@ -47,35 +47,35 @@ function calibrate2@sensor2(raw: float@sensor2): float@sensor2 {
 // gateway: windowing
 // ---------------------------------------------------------------------------
 
-function emptyWindow@gateway(): float[]@gateway {
-    let window: float[]@gateway = []@gateway;
+function emptyWindow@gateway(): float[] {
+    let window: float[] = [];
     return window;
 }
 
-function record@gateway(window: float[]@gateway, sample: float@gateway): void {
+function record@gateway(window: float[], sample: float): void {
     window.push(sample);
 }
 
-function windowSum@gateway(window: float[]@gateway): float@gateway {
-    let total = 0.0@gateway;
-    for (let i = 0@gateway; i < window.length; i = i + 1@gateway) {
+function windowSum@gateway(window: float[]): float {
+    let total = 0.0;
+    for (let i = 0; i < window.length; i = i + 1) {
         total = total + window[i];
     }
     return total;
 }
 
-function windowMean@gateway(window: float[]@gateway): float@gateway {
+function windowMean@gateway(window: float[]): float {
     let n = window.length;
-    if (n === 0@gateway) {
-        return 0.0@gateway;
+    if (n === 0) {
+        return 0.0;
     }
     let total = windowSum(window);
     return total / (n as float);
 }
 
-function isHealthy@gateway(mean: float@gateway): boolean@gateway {
-    let low = 15.0@gateway;
-    let high = 30.0@gateway;
+function isHealthy@gateway(mean: float): boolean {
+    let low = 15.0;
+    let high = 30.0;
     return low < mean && mean < high;
 }
 
@@ -83,21 +83,21 @@ function isHealthy@gateway(mean: float@gateway): boolean@gateway {
 // server: reporting
 // ---------------------------------------------------------------------------
 
-function newLog@server(): integer[]@server {
-    let log: integer[]@server = []@server;
+function newLog@server(): integer[] {
+    let log: integer[] = [];
     return log;
 }
 
-function appendCode@server(log: integer[]@server, code: integer@server): void {
+function appendCode@server(log: integer[], code: integer): void {
     log.push(code);
 }
 
-function healthyCode@server(): integer@server {
-    return 200@server;
+function healthyCode@server(): integer {
+    return 200;
 }
 
-function unhealthyCode@server(): integer@server {
-    return 503@server;
+function unhealthyCode@server(): integer {
+    return 503;
 }
 
 // ---------------------------------------------------------------------------

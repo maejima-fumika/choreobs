@@ -6,6 +6,7 @@ import {
   expectSuccess,
   expectFailure,
 } from "../support/compile.js";
+import { aliceBob, aliceBobStrict } from "../support/config.js";
 
 describe("spec.md examples — generated .bs output", () => {
   it("§example-direct-communication direct communication", () => {
@@ -258,17 +259,47 @@ function g@alice(): void { h(); return; }
   });
 
   it("§location-annotation-omission location omission with nothing to infer from", () => {
-    const result = compile(`
-function f@alice(a: integer): integer@alice {
-  return a;
+    for (const source of [
+      `let x: integer = 1;`,
+      `function f(a: integer): void {}`,
+    ]) {
+      const result = compile(source, aliceBobStrict);
+      expectFailure(result);
+      assert.ok(
+        result.errors.some((e) => e.message.includes("location annotation required on")),
+        JSON.stringify(result.errors),
+      );
+    }
+    // A local function infers what it leaves out, in strict mode too.
+    expectSuccess(compile(`
+function f@alice(a: integer): integer {
+    return a;
 }
-`);
-    expectFailure(result);
-    assert.ok(
-      result.errors.some((e) =>
-        e.message.includes("location annotation required on type"),
-      ),
-      JSON.stringify(result.errors),
-    );
+`, aliceBobStrict));
+  });
+
+  it("§local-function-location-inference an omission in a local function is the function's location", () => {
+    const omitted = `
+function sum@alice(a: integer, b: integer): integer {
+    let xs: integer[] = [a, b];
+    let c: integer <- a;
+    return xs[0] + xs[1] + c + 1;
+}
+`;
+    const written = `
+function sum@alice(a: integer@alice, b: integer@alice): integer@alice {
+    let xs: integer[]@alice = [a, b]@alice;
+    let c: integer@alice <- a;
+    return xs[0@alice] + xs[1@alice] + c + 1@alice;
+}
+`;
+    for (const config of [aliceBob, aliceBobStrict]) {
+      const a = compile(omitted, config);
+      const b = compile(written, config);
+      expectSuccess(a);
+      expectSuccess(b);
+      assert.equal(bs(a, "alice"), bs(b, "alice"));
+      assert.equal(bs(a, "bob"), bs(b, "bob"));
+    }
   });
 });

@@ -80,6 +80,7 @@ import { CHOREOGRAPHY_CONTEXT } from "../ast/context.js";
 import { isNumericType } from "../ast/syntax-types.js";
 import {
   DYN,
+  EVERY,
   concreteLocationsAgree,
   contextAsLocation,
   formatLocatedType,
@@ -399,19 +400,16 @@ class TypeChecker {
     this.currentFunctionReturnType = undefined;
     // Returns at two different concrete locations give `dyn` exactly where an
     // omission would (spec §strict-mode, §function-return-type-inference), and are an error elsewhere.
-    // A local function's omissions are its own location, but that location is
-    // no answer for returns that disagree, so there they stay an error.
-    const onIncompatible =
-      decl.context.kind === "choreography" ? this.omittedLocation(decl.context) : undefined;
+    // A local function never gets here with two: the body was just checked to
+    // hold nothing but values at its location (spec §local-function-strict-location-rule).
+    const onIncompatible = this.omittedLocation(decl.context);
     let returnType: LocatedType;
     if (decl.returnType !== undefined) {
       // A partial annotation (spec §partial-return-annotations): the base is written,
-      // the location comes from what the body returns.
-      const location = inferReturnLocation(
-        candidates,
-        contextAsLocation(decl.context),
-        onIncompatible,
-      );
+      // the location comes from what the body returns. Only a choreography
+      // function has one (see `hasPartialReturnType`), so with nothing returned
+      // the fallback is `every`.
+      const location = inferReturnLocation(candidates, EVERY, onIncompatible);
       if (!location.ok) {
         this.error(location.message, decl.span, location.spec);
       }
@@ -792,7 +790,8 @@ class TypeChecker {
   ): { readonly choreoType: LocatedType; readonly initializer: TypedExpression } {
     // An initialized `let` may omit the location; it comes from the
     // initializer (spec §let-type-inference). Transfer `let` goes through `resolveType`
-    // directly and keeps requiring an explicit destination (spec §transfer-let-does-not-infer-destination-type).
+    // directly, so its destination never takes the source's location
+    // (spec §transfer-let-does-not-infer-destination-type).
     const choreoType = this.resolveType(
       ann,
       ctx,

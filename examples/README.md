@@ -33,7 +33,7 @@ suite.
 | Directory | Endpoints | What it exercises |
 |---|---|---|
 | `sensor-pipeline` | sensor1, sensor2, gateway, server | local read/calibrate functions, direct transfers into a gateway, a `for` loop that reuses its communication tags each iteration, broadcast of a verdict before branching on it |
-| `two-phase-commit` | coordinator, alice, bob, carol | a full propose/vote/decide protocol, votes converging on one endpoint, a decision broadcast so that every endpoint takes the same branch, local recursion with an explicit return type |
+| `two-phase-commit` | coordinator, alice, bob, carol | a full propose/vote/decide protocol, votes converging on one endpoint, a decision broadcast so that every endpoint takes the same branch, local recursion with a written return type |
 | `map-reduce` | driver, worker1, worker2 | partial aggregation on each worker, reduction at the driver, broadcasting a shared mean for a second pass, and publishing a loop bound as `@every` so a choreography-level `for` can use it |
 | `control-loop` | controller, actuator, monitor | a `while` loop whose condition is `@every`, a closed control loop across three endpoints, and the difference between `=` (aliases an array) and `<-` (fresh copy) |
 
@@ -64,12 +64,23 @@ let aliased: float[]@monitor = trail;   // same array
 let copied: float[]@monitor <- trail;   // fresh array
 ```
 
+**A local function names its location once.** Every value in a local function
+is at the function's own location, so the locations inside it are left out and
+taken from the declaration (spec §local-function-location-inference):
+
+```ts
+function aliceCanAfford@alice(amount: integer): boolean {   // amount : integer@alice
+    let balance = aliceBalance();
+    return amount <= balance;                                // boolean@alice
+}
+```
+
 **An empty array literal needs an annotated binding.** Its element type is not
 inferred from a return type, so write it out:
 
 ```ts
-function newTrail@monitor(): float[]@monitor {
-    let trail: float[]@monitor = []@monitor;
+function newTrail@monitor(): float[] {
+    let trail: float[] = [];
     return trail;
 }
 ```

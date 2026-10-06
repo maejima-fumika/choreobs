@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compileSource } from "../../src/driver/index.js";
 import { generate } from "../../scripts/fuzz/generator.js";
-import { inspectOutputs } from "../../scripts/fuzz/inspect.js";
+import { inspectOutputs, outputsKey } from "../../scripts/fuzz/inspect.js";
+import { stripLocalFunctionLocations } from "../../scripts/fuzz/strip.js";
 
 /**
  * A small, fixed slice of the fuzz corpus (see `scripts/fuzz/run.ts`).
@@ -54,6 +55,21 @@ describe("generated programs compile (fuzz corpus)", () => {
         );
         // The checks `run.ts` makes of every output (scripts/fuzz/inspect.ts).
         assert.equal(inspectOutputs(result, config.endpoints), undefined, `seed ${seed}`);
+        // A local function's omitted locations are its own
+        // (spec §local-function-location-inference), so leaving out the written ones changes nothing.
+        const stripped = stripLocalFunctionLocations(program.source);
+        if (stripped !== program.source) {
+          const omitted = compileSource(stripped, "index.cbs", {
+            endpoints: config.endpoints,
+            implicitDyn: program.implicitDyn,
+          });
+          assert.equal(
+            omitted.success,
+            true,
+            `seed ${seed}, locations left out in local functions:\n${omitted.errors.map((e) => e.message).join("\n")}\n\n${stripped}`,
+          );
+          assert.equal(outputsKey(omitted), outputsKey(result), `seed ${seed}: leaving out local locations changed the output`);
+        }
       }
     });
   }

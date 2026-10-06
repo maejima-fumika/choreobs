@@ -226,7 +226,7 @@ class Generator {
       injected: this.injected,
       implicitDyn:
         this.options.implicitDyn !== false &&
-        VIOLATIONS.find((v) => v.id === this.options.violation)?.strict !== true,
+        violationInfo(this.options.violation)?.strict !== true,
     };
   }
 
@@ -898,7 +898,13 @@ class Generator {
 
   /** Whether violation `id` can be built in `ctx` (see {@link ViolationInfo.where}). */
   private violationFits(id: string, ctx: Ctx): boolean {
-    switch (violationWhere(id)) {
+    // A strict violation is an omission, and in a local function an omission
+    // is the function's own location in either mode (spec §local-function-location-inference),
+    // so there it would be no violation at all.
+    if (ctx.kind === "local" && violationInfo(id)?.strict === true) {
+      return false;
+    }
+    switch (violationInfo(id)?.where) {
       case undefined:
         return true;
       case "choreography":
@@ -927,7 +933,7 @@ class Generator {
     }
     // A violation only a local function body can hold needs one to exist
     // (spec §local-function-strict-location-rule).
-    if (violationWhere(violation) === "local") {
+    if (violationInfo(violation)?.where === "local") {
       return true;
     }
     return this.chance(0.5);
@@ -1213,8 +1219,9 @@ class Generator {
         lines.push(`let __transfer_0: integer@${p} = 1@${p};`);
         break;
       case "arrayLiteralWithLocatedElements":
-        // Every element is located, but the literal itself still needs its own
-        // annotation (spec §array-literals).
+        // Every element is located, but in strict mode the literal itself still
+        // needs its own annotation (spec §array-literals). `violationFits` keeps
+        // it out of local functions (spec §local-function-location-inference).
         lines.push(`let ${n}: integer@${p} = 1@${p};`);
         lines.push(`let ${n}b = [${n}, ${n}];`);
         break;
@@ -1276,9 +1283,9 @@ class Generator {
         lines.push(`let ${taken.name}: integer@${p} = 1@${p};`);
         break;
       }
-      // An omission is an error in strict mode (spec §strict-mode, §omitted-locations),
-      // outside a local function: there it is the function's location
-      // (spec §local-function-location-inference).
+      // An omission is an error in strict mode (spec §strict-mode, §omitted-locations).
+      // `violationFits` keeps this out of local functions, where it would be
+      // the function's location (spec §local-function-location-inference).
       case "arrayLiteralWithoutLocation":
         lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
         break;
@@ -1292,8 +1299,8 @@ class Generator {
         lines.push(`let ${n}: integer@${p};`);
         break;
       // Locations are never inferred from the expected type (spec §explicit-location-annotations); an
-      // omission is an error in strict mode (spec §strict-mode), outside a local
-      // function (spec §local-function-location-inference).
+      // omission is an error in strict mode (spec §strict-mode). As above, never
+      // in a local function.
       case "literalWithoutLocation":
         lines.push(`let ${n}: integer@${p} = 1;`);
         break;
@@ -1446,7 +1453,9 @@ export interface ViolationInfo {
   readonly spec: SpecId;
   /**
    * Compile with `"implicitDyn": false` (spec §strict-mode). The
-   * violation is an omission that the default mode reads as `dyn`.
+   * violation is an omission that the default mode reads as `dyn`. It is
+   * never built in a local function, whatever {@link where} says: an omission
+   * there is the function's location in either mode (spec §local-function-location-inference).
    */
   readonly strict?: true;
   /**
@@ -1457,7 +1466,8 @@ export interface ViolationInfo {
   readonly expect: readonly string[];
   /**
    * Where the violation can be built: in a choreography context, in a local
-   * function body, or at top level only. Anywhere when absent.
+   * function body, or at top level only. Anywhere when absent, except where
+   * {@link strict} rules out a local function body.
    */
   readonly where?: "choreography" | "local" | "topLevel";
 }
@@ -1523,11 +1533,11 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
     spec: "err-name-already-held",
     expect: ["is a function name and cannot be used as a"],
   },
-  { id: "arrayLiteralWithoutLocation", where: "choreography", spec: "array-literal-without-required-location", expect: ["location"], strict: true },
+  { id: "arrayLiteralWithoutLocation", spec: "array-literal-without-required-location", expect: ["location"], strict: true },
   { id: "nestedArray", spec: "nested-array", expect: ["nested", "array"] },
   { id: "typeMismatch", spec: "type-mismatch", expect: ["cannot assign boolean"] },
   { id: "uninitializedLet", spec: "uninitialized-let", expect: ["=", "<-"] },
-  { id: "literalWithoutLocation", where: "choreography", spec: "location-annotation-omission", expect: ["location"], strict: true },
+  { id: "literalWithoutLocation", spec: "location-annotation-omission", expect: ["location"], strict: true },
   { id: "emptyArrayWithoutType", spec: "cannot-infer-empty-array-element-type", expect: ["element type", "empty"] },
   { id: "stringArray", spec: "unsupported-array-element-type", expect: ["array element type"] },
   { id: "breakStatement", spec: "err-break-and-continue", expect: ["break"] },
@@ -1557,6 +1567,6 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
 
 export const VIOLATION_IDS: readonly string[] = VIOLATIONS.map((v) => v.id);
 
-function violationWhere(id: string): ViolationInfo["where"] {
-  return VIOLATIONS.find((v) => v.id === id)?.where;
+function violationInfo(id: string | undefined): ViolationInfo | undefined {
+  return VIOLATIONS.find((v) => v.id === id);
 }

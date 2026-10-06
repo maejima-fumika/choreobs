@@ -36,9 +36,10 @@ export interface NullLiteral extends AstNode {
 /**
  * Literal with optional location annotation: `1@alice`, `true@every` (spec §located-literals).
  *
- * Optional. An omitted location is never taken from the context
- * (spec §explicit-location-annotations): it is `dyn`, or an error in strict mode and
- * in a local function (spec §omitted-locations, §strict-mode).
+ * Optional. An omitted location is the function's own location in a local
+ * function (spec §local-function-location-inference). Elsewhere it is never taken from the
+ * context (spec §explicit-location-annotations): it is `dyn`, or an error in strict mode
+ * (spec §omitted-locations, §strict-mode).
  */
 export interface LocatedLiteral extends AstNode {
   readonly kind: "LocatedLiteral";

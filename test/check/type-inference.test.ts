@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parse } from "../../src/parser/index.js";
-import { checkSource } from "../support/pipeline.js";
-import { aliceBobStrict } from "../support/config.js";
-import { expectCheckError, expectChecks, fnAt } from "../support/check.js";
+import { checkSource, tagSource } from "../support/pipeline.js";
+import { aliceBob, aliceBobStrict } from "../support/config.js";
+import { expectCheckError, expectChecks, fnAt, fnNamed } from "../support/check.js";
+import { formatLocatedType } from "../../src/types/located.js";
+import type {
+  TypedFunctionDeclaration,
+  TypedLetStatement,
+  TypedLetTransferStatement,
+} from "../../src/ast/typed.js";
 
 describe("type inference (spec §type-inference)", () => {
   describe("positive", () => {
@@ -438,6 +444,98 @@ function g@alice(n: integer@alice) {
         ),
         JSON.stringify(errors),
       );
+    });
+  });
+
+  describe("local function location inference (spec §local-function-location-inference)", () => {
+    /** The type of `let`, or transfer `let`, `name` directly in `fn`'s body. */
+    function bodyLetType(fn: TypedFunctionDeclaration, name: string): string {
+      for (const stmt of fn.body.statements) {
+        if ((stmt.stmt.kind === "LetStatement" || stmt.stmt.kind === "LetTransferStatement") && stmt.stmt.name === name) {
+          return formatLocatedType((stmt as TypedLetStatement | TypedLetTransferStatement).choreoType);
+        }
+      }
+      assert.fail(`no let ${name} in ${fn.decl.name}`);
+    }
+
+    for (const [mode, config] of [["default mode", aliceBob], ["strict mode", aliceBobStrict]] as const) {
+      it(`fills parameters, the return type and the body with the function's location, never dyn, in ${mode}`, () => {
+        const typed = expectChecks(`
+function f@alice(a: integer, xs: integer[]): integer {
+  let b: integer = 1;
+  let c = 2.5;
+  let ys = [a, 3];
+  let zs: integer[] = [];
+  let d: integer <- a;
+  let e = 4 as float;
+  for (let i = 0; i < 3; i = i + 1) {
+    print(i);
+  }
+  return a + b + d + ys[0] + xs[0];
+}
+function g@bob() {
+  return [1, 2];
+}
+`, config);
+        const f = fnNamed(typed, "f");
+        assert.deepEqual(f.params.map((p) => formatLocatedType(p.type)), ["integer@alice", "integer[]@alice"]);
+        assert.equal(formatLocatedType(f.returnType), "integer@alice");
+        assert.equal(bodyLetType(f, "b"), "integer@alice");
+        assert.equal(bodyLetType(f, "c"), "float@alice");
+        assert.equal(bodyLetType(f, "ys"), "integer[]@alice");
+        assert.equal(bodyLetType(f, "zs"), "integer[]@alice");
+        assert.equal(bodyLetType(f, "d"), "integer@alice");
+        assert.equal(bodyLetType(f, "e"), "float@alice");
+        // A return type omitted altogether is still inferred from the returns
+        // (spec §function-return-type-inference), whose literals are at `bob`.
+        assert.equal(formatLocatedType(fnNamed(typed, "g").returnType), "integer[]@bob");
+      });
+    }
+
+    it("makes a transfer let with an omitted destination a local copy", () => {
+      const typed = tagSource(`
+function f@bob(a: integer) {
+  let d: integer <- a;
+  return d;
+}
+`);
+      const transfer = fnNamed(typed, "f").body.statements[0] as TypedLetTransferStatement;
+      assert.equal(formatLocatedType(transfer.choreoType), "integer@bob");
+      assert.equal(transfer.transferMode, "localCopy");
+      assert.equal(transfer.commTag, undefined);
+    });
+
+    it("resolves a return type written without its location up front, so recursion may use it (§inference-and-recursion)", () => {
+      const typed = expectChecks(`
+function fact@alice(n: integer): integer {
+  if (n <= 1) {
+    return 1;
+  } else {
+    return n * fact(n - 1);
+  }
+}
+`);
+      assert.equal(formatLocatedType(fnNamed(typed, "fact").returnType), "integer@alice");
+    });
+
+    it("leaves choreography functions alone: there an omission is dyn, or an error in strict mode", () => {
+      const typed = expectChecks(`function g(a: integer) { return a; }`);
+      assert.equal(formatLocatedType(fnNamed(typed, "g").params[0]!.type), "integer@dyn");
+      expectCheckError(`function g(a: integer): void {}`, {
+        message: "location annotation required on type",
+        spec: "location-annotation-omission",
+        config: aliceBobStrict,
+      });
+    });
+
+    it("still rejects a value at another location", () => {
+      for (const source of [
+        `function f@alice(): void { let x: integer = 1@bob; }`,
+        `function f@alice(): void { let x: integer = 1@every; }`,
+        `function f@alice(): integer { return 1@bob; }`,
+      ]) {
+        expectCheckError(source, { message: "not usable in local function" });
+      }
     });
   });
 

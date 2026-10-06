@@ -13,42 +13,42 @@
 // worker1
 // ---------------------------------------------------------------------------
 
-function samples1@worker1(): float[]@worker1 {
-    let xs: float[]@worker1 = []@worker1;
-    xs.push(12.0@worker1);
-    xs.push(15.5@worker1);
-    xs.push(9.25@worker1);
-    xs.push(18.0@worker1);
-    xs.push(11.75@worker1);
+function samples1@worker1(): float[] {
+    let xs: float[] = [];
+    xs.push(12.0);
+    xs.push(15.5);
+    xs.push(9.25);
+    xs.push(18.0);
+    xs.push(11.75);
     return xs;
 }
 
-function sum1@worker1(xs: float[]@worker1): float@worker1 {
-    let total = 0.0@worker1;
-    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+function sum1@worker1(xs: float[]): float {
+    let total = 0.0;
+    for (let i = 0; i < xs.length; i = i + 1) {
         total = total + xs[i];
     }
     return total;
 }
 
-function count1@worker1(xs: float[]@worker1): integer@worker1 {
+function count1@worker1(xs: float[]): integer {
     return xs.length;
 }
 
-function squaredError1@worker1(xs: float[]@worker1, mean: float@worker1): float@worker1 {
-    let total = 0.0@worker1;
-    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+function squaredError1@worker1(xs: float[], mean: float): float {
+    let total = 0.0;
+    for (let i = 0; i < xs.length; i = i + 1) {
         let diff = xs[i] - mean;
         total = total + diff * diff;
     }
     return total;
 }
 
-function aboveMean1@worker1(xs: float[]@worker1, mean: float@worker1): integer@worker1 {
-    let n = 0@worker1;
-    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+function aboveMean1@worker1(xs: float[], mean: float): integer {
+    let n = 0;
+    for (let i = 0; i < xs.length; i = i + 1) {
         if (mean < xs[i]) {
-            n = n + 1@worker1;
+            n = n + 1;
         }
     }
     return n;
@@ -58,40 +58,40 @@ function aboveMean1@worker1(xs: float[]@worker1, mean: float@worker1): integer@w
 // worker2
 // ---------------------------------------------------------------------------
 
-function samples2@worker2(): float[]@worker2 {
-    let xs: float[]@worker2 = []@worker2;
-    xs.push(22.5@worker2);
-    xs.push(7.0@worker2);
-    xs.push(16.25@worker2);
+function samples2@worker2(): float[] {
+    let xs: float[] = [];
+    xs.push(22.5);
+    xs.push(7.0);
+    xs.push(16.25);
     return xs;
 }
 
-function sum2@worker2(xs: float[]@worker2): float@worker2 {
-    let total = 0.0@worker2;
-    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+function sum2@worker2(xs: float[]): float {
+    let total = 0.0;
+    for (let i = 0; i < xs.length; i = i + 1) {
         total = total + xs[i];
     }
     return total;
 }
 
-function count2@worker2(xs: float[]@worker2): integer@worker2 {
+function count2@worker2(xs: float[]): integer {
     return xs.length;
 }
 
-function squaredError2@worker2(xs: float[]@worker2, mean: float@worker2): float@worker2 {
-    let total = 0.0@worker2;
-    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+function squaredError2@worker2(xs: float[], mean: float): float {
+    let total = 0.0;
+    for (let i = 0; i < xs.length; i = i + 1) {
         let diff = xs[i] - mean;
         total = total + diff * diff;
     }
     return total;
 }
 
-function aboveMean2@worker2(xs: float[]@worker2, mean: float@worker2): integer@worker2 {
-    let n = 0@worker2;
-    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+function aboveMean2@worker2(xs: float[], mean: float): integer {
+    let n = 0;
+    for (let i = 0; i < xs.length; i = i + 1) {
         if (mean < xs[i]) {
-            n = n + 1@worker2;
+            n = n + 1;
         }
     }
     return n;
@@ -101,30 +101,30 @@ function aboveMean2@worker2(xs: float[]@worker2, mean: float@worker2): integer@w
 // driver: the reduce side
 // ---------------------------------------------------------------------------
 
-function reduceSum@driver(a: float@driver, b: float@driver): float@driver {
+function reduceSum@driver(a: float, b: float): float {
     return a + b;
 }
 
-function reduceCount@driver(a: integer@driver, b: integer@driver): integer@driver {
+function reduceCount@driver(a: integer, b: integer): integer {
     return a + b;
 }
 
-function meanOf@driver(total: float@driver, n: integer@driver): float@driver {
-    if (n === 0@driver) {
-        return 0.0@driver;
+function meanOf@driver(total: float, n: integer): float {
+    if (n === 0) {
+        return 0.0;
     }
     return total / (n as float);
 }
 
-function variance@driver(squaredTotal: float@driver, n: integer@driver): float@driver {
-    if (n <= 1@driver) {
-        return 0.0@driver;
+function variance@driver(squaredTotal: float, n: integer): float {
+    if (n <= 1) {
+        return 0.0;
     }
-    return squaredTotal / ((n - 1@driver) as float);
+    return squaredTotal / ((n - 1) as float);
 }
 
-function newReport@driver(): float[]@driver {
-    let report: float[]@driver = []@driver;
+function newReport@driver(): float[] {
+    let report: float[] = [];
     return report;
 }
 
