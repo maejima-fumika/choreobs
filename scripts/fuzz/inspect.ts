@@ -5,6 +5,13 @@
  */
 import type { CompileResult } from "../../src/driver/index.js";
 import { importsDynRuntime } from "../../src/runtime/imports.js";
+import { RUNTIME_MODULE } from "../../src/runtime/dyn.js";
+
+/** An import line of an endpoint program (spec §import-code-generation). */
+const IMPORT_LINE = /^import \{[^}\n]*\} from "[^"\n]*";$/gm;
+
+/** The runtime import line, with the names it imports (spec §runtime-import). */
+const RUNTIME_IMPORT_LINE = new RegExp(`^import \\{ ([^}]*) \\} from "\\./${RUNTIME_MODULE}";$`, "m");
 
 /**
  * What choreographic residue `source` carries, if any: a location annotation,
@@ -12,7 +19,10 @@ import { importsDynRuntime } from "../../src/runtime/imports.js";
  * §absent-finalization).
  */
 export function choreoResidue(source: string): string | undefined {
-  if (/@/.test(source)) {
+  // A module name may hold an endpoint after `@`, naming an endpoint-specific
+  // file (spec §bluescript-source-file-names); that is no location annotation.
+  const code = source.replace(IMPORT_LINE, "");
+  if (/@/.test(code)) {
     return "location annotation survived projection";
   }
   if (/<-/.test(source)) {
@@ -26,7 +36,7 @@ export function choreoResidue(source: string): string | undefined {
 
 /** The names `source` imports from the runtime file, in the order it lists them (spec §runtime-import). */
 export function importsOf(source: string): string[] {
-  return /^import \{ ([^}]*) \}/.exec(source)?.[1]?.split(", ") ?? [];
+  return RUNTIME_IMPORT_LINE.exec(source)?.[1]?.split(", ") ?? [];
 }
 
 /** Whether `source` declares `name` as an export of its own. */

@@ -3,6 +3,7 @@
 /test-project
 tsconfig.tsbuildinfo
 /examples/**/*.bs
+!/examples/*/src/**/*.bs
 /examples/*/workspace/
 /benchmarks/**/*.bs
 /benchmarks/**/workspace/

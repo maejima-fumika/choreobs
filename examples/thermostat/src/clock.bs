@@ -1,0 +1,8 @@
+// A tick counter. Each endpoint that imports this file has its own copy, and
+// so its own count.
+let ticks: integer = 0;
+
+export function tick(): integer {
+  ticks = ticks + 1;
+  return ticks;
+}

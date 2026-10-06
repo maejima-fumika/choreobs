@@ -28,14 +28,17 @@ export interface WriteResult {
   readonly errors: readonly CompileDiagnostic[];
   /** Registered projects that are no endpoint's (spec §output-files). */
   readonly warnings: readonly string[];
-  /** Every file written, programs and runtime files alike. */
+  /**
+   * Every file written: for each endpoint, its program, its runtime file and
+   * the copies of its BlueScript source files (spec §bluescript-source-file-copies).
+   */
   readonly written: readonly string[];
 }
 
 /**
  * `choreobs compile`: compiles the project at `root` and writes each
- * endpoint's program and runtime file into its BlueScript project
- * (spec §output-files). Nothing is written unless the program compiles and the
+ * endpoint's program, runtime file and copies of the BlueScript source files
+ * into its BlueScript project (spec §output-files). Nothing is written unless the program compiles and the
  * workspace agrees with `choreobs.json` throughout. `bscript` is never run.
  */
 export function writeProject(projectRoot: string): WriteResult {
@@ -67,7 +70,12 @@ export function writeProject(projectRoot: string): WriteResult {
   const report = (message: string): void => {
     errors.push({ message, spec: ["output-files"] });
   };
-  const targets: { endpoint: string; entry: string; runtime: string }[] = [];
+  const targets: {
+    endpoint: string;
+    entry: string;
+    runtime: string;
+    copies: { path: string; source: string }[];
+  }[] = [];
   const others = otherProjects(root, workspace, endpoints);
   for (const endpoint of endpoints) {
     const project = inspectEndpointProject(root, workspace, endpoint);
@@ -95,11 +103,25 @@ export function writeProject(projectRoot: string): WriteResult {
       });
     }
     const entry = entryFile(root, project.dir, project.config);
-    if (typeof entry === "string") {
-      targets.push({ endpoint: endpoint.name, entry, runtime: join(dirname(entry), RUNTIME_FILE) });
-    } else {
+    if (typeof entry !== "string") {
       report(entry.problem);
+      continue;
     }
+    // A copy goes below the program's directory as its source file is below
+    // `src/`, so that the import's module name finds it there
+    // (spec §bluescript-source-file-copies). None may land on the program.
+    const copies = compilation.sourceFiles
+      .filter((file) => file.endpoint === endpoint.name)
+      .map((file) => ({ path: join(dirname(entry), ...file.path.split("/")), source: file.source }));
+    for (const copy of copies) {
+      if (copy.path.toLowerCase() === entry.toLowerCase()) {
+        report(
+          `the copy of src/${relative(dirname(entry), copy.path).split(sep).join("/")} would overwrite ` +
+            `endpoint '${endpoint.name}'s entry file ${show(root, entry)}`,
+        );
+      }
+    }
+    targets.push({ endpoint: endpoint.name, entry, runtime: join(dirname(entry), RUNTIME_FILE), copies });
   }
 
   const warnings = others.map((other) =>
@@ -121,6 +143,11 @@ export function writeProject(projectRoot: string): WriteResult {
     writeFileSync(target.entry, program.source, "utf8");
     writeFileSync(target.runtime, runtime.source, "utf8");
     written.push(target.entry, target.runtime);
+    for (const copy of target.copies) {
+      mkdirSync(dirname(copy.path), { recursive: true });
+      writeFileSync(copy.path, copy.source, "utf8");
+      written.push(copy.path);
+    }
   }
   return { compilation, errors: [], warnings, written };
 }

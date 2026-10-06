@@ -345,10 +345,27 @@ export interface ProjectedFunction {
   readonly span: Span;
 }
 
+/** One `a` or `a as b` of an import (spec §import-code-generation). */
+export interface ProjectedImportName {
+  readonly imported: string;
+  readonly local: string;
+}
+
+/** An import declaration at this endpoint, without its location (spec §import-projection). */
+export interface ProjectedImport {
+  readonly kind: "ProjectedImport";
+  readonly names: readonly ProjectedImportName[];
+  /** The module name, as the source writes it. */
+  readonly module: string;
+  readonly span: Span;
+}
+
 /** Per-endpoint projected program (spec §epp-definition, §top-level-projection). */
 export interface ProjectedProgram {
   readonly kind: "ProjectedProgram";
   readonly endpoint: string;
+  /** The imports at this endpoint, in source order (spec §import-projection). */
+  readonly imports: readonly ProjectedImport[];
   readonly functions: readonly ProjectedFunction[];
   readonly body: readonly ProjectedStatement[];
   readonly span: Span;

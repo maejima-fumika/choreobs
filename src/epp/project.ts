@@ -1,7 +1,8 @@
 import type { Span } from "../ast/span.js";
 import type { Location } from "../ast/location.js";
 import type { CommTag, LocatedType, TransferMode } from "../ast/typed.js";
-import type { FunctionDeclaration } from "../ast/declarations.js";
+import type { ExecutionContext } from "../ast/context.js";
+import type { ImportDeclaration } from "../ast/imports.js";
 import { isNumericType } from "../ast/syntax-types.js";
 import type {
   LoweredProgram,
@@ -42,6 +43,7 @@ import { commKindForType, supportedArrayBase } from "../comm/kind.js";
 import { DYN_VALUE_TYPE } from "../runtime/dyn.js";
 import type {
   ProjectedProgram,
+  ProjectedImport,
   ProjectedFunction,
   ProjectedStatement,
   ProjectedBlock,
@@ -112,17 +114,35 @@ class Projector {
     return {
       kind: "ProjectedProgram",
       endpoint: this.endpoint,
+      imports: typed.program.imports.flatMap((decl) => this.projectImport(decl)),
       functions,
       body,
       span: typed.program.span,
     };
   }
 
+  /**
+   * An import is kept at its endpoint alone, whether or not anything there
+   * uses it: importing a module initializes it (spec §import-projection).
+   */
+  private projectImport(decl: ImportDeclaration): ProjectedImport[] {
+    const at = decl.at.location;
+    if (at.kind !== "individual" || at.name !== this.endpoint) {
+      return [];
+    }
+    return [{
+      kind: "ProjectedImport",
+      names: decl.specifiers.map((spec) => ({ imported: spec.imported, local: spec.local })),
+      module: decl.module.value,
+      span: decl.span,
+    }];
+  }
+
   private projectFunctionDecl(
     item: TypedFunctionDeclaration,
   ): ProjectedFunction | undefined {
     const decl = item.decl;
-    if (!this.shouldEmitFunction(decl)) {
+    if (!this.runsHere(decl.context)) {
       return undefined;
     }
 
@@ -142,11 +162,13 @@ class Projector {
     };
   }
 
-  private shouldEmitFunction(decl: FunctionDeclaration): boolean {
-    if (decl.at === undefined) {
-      return true;
-    }
-    return decl.at.kind === "individual" && decl.at.name === this.endpoint;
+  /**
+   * Whether a function with this context runs here: a choreography function
+   * runs at every endpoint, and a local one, declared or imported, at its own
+   * (spec §function-kinds, §imported-names).
+   */
+  private runsHere(context: ExecutionContext): boolean {
+    return context.kind === "choreography" || context.endpoint === this.endpoint;
   }
 
   private projectTopLevelStatement(
@@ -827,7 +849,7 @@ class Projector {
     return this.callProjection(
       expr.expr.callee,
       expr.args,
-      this.shouldEmitFunction(expr.callee.decl),
+      this.runsHere(expr.callee.context),
       expr.expr.span,
     );
   }

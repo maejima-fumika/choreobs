@@ -1,0 +1,7 @@
+{
+  "name": "thermostat",
+  "endpoints": [
+    { "name": "sensor", "board": "host" },
+    { "name": "heater", "board": "host" }
+  ]
+}

@@ -118,7 +118,7 @@ describe("rewrites of the examples and benchmarks change nothing they must not",
           assert.ok(result.source !== undefined && result.config !== undefined);
           const config = compilerConfig(result.config);
           const problem = rewriteProblem(rewrite, result.source, result, (source) =>
-            compileSource(source, result.sourcePath, config),
+            compileSource(source, result.sourcePath, config, result.files),
           );
           assert.equal(problem, undefined, dir);
         });

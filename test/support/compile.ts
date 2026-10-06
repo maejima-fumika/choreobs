@@ -5,16 +5,27 @@ import {
   type CompileResult,
 } from "../../src/driver/index.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
+import { NO_SOURCE_FILES, type SourceFiles } from "../../src/local-imports/index.js";
 import { aliceBob } from "./config.js";
 import { choreoResidue } from "../../scripts/fuzz/inspect.js";
 
-/** Runs the whole pipeline: parse, check, project, finalize, clean, emit. */
+/**
+ * Runs the whole pipeline: parse, check, project, finalize, clean, emit.
+ * `files` are the BlueScript source files beside the program
+ * (spec §bluescript-source-files), by path below `src/`.
+ */
 export function compile(
   source: string,
   config: ChoreoBSConfig = aliceBob,
   cbsPath = "index.cbs",
+  files: SourceFiles = NO_SOURCE_FILES,
 ): CompileResult {
-  return compileSource(source, cbsPath, config);
+  return compileSource(source, cbsPath, config, files);
+}
+
+/** {@link SourceFiles} from an object literal, ordered by path as the compiler reads them. */
+export function sourceFiles(files: Readonly<Record<string, string>>): SourceFiles {
+  return new Map(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 /** The BlueScript emitted for one endpoint, without its trailing newline. */

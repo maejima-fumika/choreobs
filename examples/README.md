@@ -2,7 +2,8 @@
 
 Each directory is a self-contained ChoreoBS project: a `src/index.cbs` and the
 `choreobs.json` that declares its endpoints, all of them on the `host` board
-(spec §input-files, §choreobs-json).
+(spec §input-files, §choreobs-json). `thermostat` also has BlueScript source
+files under `src/`, which its program imports (spec §bluescript-source-files).
 
 The BlueScript workspace the compiler writes into is not committed
 (spec §output-files). To compile and run an example, make it first, from the
@@ -35,6 +36,7 @@ suite.
 | `sensor-pipeline` | sensor1, sensor2, gateway, server | local read/calibrate functions, direct transfers into a gateway, a `for` loop that reuses its communication tags each iteration, broadcast of a verdict before branching on it |
 | `two-phase-commit` | coordinator, alice, bob, carol | a full propose/vote/decide protocol, votes converging on one endpoint, a decision broadcast so that every endpoint takes the same branch, local recursion with a written return type |
 | `map-reduce` | driver, worker1, worker2 | partial aggregation on each worker, reduction at the driver, broadcasting a shared mean for a second pass, and publishing a loop bound as `@every` so a choreography-level `for` can use it |
+| `thermostat` | sensor, heater | hardware reached through imported BlueScript files (spec §import-declarations): an endpoint-specific file for each endpoint, a shared file imported at both under two names, and an imported constant transferred to `@every` as a loop bound |
 | `control-loop` | controller, actuator, monitor | a `while` loop whose condition is `@every`, a closed control loop across three endpoints, and the difference between `=` (aliases an array) and `<-` (fresh copy) |
 
 ## Things these examples are meant to illustrate
@@ -73,6 +75,16 @@ function aliceCanAfford@alice(amount: integer): boolean {   // amount : integer@
     let balance = aliceBalance();
     return amount <= balance;                                // boolean@alice
 }
+```
+
+**An imported file belongs to one endpoint per import.** An import names the
+endpoint its functions and constants are at, and a file named `...@heater.bs`
+can only be imported there. A shared file is imported at each endpoint under
+its own name, since one name cannot be at two endpoints (spec §imported-names):
+
+```ts
+import@sensor { tick as sensorTick } from "./clock";
+import@heater { tick as heaterTick } from "./clock";
 ```
 
 **An empty array literal needs an annotated binding.** Its element type is not

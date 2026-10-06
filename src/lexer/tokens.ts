@@ -34,6 +34,7 @@ export const TokenKind = {
   String: "String",
   Void: "Void",
   As: "As",
+  Import: "Import",
 
   // Keywords — reserved but unsupported in v1 (spec §keywords)
   Break: "Break",
@@ -44,7 +45,6 @@ export const TokenKind = {
   Async: "Async",
   Await: "Await",
   Class: "Class",
-  Import: "Import",
   Export: "Export",
 
   // Operators and punctuation (spec §operators-and-punctuation)

@@ -351,13 +351,16 @@ export interface TypedParenthesizedExpression {
   readonly expression: TypedExpression;
 }
 
-/** Resolved function for calls and EPP (spec §function-call-typing, §function-rules, §function-projection). */
+/**
+ * Resolved function for calls and EPP (spec §function-call-typing, §function-rules, §function-projection):
+ * a declared function or an imported one (spec §imported-names). `context`
+ * says where it runs, which is all EPP needs of it.
+ */
 export interface FunctionSymbol {
   readonly name: string;
   readonly context: ExecutionContext;
   readonly params: readonly LocatedType[];
   readonly returnType: LocatedType;
-  readonly decl: FunctionDeclaration;
 }
 
 /** Narrow typed expressions by syntactic kind. */

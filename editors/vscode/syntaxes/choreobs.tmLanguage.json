@@ -9,6 +9,7 @@
     { "include": "#numbers" },
     { "include": "#locations" },
     { "include": "#function-declaration" },
+    { "include": "#import-from" },
     { "include": "#reserved-keywords" },
     { "include": "#keywords" },
     { "include": "#builtins" },
@@ -90,6 +91,7 @@
       "comment": "Spec §keywords, the words supported in v1. test/editors/vscode-grammar.test.ts checks these lists against the lexer.",
       "patterns": [
         { "name": "keyword.control.choreobs", "match": "\\b(?:if|else|while|for|return)\\b" },
+        { "name": "keyword.control.import.choreobs", "match": "\\b(?:import)\\b" },
         { "name": "storage.type.choreobs", "match": "\\b(?:function|let|const)\\b" },
         { "name": "keyword.operator.expression.as.choreobs", "match": "\\b(?:as)\\b" },
         { "name": "support.type.primitive.choreobs", "match": "\\b(?:integer|float|boolean|string|void)\\b" },
@@ -98,10 +100,15 @@
         { "name": "constant.language.location.choreobs", "match": "\\b(?:every|dyn)\\b" }
       ]
     },
+    "import-from": {
+      "comment": "Spec §import-declarations. `from` is not reserved: it means `from` only after the `}` of an import declaration, and is an ordinary identifier elsewhere, so it is kept out of the keyword lists.",
+      "match": "(?<=\\})\\s*\\b(from)\\b",
+      "captures": { "1": { "name": "keyword.control.import.choreobs" } }
+    },
     "reserved-keywords": {
       "comment": "Spec §keywords, the words reserved but unsupported in v1: writing one is always an error.",
       "name": "invalid.illegal.unsupported-keyword.choreobs",
-      "match": "\\b(?:break|continue|any|undefined|async|await|class|import|export)\\b"
+      "match": "\\b(?:break|continue|any|undefined|async|await|class|export)\\b"
     },
     "builtins": {
       "comment": "Spec §print-typing. `print` is reserved (spec §reserved-runtime-names), so it never names a user function.",

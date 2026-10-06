@@ -24,6 +24,7 @@ committed. Reload VS Code after installing.
 | `@alice` (an endpoint name) | `constant.language.location.choreobs variable.other.constant.location.choreobs` |
 | `@every`, `@dyn` | `constant.language.location.every.choreobs`, `…dyn.choreobs` |
 | `<-` (transfer) | `keyword.control.transfer.choreobs` |
+| `import`, and `from` after the `}` of an import | `keyword.control.import.choreobs` |
 | `integer`, `float`, `boolean`, `string`, `void` | `support.type.primitive.choreobs` |
 | `print`, `.push`, `.length` | `support.function.builtin.choreobs`, `support.function.array.choreobs`, `support.variable.property.array.choreobs` |
 

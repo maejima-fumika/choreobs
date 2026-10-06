@@ -1,6 +1,7 @@
 import { specRef } from "../spec/ref.js";
 import type {
   ProjectedProgram,
+  ProjectedImport,
   ProjectedFunction,
   ProjectedStatement,
   ProjectedBlock,
@@ -45,7 +46,8 @@ class BlueScriptEmitter {
       this.emitStatement(stmt);
     }
     const code = this.lines.join("\n") + (this.lines.length > 0 ? "\n" : "");
-    return runtimeImportLine(program, imports) + code;
+    const header = runtimeImportLine(imports) + program.imports.map(importLine).join("");
+    return header !== "" && code !== "" ? `${header}\n${code}` : header + code;
   }
 
   private emitFunction(fn: ProjectedFunction): void {
@@ -242,17 +244,24 @@ class BlueScriptEmitter {
 }
 
 /**
- * `import { … } from "./__runtime";` and a blank line, for a program
- * that uses anything from the runtime file (spec §runtime-import); nothing
- * otherwise. The module name has no extension because BlueScript appends `.bs`
- * itself.
+ * `import { … } from "./__runtime";`, for a program that uses anything from
+ * the runtime file (spec §runtime-import); nothing otherwise. The module name
+ * has no extension because BlueScript appends `.bs` itself. The program's own
+ * imports follow it, and a blank line follows them all (spec §import-code-generation).
  */
-function runtimeImportLine(program: ProjectedProgram, names: readonly string[]): string {
+function runtimeImportLine(names: readonly string[]): string {
   if (names.length === 0) {
     return "";
   }
-  const line = `import { ${names.join(", ")} } from "./${RUNTIME_MODULE}";\n`;
-  return program.functions.length > 0 || program.body.length > 0 ? `${line}\n` : line;
+  return `import { ${names.join(", ")} } from "./${RUNTIME_MODULE}";\n`;
+}
+
+/** An import projected to this endpoint, as the source writes it less the location (spec §import-code-generation). */
+function importLine(decl: ProjectedImport): string {
+  const names = decl.names.map(({ imported, local }) =>
+    imported === local ? imported : `${imported} as ${local}`,
+  );
+  return `import { ${names.join(", ")} } from ${JSON.stringify(decl.module)};\n`;
 }
 
 function formatFloat(value: number): string {

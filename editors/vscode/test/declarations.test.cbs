@@ -1,5 +1,16 @@
 // SYNTAX TEST "source.choreobs" "function declarations, types and locations"
 
+import@alice { now as nowAtAlice, threshold } from "./sensor@alice";
+// <------ keyword.control.import.choreobs
+//    ^^^^^^ variable.other.constant.location.choreobs
+//                 ^^ keyword.operator.expression.as.choreobs
+//                    ^^^^^^^^^^ variable.other.readwrite.choreobs
+//                                            ^^^^ keyword.control.import.choreobs
+//                                                 ^^^^^^^^^^^^^^^^ string.quoted.double.choreobs
+
+let from: integer@alice = 1@alice;
+//  ^^^^ variable.other.readwrite.choreobs
+
 function add@alice(a: integer@alice, b: float[]@alice): integer@alice {
 // <-------- storage.type.function.choreobs
 //       ^^^ entity.name.function.choreobs

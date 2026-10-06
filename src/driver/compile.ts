@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import { parse, type ParseError } from "../parser/index.js";
 import { typeCheck, type TypeCheckError } from "../check/index.js";
@@ -27,6 +27,15 @@ import {
 } from "../config/index.js";
 import { configPath, sourcePath } from "../workspace/layout.js";
 import type { LexicalError } from "../lexer/index.js";
+import {
+  NO_SOURCE_FILES,
+  readSourceFiles,
+  resolveImports,
+  sourceFilesFor,
+  validateSourceFiles,
+  type ImportDiagnostic,
+  type SourceFiles,
+} from "../local-imports/index.js";
 
 /**
  * A failure the driver reports itself: an unreadable or invalid config, a
@@ -42,6 +51,7 @@ export type CompileDiagnostic =
   | ParseError
   | TypeCheckError
   | CommConsistencyDiagnostic
+  | ImportDiagnostic
   | DriverDiagnostic;
 
 /**
@@ -64,12 +74,26 @@ export interface CompileResult {
    * alone.
    */
   readonly runtimeOutputs: readonly CompileOutput[];
+  /**
+   * The BlueScript source files each endpoint gets a copy of
+   * (spec §bluescript-source-file-copies): for each endpoint in the order
+   * `endpoints` lists them, its files in path order. Empty for a failed
+   * compilation.
+   */
+  readonly sourceFiles: readonly SourceFileOutput[];
   readonly errors: readonly CompileDiagnostic[];
+}
+
+/** A BlueScript source file for one endpoint, at its path below `src/` (with `/`). */
+export interface SourceFileOutput {
+  readonly endpoint: string;
+  readonly path: string;
+  readonly source: string;
 }
 
 /** A compilation that stopped at `errors`, with nothing to write. */
 function failed(errors: readonly CompileDiagnostic[]): CompileResult {
-  return { success: false, outputs: [], runtimeOutputs: [], errors };
+  return { success: false, outputs: [], runtimeOutputs: [], sourceFiles: [], errors };
 }
 
 /** {@link CompileResult}, for a project read from disk. */
@@ -79,6 +103,8 @@ export interface ProjectCompileResult extends CompileResult {
   /** `src/index.cbs`, when it could be read: diagnostics point into it. */
   readonly source?: string;
   readonly sourcePath: string;
+  /** The BlueScript source files under `src/`, when they could be read (spec §bluescript-source-files). */
+  readonly files?: SourceFiles;
 }
 
 /**
@@ -103,13 +129,32 @@ export function compileProject(root: string): ProjectCompileResult {
     const message = `cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`;
     return { ...failed([{ message, spec: ["input-files"] }]), config, sourcePath: path };
   }
-  return { ...compileSource(source, path, compilerConfig(config)), config, source, sourcePath: path };
+  let files: SourceFiles;
+  try {
+    files = readSourceFiles(dirname(path));
+  } catch (e) {
+    const message = `cannot read the BlueScript source files under ${dirname(path)}: ${e instanceof Error ? e.message : String(e)}`;
+    return { ...failed([{ message, spec: ["input-files", "bluescript-source-files"] }]), config, source, sourcePath: path };
+  }
+  return {
+    ...compileSource(source, path, compilerConfig(config), files),
+    config,
+    source,
+    sourcePath: path,
+    files,
+  };
 }
 
+/**
+ * `files` are the BlueScript source files next to the program
+ * (spec §bluescript-source-files), which its imports name. A caller with only
+ * a program to compile passes none, and an import then names no file.
+ */
 export function compileSource(
   source: string,
   cbsPath: string,
   config: ChoreoBSConfig,
+  files: SourceFiles = NO_SOURCE_FILES,
 ): CompileResult {
   // `compileSource` is the single funnel for every compilation path, and it
   // takes a `ChoreoBSConfig` that need not have come from `loadConfig`
@@ -130,6 +175,13 @@ export function compileSource(
     }]);
   }
 
+  // Every source file is copied, so every one is held to the naming rules,
+  // whether or not the program imports from it (spec §bluescript-source-file-names).
+  const badFile = validateSourceFiles(files, config.endpoints);
+  if (badFile !== undefined) {
+    return failed([badFile]);
+  }
+
   const parsed = parse(source);
   const errors: CompileDiagnostic[] = [...parsed.errors];
 
@@ -137,7 +189,12 @@ export function compileSource(
     return failed(errors);
   }
 
-  const checked = typeCheck(parsed.program, config);
+  const resolved = resolveImports(parsed.program.imports, files, config.endpoints);
+  if (resolved.imports === null) {
+    return failed([...errors, ...resolved.errors]);
+  }
+
+  const checked = typeCheck(parsed.program, config, resolved.imports);
   errors.push(...checked.errors);
 
   if (checked.typed === null || checked.errors.length > 0) {
@@ -178,5 +235,9 @@ export function compileSource(
     source: runtimeSource(endpoint, config.endpoints, usesDyn),
   }));
 
-  return { success: true, outputs, runtimeOutputs, errors };
+  const sourceFiles: SourceFileOutput[] = config.endpoints.flatMap((endpoint) =>
+    sourceFilesFor(endpoint, files).map((path) => ({ endpoint, path, source: files.get(path)! })),
+  );
+
+  return { success: true, outputs, runtimeOutputs, sourceFiles, errors };
 }

@@ -55,23 +55,33 @@ export const TRANSFER_TEMP_PREFIX = "__transfer_";
 // the parser that reads them.
 
 /**
+ * The communication API functions (spec §communication-api). Besides being
+ * reserved here, they may not be named in an imported BlueScript file, whose
+ * messages would have no partner in any endpoint's program
+ * (spec §imported-signatures).
+ */
+export const COMM_API_NAMES: ReadonlySet<string> = new Set<string>(
+  ALL_COMM_KINDS.flatMap((comm) => [
+    sendFunction(comm),
+    receiveFunction(comm),
+    broadcastFunction(comm),
+  ]),
+);
+
+/**
  * Names no user-introduced identifier may take — function, variable or
  * parameter alike, since any of the three is emitted verbatim into the same
  * BlueScript scope as the runtime support functions. The names of the runtime
  * file are not listed: they all begin with {@link COMPILER_NAME_PREFIX}.
  *
- * Derived from the emitter's own name functions so that adding a `CommKind`
- * cannot leave this list behind.
+ * Derived from the emitter's own name functions (through {@link COMM_API_NAMES})
+ * so that adding a `CommKind` cannot leave this list behind.
  */
 export const RESERVED_RUNTIME_NAMES: ReadonlySet<string> = new Set<string>([
   ARRAY_SENTINEL,
   PUSH_SENTINEL,
   PRINT_FUNCTION,
-  ...ALL_COMM_KINDS.flatMap((comm) => [
-    sendFunction(comm),
-    receiveFunction(comm),
-    broadcastFunction(comm),
-  ]),
+  ...COMM_API_NAMES,
   // The copy helper is the runtime file's `__copyArray`, under the prefix
   // below, so `copyArray` is left to the program (spec §reserved-runtime-names).
 ]);

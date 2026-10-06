@@ -3,6 +3,7 @@ import { checkSource } from "./pipeline.js";
 import { assertCites, describeDiags } from "./spec.js";
 import type { SpecId } from "../../src/spec/ref.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
+import type { SourceFiles } from "../../src/local-imports/index.js";
 import type { IndividualLocation } from "../../src/ast/location.js";
 import type {
   TypedFunctionDeclaration,
@@ -23,8 +24,8 @@ export const every = EVERY;
 export const dyn = DYN;
 
 /** The typed program for `source`, which must check without errors. */
-export function expectChecks(source: string, config?: ChoreoBSConfig): TypedProgram {
-  const { typed, errors } = checkSource(source, config);
+export function expectChecks(source: string, config?: ChoreoBSConfig, files?: SourceFiles): TypedProgram {
+  const { typed, errors } = checkSource(source, config, files);
   assert.equal(errors.length, 0, describeDiags(errors));
   assert.ok(typed);
   return typed;
@@ -41,9 +42,10 @@ export function expectCheckError(
     readonly message?: string | readonly string[];
     readonly spec?: SpecId;
     readonly config?: ChoreoBSConfig;
+    readonly files?: SourceFiles;
   } = {},
 ): void {
-  const { typed, errors } = checkSource(source, expected.config);
+  const { typed, errors } = checkSource(source, expected.config, expected.files);
   assert.equal(typed, null, `expected a rejection: ${source}`);
   if (expected.message !== undefined) {
     const needles = typeof expected.message === "string" ? [expected.message] : expected.message;

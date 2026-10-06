@@ -11,6 +11,7 @@ import type {
   TopLevelStatement,
 } from "../ast/program.js";
 import type { FunctionDeclaration, Parameter } from "../ast/declarations.js";
+import type { ImportDeclaration, ImportSpecifier } from "../ast/imports.js";
 import type {
   Block,
   DeclarationKeyword,
@@ -56,6 +57,7 @@ import type {
   UnaryOperator,
 } from "../ast/operators.js";
 import {
+  KEYWORDS,
   TokenKind,
   tokenize,
   type Token,
@@ -74,6 +76,12 @@ import { spanBetween, spanFrom, spanMerge, spanOf, spanOfNode } from "./span-uti
  */
 const LENGTH_PROPERTY = "length";
 const PUSH_METHOD = "push";
+
+/**
+ * The word between `}` and the module name of an import declaration
+ * (spec §import-declarations). Not reserved: it means `from` only there.
+ */
+const FROM_WORD = "from";
 
 const PRINT_ARITY_MESSAGE = "'print' takes exactly one argument";
 const PRINT_ARITY_SPEC: SpecRefs = ["invalid-print-call", "expressions"];
@@ -125,11 +133,16 @@ class Parser {
 
   parseProgram(): ParseResult {
     const start = this.current();
+    const imports: ImportDeclaration[] = [];
     const items: TopLevelItem[] = [];
 
     while (!this.check(TokenKind.EOF)) {
       try {
-        if (this.check(TokenKind.Function)) {
+        // Imports come before everything else (spec §import-declarations); a
+        // later one reaches `parseStatement`, which rejects it.
+        if (this.check(TokenKind.Import) && items.length === 0) {
+          imports.push(this.importDeclaration());
+        } else if (this.check(TokenKind.Function)) {
           items.push(this.functionDeclaration());
         } else {
           items.push(this.topLevelStatement());
@@ -143,12 +156,13 @@ class Parser {
 
     const end = this.previous();
     const span: Span =
-      items.length > 0
+      imports.length + items.length > 0
         ? spanMerge(spanOf(start), spanOf(end))
         : spanOf(start);
 
     const program: Program = {
       kind: "Program",
+      imports,
       items,
       span,
     };
@@ -190,6 +204,82 @@ class Parser {
       span: spanFrom(start, body),
     };
     return decl;
+  }
+
+  /**
+   * `import@P { a, b as c } from "./file";` (spec §import-declarations). The
+   * location is any the grammar allows; whether it may be imported at is
+   * decided when the import is resolved (spec §invalid-import-location).
+   */
+  private importDeclaration(): ImportDeclaration {
+    const start = this.consume(TokenKind.Import, "expected 'import'");
+    if (!this.match(TokenKind.At)) {
+      throw this.fail(
+        "an import declaration names the endpoint it imports at: write 'import@<endpoint> { ... } from \"./file\";'",
+        ["import-declarations", "invalid-import-location"],
+      );
+    }
+    const at = this.locationAnnotationAfterAt();
+    this.consume(TokenKind.LBrace, "expected '{' after the location of an import declaration");
+    if (this.check(TokenKind.RBrace)) {
+      throw this.fail("an import declaration imports at least one name", ["import-declarations"]);
+    }
+    const specifiers: ImportSpecifier[] = [];
+    do {
+      specifiers.push(this.importSpecifier());
+    } while (this.match(TokenKind.Comma));
+    this.consume(TokenKind.RBrace, "expected ',' or '}' after an imported name");
+    const from = this.current();
+    if (from.kind !== TokenKind.Identifier || from.name !== FROM_WORD) {
+      throw this.fail("expected 'from' after '}'", ["import-declarations"]);
+    }
+    this.advance();
+    const moduleToken = this.current();
+    if (moduleToken.kind !== TokenKind.StringLiteral) {
+      throw this.fail("expected the file to import from, as a string, after 'from'", ["import-declarations"]);
+    }
+    this.advance();
+    const end = this.consume(TokenKind.Semicolon, "expected ';' after import declaration");
+    return {
+      kind: "ImportDeclaration",
+      at,
+      specifiers,
+      module: { kind: "ModuleSpecifier", value: moduleToken.value, span: spanOf(moduleToken) },
+      span: spanFrom(start, end),
+    };
+  }
+
+  /**
+   * `name` or `name as local`. The exported name may be a ChoreoBS reserved
+   * word, which a BlueScript file may well use, but then only under another
+   * name (spec §import-declarations).
+   */
+  private importSpecifier(): ImportSpecifier {
+    const token = this.current();
+    let imported: string;
+    if (token.kind === TokenKind.Identifier) {
+      imported = token.name;
+    } else if (KEYWORDS[token.lexeme] === token.kind) {
+      if (this.tokens[this.index + 1]?.kind !== TokenKind.As) {
+        throw this.fail(
+          `'${token.lexeme}' is a reserved word in ChoreoBS: import it under another name with 'as'`,
+          ["import-declarations", "keywords"],
+        );
+      }
+      imported = token.lexeme;
+    } else {
+      throw this.fail("expected a name to import", ["import-declarations"]);
+    }
+    this.advance();
+    if (!this.match(TokenKind.As)) {
+      return { kind: "ImportSpecifier", imported, local: imported, span: spanOf(token) };
+    }
+    const local = this.current();
+    if (local.kind !== TokenKind.Identifier) {
+      throw this.fail("expected a name after 'as'", ["import-declarations"]);
+    }
+    this.advance();
+    return { kind: "ImportSpecifier", imported, local: local.name, span: spanFrom(token, local) };
   }
 
   private topLevelStatement(): TopLevelStatement {
@@ -323,6 +413,12 @@ class Parser {
     }
     if (this.check(TokenKind.Identifier)) {
       return this.parseIdentifierLeadingStatement();
+    }
+    if (this.check(TokenKind.Import)) {
+      throw this.fail(
+        "an import declaration must come before every function and statement, at top level",
+        ["import-declarations", "misplaced-import-declaration"],
+      );
     }
     if (this.isUnsupportedStatementKeyword(this.current().kind)) {
       const kind = this.current().kind;
@@ -1074,7 +1170,6 @@ class Parser {
       kind === TokenKind.Async ||
       kind === TokenKind.Await ||
       kind === TokenKind.Class ||
-      kind === TokenKind.Import ||
       kind === TokenKind.Export
     );
   }

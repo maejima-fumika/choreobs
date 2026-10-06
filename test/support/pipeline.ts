@@ -8,11 +8,16 @@ import { lowerProgram } from "../../src/lower/index.js";
 import type { ProjectedProgram } from "../../src/ir/projected.js";
 import type { ChoreoBSConfig } from "../../src/config/types.js";
 import { aliceBob } from "./config.js";
+import { NO_SOURCE_FILES, resolveImports, type SourceFiles } from "../../src/local-imports/index.js";
 
-/** Parses and type-checks; the parse must succeed, the check need not. */
+/**
+ * Parses, resolves the imports against `files` (spec §imported-signatures) and
+ * type-checks; the parse and the resolution must succeed, the check need not.
+ */
 export function checkSource(
   source: string,
   config: ChoreoBSConfig = aliceBob,
+  files: SourceFiles = NO_SOURCE_FILES,
 ): TypeCheckResult {
   const { program, errors: parseErrors } = parse(source);
   assert.equal(
@@ -21,7 +26,9 @@ export function checkSource(
     "parse errors: " + JSON.stringify(parseErrors),
   );
   assert.ok(program);
-  return typeCheck(program, config);
+  const resolved = resolveImports(program.imports, files, config.endpoints);
+  assert.ok(resolved.imports, "import errors: " + JSON.stringify(resolved.errors));
+  return typeCheck(program, config, resolved.imports);
 }
 
 /**
@@ -32,8 +39,9 @@ export function checkSource(
 export function tagSource(
   source: string,
   config: ChoreoBSConfig = aliceBob,
+  files: SourceFiles = NO_SOURCE_FILES,
 ): TypedProgram {
-  const { typed, errors } = checkSource(source, config);
+  const { typed, errors } = checkSource(source, config, files);
   assert.equal(errors.length, 0, JSON.stringify(errors));
   assert.ok(typed);
   return assignCommTags(typed);
@@ -47,6 +55,7 @@ export function tagSource(
 export function projectSource(
   source: string,
   config: ChoreoBSConfig = aliceBob,
+  files: SourceFiles = NO_SOURCE_FILES,
 ): readonly ProjectedProgram[] {
-  return projectAll(lowerProgram(tagSource(source, config)), config.endpoints);
+  return projectAll(lowerProgram(tagSource(source, config, files)), config.endpoints);
 }

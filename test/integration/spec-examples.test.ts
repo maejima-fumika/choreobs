@@ -5,6 +5,7 @@ import {
   bs,
   expectSuccess,
   expectFailure,
+  sourceFiles,
 } from "../support/compile.js";
 import { aliceBob, aliceBobStrict } from "../support/config.js";
 
@@ -201,6 +202,51 @@ for (
       `for (let i: integer = 0; i < 3; i = i + 1) {
   let y: integer = receiveInteger("alice", "__top_0");
 }`,
+    );
+  });
+});
+
+describe("spec.md §example-local-imports — local imports", () => {
+  it("§example-local-imports keeps each import at its endpoint and copies the files there", () => {
+    const files = sourceFiles({
+      "clock.bs": "let ticks: integer = 0;\n\nexport function now(): integer {\n  ticks = ticks + 1;\n  return ticks;\n}\n",
+      "sensor@alice.bs": "export const threshold = 30;\n\nexport function readSensor(t: integer): float {\n  return 20.5 + t;\n}\n",
+    });
+    const result = compile(`
+import@alice { readSensor, threshold as limit } from "./sensor@alice";
+import@alice { now as nowAtAlice } from "./clock";
+import@bob { now as nowAtBob } from "./clock";
+
+function hot@alice(x: float): boolean {
+    return x > (limit as float);
+}
+
+let reading: float@alice = readSensor(nowAtAlice());
+let alert: boolean@bob <- hot(reading);
+let stamp: integer@bob = nowAtBob();
+`, aliceBob, "index.cbs", files);
+    expectSuccess(result);
+    assert.equal(
+      bs(result, "alice"),
+      `import { readSensor, threshold as limit } from "./sensor@alice";
+import { now as nowAtAlice } from "./clock";
+
+function hot(x: float): boolean {
+  return x > ((limit as integer) as float);
+}
+let reading: float = readSensor(nowAtAlice());
+sendBoolean("bob", "__top_0", hot(reading));`,
+    );
+    assert.equal(
+      bs(result, "bob"),
+      `import { now as nowAtBob } from "./clock";
+
+let alert: boolean = receiveBoolean("alice", "__top_0");
+let stamp: integer = nowAtBob();`,
+    );
+    assert.deepEqual(
+      result.sourceFiles.map((f) => `${f.endpoint}:${f.path}`),
+      ["alice:clock.bs", "alice:sensor@alice.bs", "bob:clock.bs"],
     );
   });
 });

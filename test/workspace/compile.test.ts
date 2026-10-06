@@ -199,3 +199,84 @@ describe("choreobs compile — writing into the workspace (spec §output-files)"
     });
   });
 });
+
+describe("choreobs compile — copies of the BlueScript source files (spec §bluescript-source-file-copies)", () => {
+  const IMPORTING = `import@alice { now as nowAtAlice } from "./clock";
+import@alice { read } from "./lib/sensor@alice";
+let x: integer@alice = read(nowAtAlice());
+let y: integer@bob <- x;
+`;
+  const SOURCES = {
+    "src/clock.bs": "export function now(): integer { return 0; }\n",
+    "src/lib/sensor@alice.bs": "export function read(t: integer): integer { return t; }\n",
+    "src/lib/motor@bob.bs": "export function drive(): void {}\n",
+    "src/notes.txt": "not copied",
+  };
+
+  it("copies the shared files to every endpoint and an endpoint's own to it, below the program's directory", () => {
+    withTempDir((root) => {
+      scaffold(root, ALICE_BOB, IMPORTING);
+      writeFiles(root, SOURCES);
+      const result = writeProject(root);
+      assert.deepEqual(result.errors, []);
+      assert.deepEqual(result.written, [
+        join(root, "workspace/alice/src/index.bs"),
+        join(root, "workspace/alice/src/__runtime.bs"),
+        join(root, "workspace/alice/src/clock.bs"),
+        join(root, "workspace/alice/src/lib/sensor@alice.bs"),
+        join(root, "workspace/bob/src/index.bs"),
+        join(root, "workspace/bob/src/__runtime.bs"),
+        join(root, "workspace/bob/src/clock.bs"),
+        join(root, "workspace/bob/src/lib/motor@bob.bs"),
+      ]);
+      assert.equal(readFileSync(join(root, "workspace/alice/src/lib/sensor@alice.bs"), "utf8"), SOURCES["src/lib/sensor@alice.bs"]);
+      assert.ok(!existsSync(join(root, "workspace/bob/src/lib/sensor@alice.bs")));
+      assert.ok(!existsSync(join(root, "workspace/alice/src/notes.txt")));
+      assert.match(readFileSync(join(root, "workspace/alice/src/index.bs"), "utf8"), /^import \{ now as nowAtAlice \} from "\.\/clock";\nimport \{ read \} from "\.\/lib\/sensor@alice";\n\n/);
+    });
+  });
+
+  it("follows the entry file's directory, wherever entryFile puts it", () => {
+    withTempDir((root) => {
+      scaffold(root, ALICE_BOB, IMPORTING);
+      writeFiles(root, SOURCES);
+      editJson(join(root, "workspace/alice/bsconfig.json"), (c) => {
+        c.entryFile = "./src/app/main.bs";
+      });
+      assert.deepEqual(writeProject(root).errors, []);
+      assert.ok(existsSync(join(root, "workspace/alice/src/app/clock.bs")));
+      assert.ok(existsSync(join(root, "workspace/alice/src/app/lib/sensor@alice.bs")));
+    });
+  });
+
+  it("leaves a copy whose source file is gone", () => {
+    withTempDir((root) => {
+      scaffold(root, ALICE_BOB, IMPORTING);
+      writeFiles(root, { ...SOURCES, "src/old.bs": "export const n: integer = 1;\n" });
+      assert.deepEqual(writeProject(root).errors, []);
+      rmSync(join(root, "src/old.bs"));
+      const result = writeProject(root);
+      assert.deepEqual(result.errors, []);
+      assert.ok(!result.written.includes(join(root, "workspace/alice/src/old.bs")));
+      assert.ok(existsSync(join(root, "workspace/alice/src/old.bs")));
+    });
+  });
+
+  it("writes nothing when a copy would land on the entry file", () => {
+    withTempDir((root) => {
+      scaffold(root, ALICE_BOB, TRANSFER);
+      writeFiles(root, { "src/Index.bs": "export const n: integer = 1;\n" });
+      const messages = failure(root);
+      assert.ok(messages.some((m) => m.includes("would overwrite endpoint 'alice's entry file workspace/alice/src/index.bs")), messages.join("\n"));
+    });
+  });
+
+  it("writes nothing when a source file is misnamed, imported or not (spec §invalid-bluescript-file-name)", () => {
+    withTempDir((root) => {
+      scaffold(root, ALICE_BOB, TRANSFER);
+      writeFiles(root, { "src/sensor@carol.bs": "" });
+      const messages = failure(root);
+      assert.ok(messages.some((m) => m.includes("'carol' is not an endpoint listed in choreobs.json")), messages.join("\n"));
+    });
+  });
+});

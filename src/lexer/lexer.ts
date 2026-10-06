@@ -41,6 +41,7 @@ export const KEYWORDS: Readonly<Record<string, TokenKind>> = {
   string: TokenKind.String,
   void: TokenKind.Void,
   as: TokenKind.As,
+  import: TokenKind.Import,
   break: TokenKind.Break,
   continue: TokenKind.Continue,
   const: TokenKind.Const,
@@ -49,7 +50,6 @@ export const KEYWORDS: Readonly<Record<string, TokenKind>> = {
   async: TokenKind.Async,
   await: TokenKind.Await,
   class: TokenKind.Class,
-  import: TokenKind.Import,
   export: TokenKind.Export,
 };
 

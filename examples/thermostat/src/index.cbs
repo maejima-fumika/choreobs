@@ -1,0 +1,29 @@
+// Thermostat.
+//
+// The sensor and the heater reach their hardware through BlueScript source
+// files that the choreography imports (spec §import-declarations). The files
+// named `...@sensor.bs` and `...@heater.bs` are copied into their own
+// endpoint's project alone; `clock.bs` goes to both, and each endpoint
+// imports it under a name of its own.
+
+import@sensor { readCelsius, sampleCount } from "./hardware/thermometer@sensor";
+import@sensor { tick as sensorTick } from "./clock";
+import@heater { setRelay, relayIsOn } from "./hardware/relay@heater";
+import@heater { tick as heaterTick } from "./clock";
+
+const target: float@heater = 20.0@heater;
+
+function tooCold@heater(celsius: float): boolean {
+    return celsius < target;
+}
+
+// `sampleCount` is a constant at the sensor; the loop bound must be at every
+// endpoint.
+let rounds: integer@every <- sampleCount;
+for (let i = 0@every; i < rounds; i = i + 1@every) {
+    let celsius: float@sensor = readCelsius(sensorTick());
+    let reading: float@heater <- celsius;
+    setRelay(tooCold(reading));
+    print(heaterTick());
+    print(relayIsOn());
+}

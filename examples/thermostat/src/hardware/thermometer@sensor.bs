@@ -1,0 +1,6 @@
+// Stands in for a temperature sensor. Copied to the sensor's project only.
+export const sampleCount = 5;
+
+export function readCelsius(t: integer): float {
+  return 18.0 + 0.5 * t;
+}

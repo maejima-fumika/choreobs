@@ -6,4 +6,5 @@ export {
   type CompileDiagnostic,
   type DriverDiagnostic,
   type ProjectCompileResult,
+  type SourceFileOutput,
 } from "./compile.js";

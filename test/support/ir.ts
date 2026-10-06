@@ -16,7 +16,7 @@ export function program(
   endpoint = "bob",
   functions: ProjectedProgram["functions"] = [],
 ): ProjectedProgram {
-  return { kind: "ProjectedProgram", endpoint, functions, body, span };
+  return { kind: "ProjectedProgram", endpoint, imports: [], functions, body, span };
 }
 
 export function absent(): ProjectedExpression {

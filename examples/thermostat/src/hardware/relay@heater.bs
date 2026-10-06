@@ -1,0 +1,11 @@
+// Stands in for the relay that switches the heater. Copied to the heater's
+// project only.
+let on: boolean = false;
+
+export function setRelay(value: boolean): void {
+  on = value;
+}
+
+export function relayIsOn(): boolean {
+  return on;
+}

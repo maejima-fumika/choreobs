@@ -148,6 +148,7 @@ function emittedToProjectedProgram(
   return {
     kind: "ProjectedProgram",
     endpoint: output.endpoint,
+    imports: [],
     functions: [],
     body,
     span,

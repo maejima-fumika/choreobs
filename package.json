@@ -27,6 +27,8 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@babel/parser": "^7.29.9",
+    "@babel/types": "^7.29.8",
     "inquirer": "^12.11.1"
   }
 }

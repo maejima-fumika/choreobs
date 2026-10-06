@@ -86,6 +86,10 @@ identifiers it introduces (spec [§4.3](#identifiers)), and keeps the prefix out
 is given. `src/index.cbs` keeps clear of it; the rule binds any other way of
 handing the compiler a source file.
 
+`src/` may also hold BlueScript source files, which the program imports
+functions and constants from and which the compiler copies into the endpoints'
+projects (spec [§2.5](#bluescript-source-files)).
+
 ### 2.2 `choreobs.json` <a id="choreobs-json"></a>
 
 `choreobs.json` names the project, lists its endpoints with the BlueScript board
@@ -163,16 +167,21 @@ The workspace and its projects are made by BlueScript's own command-line tool,
 never writes them, so whatever `bscript` keeps there — such as the packages a
 project installs — survives compilation.
 
-For each endpoint, the compiler writes two files into its project:
+For each endpoint, the compiler writes these files into its project:
 
 * the endpoint's program, at the project's entry file: the `entryFile` of its
   `bsconfig.json`, or `./index.bs`, BlueScript's default, when there is none.
   `bscript project create` sets it to `./src/index.bs`;
 * the endpoint's runtime file, `__runtime.bs`, in the same directory as the
-  program (see below).
+  program (see below);
+* a copy of each BlueScript source file that goes to the endpoint, at the same
+  path below the program's directory as the file has below `src/`
+  (spec [§2.5](#bluescript-source-files)).
 
-A missing directory on the way to them is created. Both files are written anew
-on every compilation; nothing else in the project is touched.
+A missing directory on the way to them is created. These files are written anew
+on every compilation; nothing else in the project is touched. A copy of a
+source file that has since been removed from `src/` is left where it is: no
+program imports it any more.
 
 Before it writes anything, the compiler checks the workspace against
 `choreobs.json`. If a check fails it reports an error and writes nothing:
@@ -193,6 +202,10 @@ Before it writes anything, the compiler checks the workspace against
   file overwrite the program, and the entry file must lie under the project's
   `srcDir` (`.` when there is none), as BlueScript requires of every source
   file.
+* No copy of a source file may land on the entry file, as a copy of
+  `src/index.bs` would when the entry file is `./src/index.bs`. The paths are
+  compared without regard to case, as a file system that ignores case would
+  compare them.
 
 A project registered in the workspace that is no endpoint's is left alone, with
 a warning: `choreobs run` leaves it out, but `bscript workspace run` on its own
@@ -304,8 +317,8 @@ how a workspace that was never committed is made again, one endpoint at a time.
 #### `choreobs compile` <a id="choreobs-compile"></a>
 
 Compiles the project's `src/index.cbs` and writes the output into the
-workspace (spec [§2.3](#output-files)), printing the path of each file it writes. It never
-runs `bscript`.
+workspace (spec [§2.3](#output-files)), printing the path of each file it writes, the copies of
+the BlueScript source files included (spec [§2.5](#bluescript-source-files)). It never runs `bscript`.
 
 #### `choreobs run` <a id="choreobs-run"></a>
 
@@ -328,6 +341,83 @@ choreobs add-endpoint alice -b host
 choreobs add-endpoint bob -b esp32 -d BOB
 choreobs run
 ```
+
+### 2.5 BlueScript Source Files <a id="bluescript-source-files"></a>
+
+A **BlueScript source file** of a project is a file under `src/` whose name ends
+in `.bs`, in `src/` itself or in a directory below it. The program imports
+functions and constants from them (spec [§5.19](#import-declarations)), and the compiler copies them into
+the endpoints' projects. A file whose name does not end in `.bs`, and a
+symbolic link, is not a source file: it is neither read nor copied.
+
+```text
+project/
+  choreobs.json
+  src/
+    index.cbs
+    clock.bs
+    sensor@alice.bs
+    filters/
+      smooth.bs
+```
+
+#### Names <a id="bluescript-source-file-names"></a>
+
+* Each name on the path of a source file below `src/` — each directory, and
+  the file's name without `.bs` — begins with a letter or `_` and goes on with
+  letters, digits, `_` and `-` (spec [§16.64](#invalid-bluescript-file-name)). BlueScript turns each source file
+  into a C file and a target of a Makefile, where a space, `%`, `$`, `#` or `:`
+  would break the build, and it rejects a source file whose name is only
+  digits.
+* No name on the path begins with `__`, which is reserved for the compiler, as
+  it is for the input file (spec [§16.52](#reserved-input-file-name)): the runtime file is `__runtime.bs`.
+* A file's name may end, before `.bs`, in `@` and the name of an endpoint, as
+  `sensor@alice.bs` does. Such a file is **endpoint-specific**: it goes to that
+  endpoint alone, and only an import at that endpoint may import from it
+  (spec [§5.19](#import-declarations)). Every other source file is **shared**: it goes to every endpoint,
+  and an import at any endpoint may import from it.
+* The endpoint after `@` must be one `choreobs.json` lists: not `every`, not
+  `dyn`. A name with two `@`s, with nothing before its `@`, or with `@` in a
+  directory's name is an error (spec [§16.64](#invalid-bluescript-file-name)).
+* No two source files have paths that differ only in case, as `Clock.bs` and
+  `clock.bs` do: a file system that ignores case would give them the same copy.
+
+Every source file is held to these rules, whether or not the program imports
+from it, because every source file is copied.
+
+#### Copies <a id="bluescript-source-file-copies"></a>
+
+Each endpoint's project gets a copy of every shared source file and of every
+source file specific to that endpoint (spec [§2.3](#output-files)). A copy has the same path
+below the directory of the endpoint's program — the directory of its entry file,
+which also holds its runtime file — as the source file has below `src/`. With
+the entry file `./src/index.bs`, `bscript project create`'s default, the example
+above gives:
+
+```text
+workspace/
+  alice/
+    src/
+      index.bs
+      __runtime.bs
+      clock.bs
+      sensor@alice.bs
+      filters/
+        smooth.bs
+  bob/
+    src/
+      index.bs
+      __runtime.bs
+      clock.bs
+      filters/
+        smooth.bs
+```
+
+An import names a file relative to `src/index.cbs` (spec [§5.19](#import-declarations)), and BlueScript
+resolves the same name relative to the program, so the name finds the copy.
+A copy holds the source file's text unchanged. The compiler checks only the
+source files the program imports, and only as spec [§7.21](#imported-signatures) says; the rest are
+copied without being looked into.
 
 ***
 
@@ -571,6 +661,7 @@ boolean
 string
 void
 as
+import
 ```
 
 The following words are reserved as well. The features they name are not
@@ -585,9 +676,11 @@ undefined
 async
 await
 class
-import
 export
 ```
+
+`from` is not reserved. It is read as `from` only where an import declaration
+expects it (spec [§5.19](#import-declarations)), and is an ordinary identifier everywhere else.
 
 ### 4.5 Literals <a id="literals"></a>
 
@@ -706,7 +799,7 @@ This section defines the grammar in an EBNF-like notation.
 ### 5.1 Program <a id="program"></a>
 
 ```ebnf
-Program ::= TopLevelItem*
+Program ::= ImportDeclaration* TopLevelItem*
 ```
 
 ```ebnf
@@ -715,6 +808,8 @@ TopLevelItem ::= FunctionDeclaration
 ```
 
 Top-level statements are executed in an implicit choreography context.
+Import declarations come before every function declaration and statement
+(spec [§5.19](#import-declarations)).
 
 ### 5.2 Types <a id="types"></a>
 
@@ -1368,6 +1463,57 @@ Every endpoint program therefore preserves this one order
 (spec [§12.4](#expression-projection)). The dynamic `&&` and `||` do not short-circuit either
 (spec [§14.12](#dyn-operators)).
 
+### 5.19 Import Declarations <a id="import-declarations"></a>
+
+```ebnf
+ImportDeclaration ::=
+  "import" "@" Location "{" ImportSpecifier ("," ImportSpecifier)* "}" "from" StringLiteral ";"
+```
+
+```ebnf
+ImportSpecifier ::= ImportedName ("as" Identifier)?
+```
+
+```ebnf
+ImportedName ::= Identifier | Keyword
+```
+
+An import declaration imports functions and constants from one of the
+project's BlueScript source files (spec [§2.5](#bluescript-source-files)) to one endpoint. What it imports
+belongs to that endpoint, as a local function does (spec [§6.8](#imported-names)).
+
+```ts
+import@alice { readSensor, threshold as limit } from "./sensor@alice";
+import@bob { now as nowAtBob } from "./clock";
+```
+
+* The location names the endpoint, and must be an individual location, written
+  after `import` as it is after `function` (spec [§5.3](#function-declaration)). An import with no
+  location, or at `every` or `dyn`, is an error (spec [§16.60](#invalid-import-location)): an imported
+  function runs at one endpoint, and an imported module is initialized at the
+  endpoints that import it.
+* Each specifier names a function or constant that the file exports
+  (spec [§7.21](#imported-signatures)) and binds it to a name of the program: `name` binds it under its own
+  name, `name as local` under `local`. The bound name must be an identifier. An
+  exported name that is a ChoreoBS reserved word, such as `every`, can be
+  imported only with `as`.
+* The braces hold at least one specifier, and no comma follows the last.
+* `from` is not a reserved word (spec [§4.4](#keywords)): it means `from` here only.
+* The string names the file relative to `src/index.cbs`: `./`, then the names
+  of the directories and of the file, separated by `/`, without `.bs`
+  (spec [§16.61](#invalid-module-path)). BlueScript adds `.bs` to a module name itself, so `"./clock.bs"`
+  would name `clock.bs.bs`. A name may not be empty, `.` or `..`: `src/index.cbs`
+  is at the top of `src/`, so a path through `..` would leave it.
+* The file must exist, with every name in the case the string writes it
+  (spec [§16.62](#imported-file-not-found)).
+* An endpoint-specific file is named with its endpoint, `"./sensor@alice"` for
+  `sensor@alice.bs`, and only an import at that endpoint may name it
+  (spec [§16.63](#importing-another-endpoints-file)).
+* No import declaration follows a function declaration or a statement, and
+  none is written in a block (spec [§16.59](#misplaced-import-declaration)). BlueScript initializes every
+  imported module before the program that imports it runs (spec [§6.8](#imported-names)), so the
+  program reads in the order it runs.
+
 ***
 
 ## 6. Namespaces and Scopes <a id="namespaces-and-scopes"></a>
@@ -1393,7 +1539,10 @@ reserves the runtime names in spec [§6.2](#function-names), applied to the prog
   name for the whole program, whether or not the source ever writes `@` with
   it.
 * A **function name** is global and hoisted (spec [§6.2](#function-names), [§6.3](#function-declaration-hoisting)), so it too holds
-  its name for the whole program.
+  its name for the whole program. So does the name of an imported function
+  (spec [§6.8](#imported-names)).
+* An **imported constant** is a top-level constant (spec [§6.8](#imported-names)): it holds its name
+  as a variable does, below.
 * A **variable or parameter name** is block-scoped (spec [§6.4](#variable-scope)). It may shadow
   another variable or parameter, but it may not take a name an endpoint or a
   function already holds. The scope of a top-level constant takes in every
@@ -1443,7 +1592,7 @@ let aliceCount: integer@alice = alice2();
 ### 6.2 Function Names <a id="function-names"></a>
 
 * Function overloading is not supported in v1.
-* Function names are global: a name may be defined only once, whatever the functions' locations, and a choreography function may not share a name with a local one.
+* Function names are global: a name may be defined only once, whatever the functions' locations, and a choreography function may not share a name with a local one. An imported function (spec [§6.8](#imported-names)) is defined by its import, and its name may not be defined again.
 * A function name is held in the value namespace (spec [§6.1](#namespaces)), so no variable or parameter may take it, and it may not be an endpoint name either.
 * The **reserved runtime names** listed below cannot be used as a function name, a variable name, or a parameter name.
 
@@ -1607,6 +1756,9 @@ or push to the elements of an array it holds, but not store into it
 (spec [§8.4](#local-function-strict-location-rule)). No function may be called before a constant it uses is
 initialized (spec [§6.7](#top-level-constant-initialization-order)).
 
+An imported constant is a top-level constant as well (spec [§6.8](#imported-names)), declared by
+its import rather than by a statement.
+
 Allowed:
 
 ```ts
@@ -1675,6 +1827,11 @@ called, and every call that runs is made by a top-level statement or by a
 function that such a call ran, so the calls the rule allows never run a body
 before the constants it reaches. Where a function is declared does not matter.
 
+An imported constant is initialized before the first top-level statement runs
+(spec [§6.8](#imported-names)), so it counts as declared before every statement, and the rule
+never rejects a call that reaches it. An imported function reaches no
+constant: its body is BlueScript, which cannot name the program's constants.
+
 Disallowed — `f` would run before `limit` is initialized:
 
 ```ts
@@ -1710,6 +1867,57 @@ its initializer, which may call other functions. A function a top-level
 statement calls reaches only constants declared before the statement, so the
 top level can be checked in source order, each return type inferred when a call
 first needs it, and no type depends on itself.
+
+### 6.8 Imported Names <a id="imported-names"></a>
+
+An import declaration at an endpoint `P` (spec [§5.19](#import-declarations)) binds each name it imports
+to a function or a constant of a BlueScript source file, with the type the file
+gives it, located at `P` (spec [§7.21](#imported-signatures)).
+
+An **imported function** is a local function at `P` (spec [§10.1](#function-kinds)) whose body is
+BlueScript:
+
+* It is called as a local function at `P` is: from a choreography context,
+  where the endpoints other than `P` keep only its arguments
+  (spec [§10.2](#calling-local-from-choreography), [§12.12](#function-projection)), and from a local function at `P` (spec [§10.3](#calling-functions-from-a-local-context)).
+* Its name is a function name: global, held for the whole program, and taken by
+  no variable or parameter (spec [§6.1](#namespaces), [§6.2](#function-names)).
+* It calls no function of the program, so it is never part of a recursion
+  (spec [§10.4](#recursion)) and reaches no top-level constant (spec [§6.7](#top-level-constant-initialization-order)).
+
+An **imported constant** is a top-level constant located at `P`
+(spec [§6.6](#top-level-let)):
+
+* It is visible at the top level and in every function body. A local function
+  may use it only if the function is at `P` (spec [§8.4](#local-function-strict-location-rule)).
+* It is never stored into (spec [§5.7](#const-statement)). A parameter, or a `let` or `const` in a
+  block or a function body, may shadow it, as any top-level constant
+  (spec [§6.4](#variable-scope)). A top-level statement may not declare a variable of its name.
+* BlueScript initializes an imported module before the module that imports it,
+  so the constant has its value before the first top-level statement runs
+  (spec [§6.7](#top-level-constant-initialization-order)).
+
+Imported names follow the rules of the value namespace (spec [§6.1](#namespaces)). An imported
+name may not be an endpoint name or a reserved runtime name (spec [§6.2](#function-names)), nor the
+name of a function the program declares. One name may be imported more than
+once only when every import binds it to the same thing: the same export of the
+same file, at the same endpoint. One export may also be imported under two
+names; each is a function or constant of its own, with the same body or value.
+
+```ts
+import@alice { now } from "./clock";
+import@alice { now, now as t } from "./clock";   // `now` again, and `t`
+```
+
+A name bound to two different things is an error (spec [§16.68](#conflicting-imports)), and so is
+one export imported at two endpoints under one name. A function name is held
+once, whatever its location (spec [§6.2](#function-names)), and a call names no location
+(spec [§7.17](#function-call-typing)), so nothing would say which of the two a call means:
+
+```ts
+import@alice { now } from "./clock";
+import@bob { now } from "./clock";               // error: import it `as nowAtBob`
+```
 
 ***
 
@@ -3717,6 +3925,95 @@ Therefore:
 - direct or indirect recursive local functions with written return types, with or without their location, are allowed;
 - choreography recursion remains unsupported.
 
+### 7.21 Imported Signatures <a id="imported-signatures"></a>
+
+The compiler reads each source file an import declaration names
+(spec [§5.19](#import-declarations)), as BlueScript reads it — as a TypeScript module — and takes from it
+the type of each name imported from it. It checks the file only as this section
+says. Anything else wrong with the file, such as a type error in a function
+body, is reported by BlueScript when the endpoint's program is built.
+
+An error about a file is reported at the import that names it, with the file,
+line and column in the message.
+
+#### Exports <a id="imported-exports"></a>
+
+A name can be imported when the file declares it at top level with `export`,
+in one of two forms:
+
+```ts
+export function name(p1: T1, ..., pn: Tn): R { ... }
+export const name: T = e;
+```
+
+* A function writes a type on every parameter, and its return type. A
+  parameter is a plain name: no `?`, no default value, no `...`. The function
+  is not `async` and not a generator, takes no type parameters, and has a body.
+* A constant writes its type, or has a literal initializer that gives it one
+  (below). Only `const` declares a constant: an `export let` can be changed by
+  its own module, and cannot be imported.
+* A class, and a `const` holding a function, cannot be imported.
+* `export { name }`, a list without a declaration, does not export `name`.
+  BlueScript ignores such a list, so a name is exported only by `export` on its
+  declaration.
+
+Importing any other declaration is an error (spec [§16.67](#unsupported-export)), and so is importing
+a name the file does not export (spec [§16.66](#name-not-exported)). A declaration that no import
+names is not looked at.
+
+#### Types <a id="imported-types"></a>
+
+Each type of an imported signature is read as BlueScript reads it, and must be
+one ChoreoBS has:
+
+| Written in the file | Type in ChoreoBS |
+|---|---|
+| `integer`, `number` | `integer` |
+| `float` | `float` |
+| `boolean` | `boolean` |
+| `string` | `string` |
+| `null`, `undefined` | `null` |
+| `void`, as a return type | `void` |
+
+Every type is located at the import's endpoint. `function f(x: integer): float`,
+imported at `alice`, is `f@alice(x: integer@alice): float@alice`.
+
+Any other type is an error (spec [§16.67](#unsupported-export)): `any`, `int32`, a union, a function
+type, a class, and **every array type**. ChoreoBS emits every array as
+BlueScript's `any[]` (spec [§13.1](#type-mapping)). BlueScript accepts an `any[]` where an
+`integer[]` is expected, but checks the array when the call runs, and an
+`any[]` fails that check: the call would stop the program. A file's own
+`any[]` would get the right array, but then nothing would say what its elements
+are.
+
+A constant written without a type takes its initializer's type when the
+initializer is a literal, as BlueScript gives it:
+
+* a number written only with digits, hexadecimal digits and `x` — `10`, `0x1F`,
+  `1e3` — is an `integer`, and any other number, such as `1.5`, is a `float`;
+* `-` before a number gives the number's type;
+* a string literal is a `string`, `true` and `false` are `boolean`, and `null`
+  is `null`.
+
+Any other initializer needs the type written.
+
+#### What an Imported File May Not Do <a id="imported-file-restrictions"></a>
+
+Each of these is an error (spec [§16.65](#unsupported-imported-file)), whatever the file's import names:
+
+* A syntax error.
+* An `import` of a value, or an `export ... from`. A source file is a leaf: the
+  compiler follows no import out of it. `import type`, which BlueScript
+  ignores, is allowed.
+* A use of the name of a communication API function, such as `sendInteger`,
+  `receiveFloat` or `broadcastArray` (spec [§13.14](#communication-api)). A program's communications
+  are the transfers of its choreography (spec [§11](#transfer-semantics)), each projected to a send at
+  one endpoint and a receive at another. A message sent from inside an imported
+  function would have no receive in any endpoint's program.
+
+The compiler does not look into C code that a file writes in a `code` template:
+a communication made there is just as unpaired, and the compiler cannot see it.
+
 ***
 
 ## 8. Location Annotation Rules <a id="location-annotation-rules"></a>
@@ -4334,6 +4631,9 @@ function f@alice(...) {
   the type's location may be left out (spec [§7.20.9](#inference-and-recursion)).
 - May use the top-level constants located at its own location, and no others
   (spec [§6.6](#top-level-let), [§8.4](#local-function-strict-location-rule)).
+- May be imported from a BlueScript source file instead of declared: an
+  imported function is a local function whose body is BlueScript
+  (spec [§6.8](#imported-names)).
 
 ### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
@@ -4443,6 +4743,8 @@ function g@alice(): void {
 * Local function recursion is allowed.
 * choreography function recursion is not supported in v1, whether direct or mutual;
 * ChoreoBS v1 does not guarantee termination of local recursion.
+* An imported function calls no function of the program (spec [§6.8](#imported-names)), so it is
+  never part of a cycle. What its BlueScript body calls is BlueScript's affair.
 
 Allowed:
 
@@ -6012,6 +6314,10 @@ localFunction();
 nothing();  =>  null;  =>  removed
 ```
 
+An imported function (spec [§6.8](#imported-names)) is projected as a local function, except that
+it has no declaration to generate: at its endpoint the import that binds it is
+kept instead (spec [§12.19](#import-projection)). A call to it projects by the rules above.
+
 #### Choreography Function <a id="epp-choreography-function"></a>
 
 ```ts
@@ -6582,8 +6888,8 @@ EPP at `bob`:
 let y: integer = receiveInteger("alice", "__top_0");
 ```
 
-An endpoint's program declares its functions first and then runs its top-level
-statements, in source order. A top-level declaration is therefore a global of
+An endpoint's program declares its functions first, after its imports
+(spec [§13.16](#import-code-generation)), and then runs its top-level statements, in source order. A top-level declaration is therefore a global of
 the BlueScript program, and a top-level constant that a function uses
 (spec [§6.6](#top-level-let)) is declared below that function (spec [§17.8](#unverified-bluescript-assumptions)). A projected
 function reads the constant only where the constant has a value, and that is
@@ -6619,6 +6925,49 @@ function report(x: null): void {
   let y: integer = receiveInteger("alice", "report_0");
 }
 report(null);
+```
+
+### 12.19 Import Projection <a id="import-projection"></a>
+
+An import declaration at `P` (spec [§5.19](#import-declarations)) is projected to `P` alone, where it
+is the same declaration without its location:
+
+```text
+project_P(import@P { s1, ..., sn } from "m";)  =  import { s1, ..., sn } from "m";
+project_Q(import@P { s1, ..., sn } from "m";)  =  (nothing)          where Q != P
+```
+
+Every import at `P` is kept at `P`, whether or not the program uses what it
+imports: importing a module initializes it, and the projection keeps that
+effect where the source puts it. A call to an imported function projects as a
+call to a local function at `P` (spec [§12.12](#function-projection)), and a use of an imported constant
+as a use of a top-level constant at `P` (spec [§12.7](#identifier-projection)).
+
+Input:
+
+```ts
+import@alice { now as nowAtAlice } from "./clock";
+import@bob { now as nowAtBob } from "./clock";
+
+let t: integer@alice = nowAtAlice();
+let u: integer@bob <- t;
+```
+
+EPP at `alice`:
+
+```ts
+import { now as nowAtAlice } from "./clock";
+
+let t: integer = nowAtAlice();
+sendInteger("bob", "__top_0", t);
+```
+
+EPP at `bob`:
+
+```ts
+import { now as nowAtBob } from "./clock";
+
+let u: integer = receiveInteger("alice", "__top_0");
 ```
 
 ***
@@ -6900,12 +7249,14 @@ workspace/bob/src/__runtime.bs
 
 Each endpoint's program goes to its project's entry file, and its runtime file
 next to it. The runtime file is written for every endpoint, whether or not the
-program imports from it (spec [§2.3](#output-files)).
+program imports from it (spec [§2.3](#output-files)). The copies of the BlueScript source files
+go below the same directory (spec [§2.5](#bluescript-source-files)).
 
 ### 13.10 Runtime Import <a id="runtime-import"></a>
 
 An endpoint program that uses anything from the runtime file (spec [§2.3](#output-files)) imports
-what it uses from it, in one `import` at the top, followed by a blank line:
+what it uses from it, in one `import` at the top. The program's own imports
+follow it, and a blank line follows the last import (spec [§13.16](#import-code-generation)):
 
 ```ts
 // workspace/alice/src/index.bs
@@ -6927,9 +7278,9 @@ import { __nothing2, __and, __copyArray, __DynVal, __dynUnbound, __inject, __cas
 * The module name has no extension. BlueScript resolves a relative import by
   appending `.bs` itself, so `"./__runtime.bs"` would look for
   `__runtime.bs.bs`.
-* A program that uses nothing from the runtime file has no `import` at all.
+* A program that uses nothing from the runtime file has no runtime `import`.
 
-The examples in this specification leave the `import` line out.
+The examples in this specification leave the runtime `import` line out.
 
 ### 13.11 Local Functions <a id="codegen-local-functions"></a>
 
@@ -7272,6 +7623,32 @@ absent finalization are the same node by the time cleanup runs, and are treated
 alike. A statement that is exactly `null;` has no effect in either case, so
 removing it is sound.
 
+### 13.16 Import Code Generation <a id="import-code-generation"></a>
+
+An endpoint's program begins with its imports: the runtime import, when there
+is one (spec [§13.10](#runtime-import)), then each import declaration projected to the endpoint
+(spec [§12.19](#import-projection)), one per line in source order, then a blank line before the rest
+of the program. A program with nothing after its imports has no blank line.
+
+```ts
+// workspace/alice/src/index.bs
+import { __nothing1 } from "./__runtime";
+import { readSensor, threshold as limit } from "./sensor@alice";
+import { now as nowAtAlice } from "./clock";
+
+function ...
+```
+
+* The module name is written as the source writes it (spec [§5.19](#import-declarations)). The source
+  files are copied below the program's directory as they are below `src/`
+  (spec [§2.5](#bluescript-source-files)), so it names the same file there.
+* A specifier is written `name` when it binds the name itself, and
+  `name as local` otherwise: `now as now` is written `now`.
+* Each import declaration stays a declaration of its own, even beside another
+  from the same file. BlueScript initializes a module once, however many
+  declarations import from it.
+* Renaming with `as` needs a BlueScript that supports it (spec [§17.8](#unverified-bluescript-assumptions)).
+
 ***
 
 ## 14. Runtime Support Functions <a id="runtime-support-functions"></a>
@@ -7513,10 +7890,12 @@ Locations and kinds are integers rather than strings for two reasons:
   time the literal is evaluated, and compares strings character by character.
 * A top-level constant of a primitive type is a plain C global, which the
   garbage collector does not trace. One of a pointer type is kept alive only
-  by its module's root set, and BlueScript unlinks the root set of an imported
-  module once the module's initializer returns: the value is then collected
-  while still in use. Every top-level constant of the file is therefore an
-  `integer`; the rest are functions and classes (spec [§2.3](#output-files)).
+  by its module's root set, and BlueScript has unlinked the root set of an
+  imported module once the module's initializer returned, so that the value was
+  collected while still in use. BlueScript has since been fixed
+  (spec [§17.8](#unverified-bluescript-assumptions)), but every top-level constant of the file is still an `integer`, and the
+  rest are functions and classes (spec [§2.3](#output-files)): the runtime then works on a
+  BlueScript with the fault as well.
 
 ### 14.7 Location Variables <a id="location-variables"></a>
 
@@ -8554,6 +8933,74 @@ let fb: float = __cast(__dynTransfer("__top_9", __kind_float, __loc_bob, __dynIn
 
 `let fb: float@bob <- valDyn1;` would be rejected: the base types differ, `dyn`
 or not (spec [§16.8](#invalid-transfer-base-type)).
+
+### 15.12 Local Imports <a id="example-local-imports"></a>
+
+BlueScript source files (spec [§2.5](#bluescript-source-files)), with the endpoints `alice` and `bob`:
+
+```ts
+// src/clock.bs — shared
+let ticks: integer = 0;
+
+export function now(): integer {
+  ticks = ticks + 1;
+  return ticks;
+}
+```
+
+```ts
+// src/sensor@alice.bs — alice's alone
+export const threshold = 30;
+
+export function readSensor(t: integer): float {
+  return 20.5 + t;
+}
+```
+
+Input (spec [§5.19](#import-declarations)):
+
+```ts
+import@alice { readSensor, threshold as limit } from "./sensor@alice";
+import@alice { now as nowAtAlice } from "./clock";
+import@bob { now as nowAtBob } from "./clock";
+
+function hot@alice(x: float): boolean {
+    return x > (limit as float);
+}
+
+let reading: float@alice = readSensor(nowAtAlice());
+let alert: boolean@bob <- hot(reading);
+let stamp: integer@bob = nowAtBob();
+```
+
+`readSensor` is `readSensor@alice(t: integer@alice): float@alice`, and `limit`
+is an `integer@alice` constant (spec [§7.21](#imported-signatures)). `clock.bs` is imported at both
+endpoints, under a name for each (spec [§6.8](#imported-names)).
+
+EPP at `alice`:
+
+```ts
+import { readSensor, threshold as limit } from "./sensor@alice";
+import { now as nowAtAlice } from "./clock";
+
+function hot(x: float): boolean {
+  return x > ((limit as integer) as float);
+}
+let reading: float = readSensor(nowAtAlice());
+sendBoolean("bob", "__top_0", hot(reading));
+```
+
+EPP at `bob`:
+
+```ts
+import { now as nowAtBob } from "./clock";
+
+let alert: boolean = receiveBoolean("alice", "__top_0");
+let stamp: integer = nowAtBob();
+```
+
+`workspace/alice/src/` gets copies of `clock.bs` and `sensor@alice.bs`, and
+`workspace/bob/src/` a copy of `clock.bs` (spec [§2.5](#bluescript-source-files)).
 
 ***
 
@@ -9750,6 +10197,14 @@ Disallowed, as the input file:
 __main.cbs
 ```
 
+The same holds for every name on the path of a BlueScript source file
+(spec [§2.5](#bluescript-source-files)), whether or not anything imports from it. Disallowed:
+
+```text
+src/__util.bs
+src/__lib/clock.bs
+```
+
 ### 16.53 Name Already Held in the Value Namespace <a id="err-name-already-held"></a>
 
 Location names, function names, and variable and parameter names share one
@@ -9959,6 +10414,178 @@ function f@alice(): integer@alice {
 }
 ```
 
+### 16.59 Misplaced Import Declaration <a id="misplaced-import-declaration"></a>
+
+This is a **parse** error. Import declarations come before every function
+declaration and statement, and only at top level (spec [§5.19](#import-declarations)):
+
+```ts
+let x: integer@alice = 1@alice;
+import@alice { now } from "./clock";
+```
+
+```ts
+function f@alice(): void {
+    import@alice { now } from "./clock";
+}
+```
+
+### 16.60 Invalid Import Location <a id="invalid-import-location"></a>
+
+An import declaration names one endpoint, with an individual location
+(spec [§5.19](#import-declarations)). Writing none is a **parse** error:
+
+```ts
+import { now } from "./clock";
+```
+
+`every` and `dyn` are not individual locations:
+
+```ts
+import@every { now } from "./clock";
+import@dyn { now } from "./clock";
+```
+
+An endpoint that `choreobs.json` does not list is an unknown endpoint
+(spec [§16.1](#unknown-endpoint)).
+
+### 16.61 Invalid Module Path <a id="invalid-module-path"></a>
+
+The string of an import declaration is `./` followed by names separated by `/`,
+without `.bs` (spec [§5.19](#import-declarations)). Each of these is rejected:
+
+```ts
+import@alice { now } from "clock";          // no `./`
+import@alice { now } from "./clock.bs";     // BlueScript adds `.bs` itself
+import@alice { now } from "../lib/clock";   // leaves `src/`
+import@alice { now } from "./lib//clock";   // an empty name
+```
+
+### 16.62 Imported File Not Found <a id="imported-file-not-found"></a>
+
+The file an import declaration names must be a BlueScript source file of the
+project (spec [§2.5](#bluescript-source-files)), with every name in the case the string writes it
+(spec [§5.19](#import-declarations)). With `src/clock.bs`, this is rejected:
+
+```ts
+import@alice { now } from "./Clock";
+```
+
+### 16.63 Importing Another Endpoint's File <a id="importing-another-endpoints-file"></a>
+
+An endpoint-specific source file is imported only at its endpoint
+(spec [§2.5](#bluescript-source-files), [§5.19](#import-declarations)). With `src/sensor@alice.bs`, this is rejected:
+
+```ts
+import@bob { readSensor } from "./sensor@alice";
+```
+
+### 16.64 Invalid BlueScript File Name <a id="invalid-bluescript-file-name"></a>
+
+Every BlueScript source file under `src/` is named by the rules of
+spec [§2.5](#bluescript-source-files), whether or not anything imports from it. With the endpoints
+`alice` and `bob`, each of these files is rejected:
+
+```text
+src/sensor@carol.bs     # no endpoint `carol`
+src/sensor@every.bs     # not an individual location
+src/a@b@alice.bs        # two `@`s
+src/@alice.bs           # no name before `@`
+src/lib@alice/x.bs      # `@` in a directory's name
+src/1st.bs              # begins with a digit
+src/my clock.bs         # a space
+```
+
+So is a pair of files whose paths differ only in case:
+
+```text
+src/Clock.bs
+src/clock.bs
+```
+
+### 16.65 Unsupported Imported File <a id="unsupported-imported-file"></a>
+
+A source file that an import declaration names must be valid BlueScript syntax,
+import nothing but types, and use no communication API function
+(spec [§7.21](#imported-signatures)). Each of these files is rejected when it is imported:
+
+```ts
+import { now } from "./clock";      // imports a value
+export function tick(): integer { return now(); }
+```
+
+```ts
+export { now } from "./clock";      // re-exports
+```
+
+```ts
+export function report(x: integer): void {
+    sendInteger("bob", "report", x);   // a communication outside the choreography
+}
+```
+
+### 16.66 Name Not Exported <a id="name-not-exported"></a>
+
+Each imported name must be exported by the file (spec [§7.21](#imported-signatures)). With this
+`src/clock.bs`:
+
+```ts
+let ticks: integer = 0;
+function step(): void { ticks = ticks + 1; }
+export { step };
+```
+
+each of these is rejected:
+
+```ts
+import@alice { now } from "./clock";      // not declared
+import@alice { ticks } from "./clock";    // declared, not exported
+import@alice { step } from "./clock";     // a list does not export it
+```
+
+### 16.67 Unsupported Export <a id="unsupported-export"></a>
+
+An imported name must be an exported function or constant whose types ChoreoBS
+has (spec [§7.21](#imported-signatures)). Importing any of these is rejected:
+
+```ts
+export function sum(xs: integer[]): integer { ... }     // an array
+export function f(x: any): integer { ... }              // `any`
+export function g(x: integer) { ... }                   // no return type
+export function h(x: integer = 0): integer { ... }      // a default value
+export let count: integer = 0;                          // not a constant
+export const scale = 2.0 * 3.0;                         // no type, not a literal
+export const twice = (x: integer): integer => x * 2;    // a function value
+export class Point { ... }                              // a class
+```
+
+### 16.68 Conflicting Imports <a id="conflicting-imports"></a>
+
+A name may be imported more than once only when every import binds it to the
+same export of the same file at the same endpoint (spec [§6.8](#imported-names)). Each of these
+is rejected:
+
+```ts
+import@alice { now } from "./clock";
+import@bob { now } from "./clock";         // the same name at two endpoints
+```
+
+```ts
+import@alice { now } from "./clock";
+import@alice { now } from "./timer";       // the same name from two files
+```
+
+```ts
+import@alice { now, later as now } from "./clock";   // two exports
+```
+
+Allowed:
+
+```ts
+import@alice { now } from "./clock";
+import@alice { now, now as t } from "./clock";
+```
+
 ## 17. Non-goals and Future Extensions <a id="non-goals-and-future-extensions"></a>
 
 The following features are not part of ChoreoBS v1.
@@ -9989,8 +10616,9 @@ Gradual locating (spec [§3.5](#dyn)) is part of v1. Not part of it:
 * arrow functions;
 * closures;
 * higher-order functions;
-* modules;
-* `import`;
+* modules of ChoreoBS code: a program imports from BlueScript source files only
+  (spec [§5.19](#import-declarations)), and one `.cbs` file cannot import another;
+* namespace imports (`import * as m`), default imports, and imports at `every`;
 * `export`;
 * `async`;
 * `await`.
@@ -10042,6 +10670,12 @@ Future versions may add:
   `+` joins only two strings, and v1 has no conversion to `string`
   (spec [§7.18](#print-typing));
 * richer communication protocols;
+* imported signatures with arrays, which would need ChoreoBS's arrays and
+  BlueScript's typed arrays to meet at the call (spec [§7.21](#imported-signatures));
+* imports inside an imported BlueScript source file, and imports from
+  BlueScript packages (spec [§7.21](#imported-signatures));
+* importing a constant at `every`, for a value every endpoint computes alike
+  (spec [§5.19](#import-declarations));
 * additional array operations and local object support;
 * state-machine based EPP;
 * non-blocking runtime support;
@@ -10104,3 +10738,22 @@ where it does not hold.
    spec [§6.7](#top-level-constant-initialization-order) rejects such a read at compile time. Both work so on `host`
    for `integer`, `float`, `boolean`, `string` and `any[]` globals; a `__DynVal`
    global and `esp32` are unconfirmed.
+9. **Renaming imports** (spec [§13.16](#import-code-generation)): an endpoint program imports with
+   `import { name as local }`. BlueScript supports it from commit `882d2ca`
+   (2026-10-06), which no release has yet; BlueScript 2.1.0 rejects it.
+10. **Imported pointer-typed values** (spec [§6.8](#imported-names)): an imported `string` constant,
+    and any heap value an imported module keeps in a global, stays alive only
+    if BlueScript keeps an imported module's root set linked after the module's
+    initializer returns. The fix for that (in `try_and_catch`, `c-runtime.c`) is
+    in BlueScript's working tree as of 2026-10-06 and not yet committed
+    (spec [§14.6](#location-and-kind-codes)).
+11. **`@` in a source file's name** (spec [§2.5](#bluescript-source-files)): BlueScript names the C file of
+    `sensor@alice.bs` `bs_sensor@alice.c` and lists it in a Makefile. The C
+    identifiers come from module numbers, not file names. BlueScript's
+    transpiler accepts such a module, imported with renaming, on `host`; that
+    the C build accepts the file name, on `host` and on `esp32`, is unconfirmed.
+12. **Module initialization order** (spec [§6.8](#imported-names)): BlueScript initializes every
+    module a program imports before the program's own top-level code runs, as
+    its compiler orders the modules' entry points. A module whose initializer
+    fails stops its endpoint before the choreography begins, and the other
+    endpoints wait for messages that never come.

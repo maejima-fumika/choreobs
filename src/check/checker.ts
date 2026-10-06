@@ -99,6 +99,14 @@ import { assertNever } from "../util/exhaustive.js";
 import { callsIn } from "../ast/traverse.js";
 import { isReservedRuntimeName } from "../runtime/names.js";
 import {
+  NO_IMPORTS,
+  shownSourcePath,
+  type ImportedBinding,
+  type ImportedConstant,
+  type ImportedFunction,
+  type ResolvedImports,
+} from "../local-imports/index.js";
+import {
   checkReturnCoverage,
   inferReturnLocation,
   inferReturnTypeFromCandidates,
@@ -114,12 +122,30 @@ export interface TypeCheckResult {
   readonly errors: readonly TypeCheckError[];
 }
 
+/**
+ * `imports` are the names the program's import declarations bind, with the
+ * types their files give them (spec §imported-names); without any, a program
+ * with import declarations is checked as if they bound nothing.
+ */
 export function typeCheck(
   program: Program,
   config: ChoreoBSConfig,
+  imports: ResolvedImports = NO_IMPORTS,
 ): TypeCheckResult {
-  const checker = new TypeChecker(program, config);
+  const checker = new TypeChecker(program, config, imports);
   return checker.check();
+}
+
+/**
+ * The item index an imported constant counts as declared at: before every
+ * top-level statement, since its module is initialized before the program runs
+ * (spec §imported-names, §top-level-constant-initialization-order).
+ */
+const IMPORTED_CONSTANT_INDEX = -1;
+
+/** Whether two imports bind a name to the same thing (spec §imported-names). */
+function sameImport(a: ImportedBinding, b: ImportedBinding): boolean {
+  return a.file === b.file && a.exportedName === b.exportedName && a.endpoint === b.endpoint;
 }
 
 /** How a {@link TypeChecker.nameHolder} result reads in a diagnostic. */
@@ -195,6 +221,10 @@ class FailFast extends Error {}
 class TypeChecker {
   private readonly errors: TypeCheckError[] = [];
   private readonly functions = new Map<string, FunctionDeclaration>();
+  /** Local functions whose bodies are BlueScript (spec §imported-names): signatures only. */
+  private readonly importedFunctions = new Map<string, ImportedFunction>();
+  /** Top-level constants an import declares (spec §imported-names), also in `topLevelEnv`. */
+  private readonly importedConstants = new Map<string, ImportedConstant>();
   private readonly resolvedReturnTypes = new Map<string, LocatedType>();
   private readonly resolvedParameterTypes = new Map<Parameter, LocatedType>();
   /** Used to check `@L` against the declared set; the set itself is validated
@@ -240,6 +270,7 @@ class TypeChecker {
   constructor(
     private readonly program: Program,
     config: ChoreoBSConfig,
+    private readonly imports: ResolvedImports,
   ) {
     this.endpoints = new Set(config.endpoints);
     this.implicitDyn = config.implicitDyn ?? true;
@@ -266,6 +297,7 @@ class TypeChecker {
    * that function uses.
    */
   private checkProgram(): TypeCheckResult {
+    this.collectImports();
     this.collectFunctions();
     this.checkRecursion();
     this.resolveExplicitFunctionSignatures();
@@ -293,10 +325,68 @@ class TypeChecker {
     };
   }
 
+  /**
+   * Binds the imported names (spec §imported-names), before any declaration of
+   * the program is collected, so that each is checked against them. A name
+   * bound again to the same thing is bound once.
+   */
+  private collectImports(): void {
+    const bound = new Map<string, ImportedBinding>();
+    for (const binding of this.imports.bindings) {
+      const earlier = bound.get(binding.name);
+      if (earlier !== undefined) {
+        if (sameImport(earlier, binding)) {
+          continue;
+        }
+        this.error(
+          earlier.file === binding.file && earlier.exportedName === binding.exportedName
+            ? `'${binding.name}' is already imported at ${earlier.endpoint}; import it at ${binding.endpoint} under another name, with 'as'`
+            : `'${binding.name}' is already imported, as '${earlier.exportedName}' from ${shownSourcePath(earlier.file)} at ${earlier.endpoint}`,
+          binding.span,
+          ["imported-names", "conflicting-imports"],
+        );
+      }
+      const holder = this.nameHolder(binding.name);
+      if (holder !== undefined) {
+        this.error(
+          `'${binding.name}' is ${describeHolder(holder)} and cannot be the name of an import`,
+          binding.span,
+          holder === "runtime"
+            ? ["imported-names", "function-names", "codegen-function-names"]
+            : ["imported-names", "namespaces", "err-name-already-held"],
+        );
+      }
+      bound.set(binding.name, binding);
+      if (binding.kind === "ImportedFunction") {
+        this.importedFunctions.set(binding.name, binding);
+      } else {
+        this.importedConstants.set(binding.name, binding);
+        this.topLevelEnv.set(binding.name, { type: binding.type, constant: true });
+        this.topLevelConstants.set(binding.name, IMPORTED_CONSTANT_INDEX);
+      }
+    }
+  }
+
   private collectFunctions(): void {
     for (const item of this.program.items) {
       if (item.kind !== "FunctionDeclaration") {
         continue;
+      }
+      // `rejectNameConflict` lets a function meet a function, which the
+      // duplicate check below reports, and that does not see imports.
+      if (this.importedFunctions.has(item.name)) {
+        this.error(
+          `function '${item.name}' has the name of an imported function`,
+          item.span,
+          ["imported-names", "function-names"],
+        );
+      }
+      if (this.importedConstants.has(item.name)) {
+        this.error(
+          `function '${item.name}' has the name of an imported constant`,
+          item.span,
+          ["imported-names", "namespaces", "err-name-already-held"],
+        );
       }
       this.rejectNameConflict(item.name, "function", item.span);
       const existing = this.functions.get(item.name);
@@ -1474,21 +1564,7 @@ class TypeChecker {
     expr: CallExpression,
     ctx: ExecutionContext,
   ): TypedCallExpression {
-    const decl = this.functions.get(expr.callee);
-    if (decl === undefined) {
-      this.reportNotAFunction(expr.callee, expr.span);
-    }
-    this.validateCallTarget(decl, expr.span);
-    // Resolving the callee may infer its return type, and so check its body,
-    // before the top level is done (see `topLevelCall`).
-    const atTopLevel = this.currentFunction === undefined;
-    if (atTopLevel) {
-      this.topLevelCall = expr;
-    }
-    const symbol = this.functionSymbol(decl);
-    if (atTopLevel) {
-      this.topLevelCall = undefined;
-    }
+    const symbol = this.calleeSymbol(expr);
     const params = symbol.params;
     if (expr.args.length !== params.length) {
       this.error(
@@ -1513,6 +1589,39 @@ class TypeChecker {
       callee: symbol,
       args,
     };
+  }
+
+  /**
+   * The function `expr` calls, checked as a callee from where the call is.
+   * An imported function has its signature already (spec §imported-names);
+   * resolving a declared one may infer its return type, and so check its body,
+   * before the top level is done (see `topLevelCall`).
+   */
+  private calleeSymbol(expr: CallExpression): FunctionSymbol {
+    const imported = this.importedFunctions.get(expr.callee);
+    if (imported !== undefined) {
+      this.validateCallTarget(imported, expr.span);
+      return {
+        name: imported.name,
+        context: imported.context,
+        params: imported.params,
+        returnType: imported.returnType,
+      };
+    }
+    const decl = this.functions.get(expr.callee);
+    if (decl === undefined) {
+      this.reportNotAFunction(expr.callee, expr.span);
+    }
+    this.validateCallTarget(decl, expr.span);
+    const atTopLevel = this.currentFunction === undefined;
+    if (atTopLevel) {
+      this.topLevelCall = expr;
+    }
+    const symbol = this.functionSymbol(decl);
+    if (atTopLevel) {
+      this.topLevelCall = undefined;
+    }
+    return symbol;
   }
 
   /**
@@ -1659,7 +1768,10 @@ class TypeChecker {
     };
   }
 
-  private validateCallTarget(decl: FunctionDeclaration, span: Span): void {
+  private validateCallTarget(
+    decl: { readonly name: string; readonly context: ExecutionContext },
+    span: Span,
+  ): void {
     const ctx = this.currentContext();
     if (ctx === undefined) {
       return;
@@ -1670,7 +1782,7 @@ class TypeChecker {
     }
     // A local function may only call a local function at the same endpoint.
     // A declaration's location has been checked to be individual, so its
-    // context names it (spec §function-kinds).
+    // context names it (spec §function-kinds), as an import's does.
     if (decl.context.kind === "choreography") {
       this.error(
         `cannot call choreography function '${decl.name}' from local context`,
@@ -2093,9 +2205,11 @@ class TypeChecker {
    * both where a name is declared ({@link rejectNameConflict}) and where one
    * is used and turns out not to be what the position needs.
    *
-   * Both tables are complete before any of those questions is asked:
-   * `endpoints` is fixed at construction, `functions` by `collectFunctions`,
-   * which runs before any body is checked.
+   * The tables are complete before any of those questions is asked:
+   * `endpoints` is fixed at construction, `importedFunctions` and `functions`
+   * by `collectImports` and `collectFunctions`, which run before any body is
+   * checked. An imported constant is a top-level constant, not held here: it
+   * may be shadowed (spec §imported-names).
    */
   private nameHolder(
     name: string,
@@ -2106,7 +2220,7 @@ class TypeChecker {
     if (this.endpoints.has(name)) {
       return "endpoint";
     }
-    if (this.functions.has(name)) {
+    if (this.functions.has(name) || this.importedFunctions.has(name)) {
       return "function";
     }
     return undefined;
@@ -2117,6 +2231,13 @@ class TypeChecker {
     const env = this.currentEnv();
     if (env === undefined) {
       this.error(`cannot define '${name}' outside a scope`, span);
+    }
+    if (env === this.topLevelEnv && this.importedConstants.has(name)) {
+      this.error(
+        `'${name}' is an imported constant; the top level may not declare a variable of its name`,
+        span,
+        ["imported-names", "variable-scope"],
+      );
     }
     if (env.has(name)) {
       this.error(`variable '${name}' is already defined in this scope`, span,
@@ -2217,7 +2338,7 @@ class TypeChecker {
       const location = variable.type.location;
       if (!locationsEqual(location, contextAsLocation(fn.context))) {
         this.error(
-          `top-level constant '${name}' at ${formatLocation(location)} is not usable in local function at ${fn.context.endpoint}`,
+          `${this.importedConstants.has(name) ? "imported" : "top-level"} constant '${name}' at ${formatLocation(location)} is not usable in local function at ${fn.context.endpoint}`,
           span,
           [
             "local-function-strict-location-rule",
@@ -2295,7 +2416,6 @@ class TypeChecker {
       context: decl.context,
       params,
       returnType,
-      decl,
     };
   }
 
