@@ -1,0 +1,676 @@
+// G secure-aggregation: federated linear regression with secure aggregation.
+//
+// Endpoints: server, client1, client2, client3, client4.
+//
+// Setup: every pair of clients agrees on a secret by Diffie-Hellman (p =
+// 16381, generator 2), exchanging public keys directly, client to client,
+// twelve transfers in all. Each pair's secret seeds a generator that both
+// ends advance in step.
+//
+// Each round:
+//
+//   1. the server broadcasts the model (DIM weights and a bias);
+//   2. each client computes the gradient on its own data, encodes it in fixed
+//      point mod MODULUS, and masks each coordinate: it adds the mask it
+//      shares with each higher-numbered client and subtracts the one it
+//      shares with each lower-numbered client;
+//   3. the server adds up the masked vectors. The masks cancel, so the sum is
+//      the sum of the gradients, though no single one is revealed. The server
+//      decodes it and takes a gradient step.
+//
+// Every VERIFY_EVERY rounds a debugging path also sends the unmasked
+// encodings, so the server can check that the masks really cancelled.
+//
+// The gradient and loss are local kernels. Key agreement, masking,
+// aggregation and the model update are choreography code, and mix integer
+// modular arithmetic with float arithmetic.
+//
+// Self-check: every verification found the masked and unmasked sums equal,
+// and the loss fell below a tenth of its initial value.
+//
+// Output: the server prints `ok`, the initial and final loss, and the bias
+// it learned (about 1.0).
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ROUNDS: integer@every = 30@every;
+let SAMPLES: integer@every = 50@every;
+let DIM: integer@every = 2@every;
+let MODULUS: integer@every = 1048576@every;
+let VERIFY_EVERY: integer@every = 5@every;
+
+// ---------------------------------------------------------------------------
+// client1: local kernels
+// ---------------------------------------------------------------------------
+
+function rand1@client1(rng: integer[]@client1, bound: integer@client1): integer@client1 {
+    let s = (rng[0@client1] * 75@client1 + 74@client1) % 65537@client1;
+    rng[0@client1] = s;
+    return s % bound;
+}
+
+// base^e mod p by square-and-multiply. With p < 2^14.5 every product stays
+// below 2^29.
+function modpow1@client1(base: integer@client1, e: integer@client1, p: integer@client1): integer@client1 {
+    let result = 1@client1;
+    let b = base % p;
+    let x = e;
+    while (x > 0@client1) {
+        if (x % 2@client1 === 1@client1) {
+            result = (result * b) % p;
+        }
+        b = (b * b) % p;
+        x = x / 2@client1;
+    }
+    return result;
+}
+
+// n samples of dim features in [-1, 1], flattened, followed by their targets
+// y = 3 x0 - 2 x1 + 1 + noise (for dim = 2; further features get weight 0.5).
+function makeData1@client1(rng: integer[]@client1, n: integer@client1, dim: integer@client1): float[]@client1 {
+    let xs: float[]@client1 = []@client1;
+    let ys: float[]@client1 = []@client1;
+    for (let i = 0@client1; i < n; i = i + 1@client1) {
+        let y = 1.0@client1;
+        for (let d = 0@client1; d < dim; d = d + 1@client1) {
+            let x = (rand1(rng, 2001@client1) as float) / 1000.0@client1 - 1.0@client1;
+            xs.push(x);
+            let weight = 0.5@client1;
+            if (d === 0@client1) {
+                weight = 3.0@client1;
+            }
+            if (d === 1@client1) {
+                weight = -2.0@client1;
+            }
+            y = y + weight * x;
+        }
+        let noise = (rand1(rng, 201@client1) as float) / 1000.0@client1 - 0.1@client1;
+        ys.push(y + noise);
+    }
+    for (let i = 0@client1; i < n; i = i + 1@client1) {
+        xs.push(ys[i]);
+    }
+    return xs;
+}
+
+// The mean gradient of the squared error of the model w (dim weights and a
+// bias) over the local data.
+function gradient1@client1(data: float[]@client1, n: integer@client1, dim: integer@client1, w: float[]@client1): float[]@client1 {
+    let g: float[]@client1 = []@client1;
+    for (let d = 0@client1; d <= dim; d = d + 1@client1) {
+        g.push(0.0@client1);
+    }
+    for (let i = 0@client1; i < n; i = i + 1@client1) {
+        let pred = w[dim];
+        for (let d = 0@client1; d < dim; d = d + 1@client1) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        for (let d = 0@client1; d < dim; d = d + 1@client1) {
+            g[d] = g[d] + err * data[i * dim + d];
+        }
+        g[dim] = g[dim] + err;
+    }
+    for (let d = 0@client1; d <= dim; d = d + 1@client1) {
+        g[d] = g[d] / (n as float);
+    }
+    return g;
+}
+
+// The mean squared error of w over the local data.
+function loss1@client1(data: float[]@client1, n: integer@client1, dim: integer@client1, w: float[]@client1): float@client1 {
+    let total = 0.0@client1;
+    for (let i = 0@client1; i < n; i = i + 1@client1) {
+        let pred = w[dim];
+        for (let d = 0@client1; d < dim; d = d + 1@client1) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        total = total + err * err;
+    }
+    return total / (n as float);
+}
+
+// Fixed point: each gradient component times `scale`, as an integer mod m.
+function encode1@client1(g: float[]@client1, scale: float@client1, m: integer@client1): integer[]@client1 {
+    let q: integer[]@client1 = []@client1;
+    for (let d = 0@client1; d < g.length; d = d + 1@client1) {
+        let v = (g[d] * scale) as integer;
+        q.push((v % m + m) % m);
+    }
+    return q;
+}
+
+// ---------------------------------------------------------------------------
+// client2: local kernels
+// ---------------------------------------------------------------------------
+
+function rand2@client2(rng: integer[]@client2, bound: integer@client2): integer@client2 {
+    let s = (rng[0@client2] * 75@client2 + 74@client2) % 65537@client2;
+    rng[0@client2] = s;
+    return s % bound;
+}
+
+// base^e mod p by square-and-multiply. With p < 2^14.5 every product stays
+// below 2^29.
+function modpow2@client2(base: integer@client2, e: integer@client2, p: integer@client2): integer@client2 {
+    let result = 1@client2;
+    let b = base % p;
+    let x = e;
+    while (x > 0@client2) {
+        if (x % 2@client2 === 1@client2) {
+            result = (result * b) % p;
+        }
+        b = (b * b) % p;
+        x = x / 2@client2;
+    }
+    return result;
+}
+
+// n samples of dim features in [-1, 1], flattened, followed by their targets
+// y = 3 x0 - 2 x1 + 1 + noise (for dim = 2; further features get weight 0.5).
+function makeData2@client2(rng: integer[]@client2, n: integer@client2, dim: integer@client2): float[]@client2 {
+    let xs: float[]@client2 = []@client2;
+    let ys: float[]@client2 = []@client2;
+    for (let i = 0@client2; i < n; i = i + 1@client2) {
+        let y = 1.0@client2;
+        for (let d = 0@client2; d < dim; d = d + 1@client2) {
+            let x = (rand2(rng, 2001@client2) as float) / 1000.0@client2 - 1.0@client2;
+            xs.push(x);
+            let weight = 0.5@client2;
+            if (d === 0@client2) {
+                weight = 3.0@client2;
+            }
+            if (d === 1@client2) {
+                weight = -2.0@client2;
+            }
+            y = y + weight * x;
+        }
+        let noise = (rand2(rng, 201@client2) as float) / 1000.0@client2 - 0.1@client2;
+        ys.push(y + noise);
+    }
+    for (let i = 0@client2; i < n; i = i + 1@client2) {
+        xs.push(ys[i]);
+    }
+    return xs;
+}
+
+// The mean gradient of the squared error of the model w (dim weights and a
+// bias) over the local data.
+function gradient2@client2(data: float[]@client2, n: integer@client2, dim: integer@client2, w: float[]@client2): float[]@client2 {
+    let g: float[]@client2 = []@client2;
+    for (let d = 0@client2; d <= dim; d = d + 1@client2) {
+        g.push(0.0@client2);
+    }
+    for (let i = 0@client2; i < n; i = i + 1@client2) {
+        let pred = w[dim];
+        for (let d = 0@client2; d < dim; d = d + 1@client2) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        for (let d = 0@client2; d < dim; d = d + 1@client2) {
+            g[d] = g[d] + err * data[i * dim + d];
+        }
+        g[dim] = g[dim] + err;
+    }
+    for (let d = 0@client2; d <= dim; d = d + 1@client2) {
+        g[d] = g[d] / (n as float);
+    }
+    return g;
+}
+
+// The mean squared error of w over the local data.
+function loss2@client2(data: float[]@client2, n: integer@client2, dim: integer@client2, w: float[]@client2): float@client2 {
+    let total = 0.0@client2;
+    for (let i = 0@client2; i < n; i = i + 1@client2) {
+        let pred = w[dim];
+        for (let d = 0@client2; d < dim; d = d + 1@client2) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        total = total + err * err;
+    }
+    return total / (n as float);
+}
+
+// Fixed point: each gradient component times `scale`, as an integer mod m.
+function encode2@client2(g: float[]@client2, scale: float@client2, m: integer@client2): integer[]@client2 {
+    let q: integer[]@client2 = []@client2;
+    for (let d = 0@client2; d < g.length; d = d + 1@client2) {
+        let v = (g[d] * scale) as integer;
+        q.push((v % m + m) % m);
+    }
+    return q;
+}
+
+// ---------------------------------------------------------------------------
+// client3: local kernels
+// ---------------------------------------------------------------------------
+
+function rand3@client3(rng: integer[]@client3, bound: integer@client3): integer@client3 {
+    let s = (rng[0@client3] * 75@client3 + 74@client3) % 65537@client3;
+    rng[0@client3] = s;
+    return s % bound;
+}
+
+// base^e mod p by square-and-multiply. With p < 2^14.5 every product stays
+// below 2^29.
+function modpow3@client3(base: integer@client3, e: integer@client3, p: integer@client3): integer@client3 {
+    let result = 1@client3;
+    let b = base % p;
+    let x = e;
+    while (x > 0@client3) {
+        if (x % 2@client3 === 1@client3) {
+            result = (result * b) % p;
+        }
+        b = (b * b) % p;
+        x = x / 2@client3;
+    }
+    return result;
+}
+
+// n samples of dim features in [-1, 1], flattened, followed by their targets
+// y = 3 x0 - 2 x1 + 1 + noise (for dim = 2; further features get weight 0.5).
+function makeData3@client3(rng: integer[]@client3, n: integer@client3, dim: integer@client3): float[]@client3 {
+    let xs: float[]@client3 = []@client3;
+    let ys: float[]@client3 = []@client3;
+    for (let i = 0@client3; i < n; i = i + 1@client3) {
+        let y = 1.0@client3;
+        for (let d = 0@client3; d < dim; d = d + 1@client3) {
+            let x = (rand3(rng, 2001@client3) as float) / 1000.0@client3 - 1.0@client3;
+            xs.push(x);
+            let weight = 0.5@client3;
+            if (d === 0@client3) {
+                weight = 3.0@client3;
+            }
+            if (d === 1@client3) {
+                weight = -2.0@client3;
+            }
+            y = y + weight * x;
+        }
+        let noise = (rand3(rng, 201@client3) as float) / 1000.0@client3 - 0.1@client3;
+        ys.push(y + noise);
+    }
+    for (let i = 0@client3; i < n; i = i + 1@client3) {
+        xs.push(ys[i]);
+    }
+    return xs;
+}
+
+// The mean gradient of the squared error of the model w (dim weights and a
+// bias) over the local data.
+function gradient3@client3(data: float[]@client3, n: integer@client3, dim: integer@client3, w: float[]@client3): float[]@client3 {
+    let g: float[]@client3 = []@client3;
+    for (let d = 0@client3; d <= dim; d = d + 1@client3) {
+        g.push(0.0@client3);
+    }
+    for (let i = 0@client3; i < n; i = i + 1@client3) {
+        let pred = w[dim];
+        for (let d = 0@client3; d < dim; d = d + 1@client3) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        for (let d = 0@client3; d < dim; d = d + 1@client3) {
+            g[d] = g[d] + err * data[i * dim + d];
+        }
+        g[dim] = g[dim] + err;
+    }
+    for (let d = 0@client3; d <= dim; d = d + 1@client3) {
+        g[d] = g[d] / (n as float);
+    }
+    return g;
+}
+
+// The mean squared error of w over the local data.
+function loss3@client3(data: float[]@client3, n: integer@client3, dim: integer@client3, w: float[]@client3): float@client3 {
+    let total = 0.0@client3;
+    for (let i = 0@client3; i < n; i = i + 1@client3) {
+        let pred = w[dim];
+        for (let d = 0@client3; d < dim; d = d + 1@client3) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        total = total + err * err;
+    }
+    return total / (n as float);
+}
+
+// Fixed point: each gradient component times `scale`, as an integer mod m.
+function encode3@client3(g: float[]@client3, scale: float@client3, m: integer@client3): integer[]@client3 {
+    let q: integer[]@client3 = []@client3;
+    for (let d = 0@client3; d < g.length; d = d + 1@client3) {
+        let v = (g[d] * scale) as integer;
+        q.push((v % m + m) % m);
+    }
+    return q;
+}
+
+// ---------------------------------------------------------------------------
+// client4: local kernels
+// ---------------------------------------------------------------------------
+
+function rand4@client4(rng: integer[]@client4, bound: integer@client4): integer@client4 {
+    let s = (rng[0@client4] * 75@client4 + 74@client4) % 65537@client4;
+    rng[0@client4] = s;
+    return s % bound;
+}
+
+// base^e mod p by square-and-multiply. With p < 2^14.5 every product stays
+// below 2^29.
+function modpow4@client4(base: integer@client4, e: integer@client4, p: integer@client4): integer@client4 {
+    let result = 1@client4;
+    let b = base % p;
+    let x = e;
+    while (x > 0@client4) {
+        if (x % 2@client4 === 1@client4) {
+            result = (result * b) % p;
+        }
+        b = (b * b) % p;
+        x = x / 2@client4;
+    }
+    return result;
+}
+
+// n samples of dim features in [-1, 1], flattened, followed by their targets
+// y = 3 x0 - 2 x1 + 1 + noise (for dim = 2; further features get weight 0.5).
+function makeData4@client4(rng: integer[]@client4, n: integer@client4, dim: integer@client4): float[]@client4 {
+    let xs: float[]@client4 = []@client4;
+    let ys: float[]@client4 = []@client4;
+    for (let i = 0@client4; i < n; i = i + 1@client4) {
+        let y = 1.0@client4;
+        for (let d = 0@client4; d < dim; d = d + 1@client4) {
+            let x = (rand4(rng, 2001@client4) as float) / 1000.0@client4 - 1.0@client4;
+            xs.push(x);
+            let weight = 0.5@client4;
+            if (d === 0@client4) {
+                weight = 3.0@client4;
+            }
+            if (d === 1@client4) {
+                weight = -2.0@client4;
+            }
+            y = y + weight * x;
+        }
+        let noise = (rand4(rng, 201@client4) as float) / 1000.0@client4 - 0.1@client4;
+        ys.push(y + noise);
+    }
+    for (let i = 0@client4; i < n; i = i + 1@client4) {
+        xs.push(ys[i]);
+    }
+    return xs;
+}
+
+// The mean gradient of the squared error of the model w (dim weights and a
+// bias) over the local data.
+function gradient4@client4(data: float[]@client4, n: integer@client4, dim: integer@client4, w: float[]@client4): float[]@client4 {
+    let g: float[]@client4 = []@client4;
+    for (let d = 0@client4; d <= dim; d = d + 1@client4) {
+        g.push(0.0@client4);
+    }
+    for (let i = 0@client4; i < n; i = i + 1@client4) {
+        let pred = w[dim];
+        for (let d = 0@client4; d < dim; d = d + 1@client4) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        for (let d = 0@client4; d < dim; d = d + 1@client4) {
+            g[d] = g[d] + err * data[i * dim + d];
+        }
+        g[dim] = g[dim] + err;
+    }
+    for (let d = 0@client4; d <= dim; d = d + 1@client4) {
+        g[d] = g[d] / (n as float);
+    }
+    return g;
+}
+
+// The mean squared error of w over the local data.
+function loss4@client4(data: float[]@client4, n: integer@client4, dim: integer@client4, w: float[]@client4): float@client4 {
+    let total = 0.0@client4;
+    for (let i = 0@client4; i < n; i = i + 1@client4) {
+        let pred = w[dim];
+        for (let d = 0@client4; d < dim; d = d + 1@client4) {
+            pred = pred + w[d] * data[i * dim + d];
+        }
+        let err = pred - data[n * dim + i];
+        total = total + err * err;
+    }
+    return total / (n as float);
+}
+
+// Fixed point: each gradient component times `scale`, as an integer mod m.
+function encode4@client4(g: float[]@client4, scale: float@client4, m: integer@client4): integer[]@client4 {
+    let q: integer[]@client4 = []@client4;
+    for (let d = 0@client4; d < g.length; d = d + 1@client4) {
+        let v = (g[d] * scale) as integer;
+        q.push((v % m + m) % m);
+    }
+    return q;
+}
+
+// ---------------------------------------------------------------------------
+// server: local kernels
+// ---------------------------------------------------------------------------
+
+// A sum mod m back to a signed value, then out of fixed point.
+function decode@server(s: integer@server, m: integer@server, scale: float@server): float@server {
+    let v = s;
+    if (s > m / 2@server) {
+        v = s - m;
+    }
+    return (v as float) / scale;
+}
+
+function newModel@server(size: integer@server): float[]@server {
+    let w: float[]@server = []@server;
+    for (let i = 0@server; i < size; i = i + 1@server) {
+        w.push(0.0@server);
+    }
+    return w;
+}
+
+// ---------------------------------------------------------------------------
+// Setup: data
+// ---------------------------------------------------------------------------
+
+let rng1: integer[]@client1 = [7331]@client1;
+let n1: integer@client1 <- SAMPLES;
+let dim1: integer@client1 <- DIM;
+let modulus1: integer@client1 <- MODULUS;
+let scale1: float@client1 = 1000.0@client1;
+let data1: float[]@client1 = makeData1(rng1, n1, dim1);
+let rng2: integer[]@client2 = [14662]@client2;
+let n2: integer@client2 <- SAMPLES;
+let dim2: integer@client2 <- DIM;
+let modulus2: integer@client2 <- MODULUS;
+let scale2: float@client2 = 1000.0@client2;
+let data2: float[]@client2 = makeData2(rng2, n2, dim2);
+let rng3: integer[]@client3 = [21993]@client3;
+let n3: integer@client3 <- SAMPLES;
+let dim3: integer@client3 <- DIM;
+let modulus3: integer@client3 <- MODULUS;
+let scale3: float@client3 = 1000.0@client3;
+let data3: float[]@client3 = makeData3(rng3, n3, dim3);
+let rng4: integer[]@client4 = [29324]@client4;
+let n4: integer@client4 <- SAMPLES;
+let dim4: integer@client4 <- DIM;
+let modulus4: integer@client4 <- MODULUS;
+let scale4: float@client4 = 1000.0@client4;
+let data4: float[]@client4 = makeData4(rng4, n4, dim4);
+
+let dimS: integer@server <- DIM;
+let modulusS: integer@server <- MODULUS;
+let scaleS: float@server = 1000.0@server;
+let rate: float@server = 0.5@server;
+let model: float[]@server = newModel(dimS + 1@server);
+
+// ---------------------------------------------------------------------------
+// Setup: pairwise key agreement
+// ---------------------------------------------------------------------------
+
+let secret1: integer@client1 = rand1(rng1, 16000@client1) + 2@client1;
+let public1: integer@client1 = modpow1(2@client1, secret1, 16381@client1);
+let secret2: integer@client2 = rand2(rng2, 16000@client2) + 2@client2;
+let public2: integer@client2 = modpow2(2@client2, secret2, 16381@client2);
+let secret3: integer@client3 = rand3(rng3, 16000@client3) + 2@client3;
+let public3: integer@client3 = modpow3(2@client3, secret3, 16381@client3);
+let secret4: integer@client4 = rand4(rng4, 16000@client4) + 2@client4;
+let public4: integer@client4 = modpow4(2@client4, secret4, 16381@client4);
+let key2at1: integer@client1 <- public2;
+let key3at1: integer@client1 <- public3;
+let key4at1: integer@client1 <- public4;
+let key1at2: integer@client2 <- public1;
+let key3at2: integer@client2 <- public3;
+let key4at2: integer@client2 <- public4;
+let key1at3: integer@client3 <- public1;
+let key2at3: integer@client3 <- public2;
+let key4at3: integer@client3 <- public4;
+let key1at4: integer@client4 <- public1;
+let key2at4: integer@client4 <- public2;
+let key3at4: integer@client4 <- public3;
+let pair12: integer@client1 = modpow1(key2at1, secret1, 16381@client1);
+let pair13: integer@client1 = modpow1(key3at1, secret1, 16381@client1);
+let pair14: integer@client1 = modpow1(key4at1, secret1, 16381@client1);
+let pair21: integer@client2 = modpow2(key1at2, secret2, 16381@client2);
+let pair23: integer@client2 = modpow2(key3at2, secret2, 16381@client2);
+let pair24: integer@client2 = modpow2(key4at2, secret2, 16381@client2);
+let pair31: integer@client3 = modpow3(key1at3, secret3, 16381@client3);
+let pair32: integer@client3 = modpow3(key2at3, secret3, 16381@client3);
+let pair34: integer@client3 = modpow3(key4at3, secret3, 16381@client3);
+let pair41: integer@client4 = modpow4(key1at4, secret4, 16381@client4);
+let pair42: integer@client4 = modpow4(key2at4, secret4, 16381@client4);
+let pair43: integer@client4 = modpow4(key3at4, secret4, 16381@client4);
+
+// ---------------------------------------------------------------------------
+// Training
+// ---------------------------------------------------------------------------
+
+let agree: boolean@server = true@server;
+let initialLoss: float@server = 0.0@server;
+let finalLoss: float@server = 0.0@server;
+let size: integer@every = DIM + 1@every;
+
+for (let round: integer@every = 0@every; round < ROUNDS; round = round + 1@every) {
+    // 1. broadcast the model
+    let shared: float[]@every <- model;
+
+    // 2. local gradients, encoded and masked
+    let w1: float[]@client1 <- shared;
+    let grad1: float[]@client1 = gradient1(data1, n1, dim1, w1);
+    let encoded1: integer[]@client1 = encode1(grad1, scale1, modulus1);
+    let masked1: integer[]@client1 = []@client1;
+    let w2: float[]@client2 <- shared;
+    let grad2: float[]@client2 = gradient2(data2, n2, dim2, w2);
+    let encoded2: integer[]@client2 = encode2(grad2, scale2, modulus2);
+    let masked2: integer[]@client2 = []@client2;
+    let w3: float[]@client3 <- shared;
+    let grad3: float[]@client3 = gradient3(data3, n3, dim3, w3);
+    let encoded3: integer[]@client3 = encode3(grad3, scale3, modulus3);
+    let masked3: integer[]@client3 = []@client3;
+    let w4: float[]@client4 <- shared;
+    let grad4: float[]@client4 = gradient4(data4, n4, dim4, w4);
+    let encoded4: integer[]@client4 = encode4(grad4, scale4, modulus4);
+    let masked4: integer[]@client4 = []@client4;
+    for (let d: integer@every = 0@every; d < size; d = d + 1@every) {
+        let d1: integer@client1 <- d;
+        let v1: integer@client1 = encoded1[d1];
+        pair12 = (pair12 * 75@client1 + 74@client1) % 65537@client1;
+        v1 = (v1 + pair12 * 16@client1) % modulus1;
+        pair13 = (pair13 * 75@client1 + 74@client1) % 65537@client1;
+        v1 = (v1 + pair13 * 16@client1) % modulus1;
+        pair14 = (pair14 * 75@client1 + 74@client1) % 65537@client1;
+        v1 = (v1 + pair14 * 16@client1) % modulus1;
+        masked1.push(v1);
+        let d2: integer@client2 <- d;
+        let v2: integer@client2 = encoded2[d2];
+        pair21 = (pair21 * 75@client2 + 74@client2) % 65537@client2;
+        v2 = (v2 - pair21 * 16@client2 + modulus2) % modulus2;
+        pair23 = (pair23 * 75@client2 + 74@client2) % 65537@client2;
+        v2 = (v2 + pair23 * 16@client2) % modulus2;
+        pair24 = (pair24 * 75@client2 + 74@client2) % 65537@client2;
+        v2 = (v2 + pair24 * 16@client2) % modulus2;
+        masked2.push(v2);
+        let d3: integer@client3 <- d;
+        let v3: integer@client3 = encoded3[d3];
+        pair31 = (pair31 * 75@client3 + 74@client3) % 65537@client3;
+        v3 = (v3 - pair31 * 16@client3 + modulus3) % modulus3;
+        pair32 = (pair32 * 75@client3 + 74@client3) % 65537@client3;
+        v3 = (v3 - pair32 * 16@client3 + modulus3) % modulus3;
+        pair34 = (pair34 * 75@client3 + 74@client3) % 65537@client3;
+        v3 = (v3 + pair34 * 16@client3) % modulus3;
+        masked3.push(v3);
+        let d4: integer@client4 <- d;
+        let v4: integer@client4 = encoded4[d4];
+        pair41 = (pair41 * 75@client4 + 74@client4) % 65537@client4;
+        v4 = (v4 - pair41 * 16@client4 + modulus4) % modulus4;
+        pair42 = (pair42 * 75@client4 + 74@client4) % 65537@client4;
+        v4 = (v4 - pair42 * 16@client4 + modulus4) % modulus4;
+        pair43 = (pair43 * 75@client4 + 74@client4) % 65537@client4;
+        v4 = (v4 - pair43 * 16@client4 + modulus4) % modulus4;
+        masked4.push(v4);
+    }
+    let up1: integer[]@server <- masked1;
+    let up2: integer[]@server <- masked2;
+    let up3: integer[]@server <- masked3;
+    let up4: integer[]@server <- masked4;
+
+    // 3. aggregate, decode, step
+    let sums: integer[]@server = []@server;
+    for (let d: integer@every = 0@every; d < size; d = d + 1@every) {
+        let ds: integer@server <- d;
+        let s: integer@server = (up1[ds] + up2[ds] + up3[ds] + up4[ds]) % modulusS;
+        sums.push(s);
+        let g: float@server = decode(s, modulusS, scaleS) / 4.0@server;
+        model[ds] = model[ds] - rate * g;
+    }
+
+    // The debugging path: the unmasked encodings must add up to the same.
+    let verify: boolean@every = round % VERIFY_EVERY === 0@every;
+    if (verify) {
+        let plain1: integer[]@server <- encoded1;
+        let plain2: integer[]@server <- encoded2;
+        let plain3: integer[]@server <- encoded3;
+        let plain4: integer[]@server <- encoded4;
+        for (let d: integer@every = 0@every; d < size; d = d + 1@every) {
+            let dv: integer@server <- d;
+            let plain: integer@server = (plain1[dv] + plain2[dv] + plain3[dv] + plain4[dv]) % modulusS;
+            agree = agree && plain === sums[dv];
+        }
+    }
+
+    // The loss before the first step and after the last one.
+    let first: boolean@every = round === 0@every;
+    let last: boolean@every = round === ROUNDS - 1@every;
+    if (first || last) {
+        let after: float[]@every <- model;
+        let wl1: float[]@client1 <- after;
+        let l1: float@server <- loss1(data1, n1, dim1, wl1);
+        let wl2: float[]@client2 <- after;
+        let l2: float@server <- loss2(data2, n2, dim2, wl2);
+        let wl3: float[]@client3 <- after;
+        let l3: float@server <- loss3(data3, n3, dim3, wl3);
+        let wl4: float[]@client4 <- after;
+        let l4: float@server <- loss4(data4, n4, dim4, wl4);
+        let total: float@server = (l1 + l2 + l3 + l4) / 4.0@server;
+        if (first) {
+            initialLoss = total;
+        }
+        if (last) {
+            finalLoss = total;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+// The first loss above is measured after the first step; it is still large,
+// since the model starts at zero.
+let ok: boolean@server = agree && finalLoss < initialLoss * 0.1@server;
+let bias: float@server = model[dimS];
+print(ok);
+print(initialLoss);
+print(finalLoss);
+print(bias);

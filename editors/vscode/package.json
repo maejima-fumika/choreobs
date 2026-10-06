@@ -1,0 +1,52 @@
+{
+  "name": "choreobs-vscode",
+  "displayName": "ChoreoBS",
+  "description": "Syntax highlighting for ChoreoBS choreographies (.cbs)",
+  "version": "0.1.0",
+  "publisher": "maejima-fumika",
+  "private": true,
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maejima-fumika/choreobs.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "choreobs",
+        "aliases": [
+          "ChoreoBS",
+          "choreobs"
+        ],
+        "extensions": [
+          ".cbs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "choreobs",
+        "scopeName": "source.choreobs",
+        "path": "./syntaxes/choreobs.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "vscode-tmgrammar-test \"test/**/*.test.cbs\" && node test/corpus.mjs",
+    "package": "vsce package --skip-license"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^4.0.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2",
+    "vscode-tmgrammar-test": "^0.1.3"
+  }
+}

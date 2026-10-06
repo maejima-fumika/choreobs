@@ -1,0 +1,8 @@
+{
+  "name": "u6-bystander-n2",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "owner", "board": "host" },
+    { "name": "idle1", "board": "host" }
+  ]
+}

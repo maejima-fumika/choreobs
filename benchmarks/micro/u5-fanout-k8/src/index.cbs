@@ -1,0 +1,107 @@
+// u5-fanout-k8: scatter, gather and broadcast with 8 workers.
+//
+// Endpoints: root, worker1, worker2, worker3, worker4, worker5, worker6, worker7, worker8.
+//
+// Each round, root scatters a task to every worker, each worker does one
+// arithmetic step, root gathers the results and broadcasts their sum, and
+// every endpoint folds the shared sum into its own accumulator. The
+// directories u5-fanout-k2, -k4 and -k8 differ only in the number of
+// workers, which is what shows how the cost of a dynamic transfer grows with
+// the number of endpoints: one whose destination is `dyn` is a broadcast,
+// and every endpoint performs every dynamic operation.
+//
+// Mechanisms: K5 (broadcast), K6 (redundant execution).
+//
+// Output: root prints the checksum of all the accumulators.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ROUNDS: integer@every = 500@every;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+let task: integer@root = 1@root;
+let acc1: integer@worker1 = 0@worker1;
+let acc2: integer@worker2 = 0@worker2;
+let acc3: integer@worker3 = 0@worker3;
+let acc4: integer@worker4 = 0@worker4;
+let acc5: integer@worker5 = 0@worker5;
+let acc6: integer@worker6 = 0@worker6;
+let acc7: integer@worker7 = 0@worker7;
+let acc8: integer@worker8 = 0@worker8;
+
+// ---------------------------------------------------------------------------
+// Rounds
+// ---------------------------------------------------------------------------
+
+for (let r: integer@every = 0@every; r < ROUNDS; r = r + 1@every) {
+    // scatter: a different task for each worker
+    let t1: integer@worker1 <- (task + 1@root) % 65537@root;
+    let t2: integer@worker2 <- (task + 2@root) % 65537@root;
+    let t3: integer@worker3 <- (task + 3@root) % 65537@root;
+    let t4: integer@worker4 <- (task + 4@root) % 65537@root;
+    let t5: integer@worker5 <- (task + 5@root) % 65537@root;
+    let t6: integer@worker6 <- (task + 6@root) % 65537@root;
+    let t7: integer@worker7 <- (task + 7@root) % 65537@root;
+    let t8: integer@worker8 <- (task + 8@root) % 65537@root;
+
+    // compute at each worker
+    let r1: integer@worker1 = (t1 * 75@worker1 + 74@worker1) % 65537@worker1;
+    let r2: integer@worker2 = (t2 * 75@worker2 + 74@worker2) % 65537@worker2;
+    let r3: integer@worker3 = (t3 * 75@worker3 + 74@worker3) % 65537@worker3;
+    let r4: integer@worker4 = (t4 * 75@worker4 + 74@worker4) % 65537@worker4;
+    let r5: integer@worker5 = (t5 * 75@worker5 + 74@worker5) % 65537@worker5;
+    let r6: integer@worker6 = (t6 * 75@worker6 + 74@worker6) % 65537@worker6;
+    let r7: integer@worker7 = (t7 * 75@worker7 + 74@worker7) % 65537@worker7;
+    let r8: integer@worker8 = (t8 * 75@worker8 + 74@worker8) % 65537@worker8;
+
+    // gather
+    let g1: integer@root <- r1;
+    let g2: integer@root <- r2;
+    let g3: integer@root <- r3;
+    let g4: integer@root <- r4;
+    let g5: integer@root <- r5;
+    let g6: integer@root <- r6;
+    let g7: integer@root <- r7;
+    let g8: integer@root <- r8;
+    let total: integer@root = (g1 + g2 + g3 + g4 + g5 + g6 + g7 + g8) % 65537@root;
+
+    // broadcast, then fold the shared value in everywhere
+    let shared: integer@every <- total;
+    let s1: integer@worker1 <- shared;
+    acc1 = (acc1 + s1) % 1000003@worker1;
+    let s2: integer@worker2 <- shared;
+    acc2 = (acc2 + s2) % 1000003@worker2;
+    let s3: integer@worker3 <- shared;
+    acc3 = (acc3 + s3) % 1000003@worker3;
+    let s4: integer@worker4 <- shared;
+    acc4 = (acc4 + s4) % 1000003@worker4;
+    let s5: integer@worker5 <- shared;
+    acc5 = (acc5 + s5) % 1000003@worker5;
+    let s6: integer@worker6 <- shared;
+    acc6 = (acc6 + s6) % 1000003@worker6;
+    let s7: integer@worker7 <- shared;
+    acc7 = (acc7 + s7) % 1000003@worker7;
+    let s8: integer@worker8 <- shared;
+    acc8 = (acc8 + s8) % 1000003@worker8;
+    task <- shared;
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+let f1: integer@root <- acc1;
+let f2: integer@root <- acc2;
+let f3: integer@root <- acc3;
+let f4: integer@root <- acc4;
+let f5: integer@root <- acc5;
+let f6: integer@root <- acc6;
+let f7: integer@root <- acc7;
+let f8: integer@root <- acc8;
+let checksum: integer@root = (f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8) % 1000003@root;
+print(checksum);

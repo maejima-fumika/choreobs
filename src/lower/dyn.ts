@@ -63,7 +63,8 @@ import {
   DYN_CONVERSION,
   DYN_TRANSFER,
   DYN_UNARY,
-  runtimeLocationName,
+  kindConstantName,
+  locationConstantName,
   type DynRuntimeFunction,
 } from "../runtime/dyn.js";
 
@@ -77,7 +78,7 @@ import {
  * runtime:
  *
  * - where a value is placed at a location it is not at, `coerce` inserts
- *   `__inject(e, "q")` (to `dyn`) or `__cast(e, "q")` (from `dyn`);
+ *   `__inject(e, __loc_q)` (to `dyn`) or `__cast(e, __loc_q)` (from `dyn`);
  * - a `dyn` literal, array literal, operator, conversion or array operation
  *   becomes the runtime function that performs it;
  * - a dynamic transfer becomes a `let` or an assignment of `__dynTransfer`,
@@ -99,6 +100,12 @@ export function lowerDyn(typed: TypedProgram): LoweredProgram {
     items: typed.items.map((item) => lowerer.item(item)),
   };
 }
+
+/**
+ * The type of a location or kind constant of the runtime file as an argument:
+ * the same integer at every endpoint (spec §location-and-kind-codes).
+ */
+export const RUNTIME_CONSTANT_TYPE: LocatedType = locatedType("integer", EVERY);
 
 /** What the statements of one body are checked against. */
 interface Scope {
@@ -241,8 +248,8 @@ class DynLowerer {
   }
 
   /**
-   * `__dynTransfer(tag, kind, "L", coerce(e → T@dyn))`, cast to the
-   * destination when that is concrete (spec §dynamic-transfer).
+   * `__dynTransfer("tag", __kind_k, __loc_D, coerce(e → T@dyn))`, cast to the
+   * destination `D` when that is concrete (spec §dynamic-transfer).
    */
   private dynamicTransfer(
     destination: LocatedType,
@@ -261,9 +268,9 @@ class DynLowerer {
     const transferred = this.call(
       DYN_TRANSFER,
       [
-        this.constant(tag, span),
-        this.constant(commKindForType(destination), span),
-        this.constant(runtimeLocationName(destination.location), span),
+        this.tag(tag, span),
+        this.runtimeConstant(kindConstantName(commKindForType(destination)), span),
+        this.runtimeConstant(locationConstantName(destination.location), span),
         this.coerced(source, DYN),
       ],
       { ...destination, location: DYN },
@@ -409,7 +416,7 @@ class DynLowerer {
     if (isDyn(location)) {
       return this.call(
         "__inject",
-        [expr, this.constant(runtimeLocationName(from), span)],
+        [expr, this.runtimeConstant(locationConstantName(from), span)],
         { ...expr.choreoType, location: DYN },
         span,
       );
@@ -417,7 +424,7 @@ class DynLowerer {
     if (isDyn(from)) {
       return this.call(
         "__cast",
-        [expr, this.constant(runtimeLocationName(location), span)],
+        [expr, this.runtimeConstant(locationConstantName(location), span)],
         { ...expr.choreoType, location },
         span,
       );
@@ -597,10 +604,10 @@ class DynLowerer {
   }
 
   /**
-   * A string argument the compiler supplies — a location, a kind or a tag.
-   * It is `string@every`, the same at every endpoint (spec §dyn-lowering).
+   * A transfer's communication tag, as the argument of `__dynTransfer`. It is
+   * a `string@every` literal, the same at every endpoint (spec §dyn-lowering).
    */
-  private constant(value: string, span: Span): TypedLiteralExpression {
+  private tag(value: string, span: Span): TypedLiteralExpression {
     const literal: LocatedLiteral = {
       kind: "LocatedLiteral",
       literal: { kind: "StringLiteral", value, span },
@@ -610,6 +617,18 @@ class DynLowerer {
       expr: { kind: "LiteralExpression", literal, span },
       choreoType: locatedType("string", EVERY),
       literal,
+    };
+  }
+
+  /**
+   * A location or kind constant of the runtime file, as an argument. It is an
+   * `integer@every` identifier, the same at every endpoint, so endpoint
+   * projection keeps it everywhere (spec §location-and-kind-codes).
+   */
+  private runtimeConstant(name: string, span: Span): TypedIdentifierExpression {
+    return {
+      expr: { kind: "IdentifierExpression", name, span },
+      choreoType: RUNTIME_CONSTANT_TYPE,
     };
   }
 }

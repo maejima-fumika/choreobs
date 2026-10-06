@@ -1,0 +1,35 @@
+// u1-arith-int: integer arithmetic in a choreography context.
+//
+// Endpoints: alice, bob.
+//
+// A loop counted at `every` runs a few integer operations on scalars held at
+// `alice`. There is no communication and no local function: every operation
+// sits in the choreography, so each of its locations can be made `dyn`. With
+// `dyn`, each operator becomes a runtime call that allocates a `__DynVal` and a
+// location variable and unifies its operands' location variables.
+//
+// Mechanisms: K1 (boxing), K2 (location variables), K3 (dispatch).
+//
+// Output: alice prints the checksum `acc`.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ITERS: integer@every = 20000@every;
+
+// ---------------------------------------------------------------------------
+// Kernel
+// ---------------------------------------------------------------------------
+
+let x: integer@alice = 1@alice;
+let acc: integer@alice = 0@alice;
+
+for (let i: integer@every = 0@every; i < ITERS; i = i + 1@every) {
+    x = (x * 75@alice + 74@alice) % 65537@alice;
+    let hi: integer@alice = x / 256@alice;
+    let lo: integer@alice = x - hi * 256@alice;
+    acc = (acc + hi * 3@alice + lo) % 1000003@alice;
+}
+
+print(acc);

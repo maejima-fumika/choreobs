@@ -1,0 +1,36 @@
+// u6-bystander-n4: one busy endpoint and 3 idle ones.
+//
+// Endpoints: owner, idle1, idle2, idle3.
+//
+// The kernel of u1-arith-int, run entirely at `owner`. Statically, endpoint
+// projection leaves the idle endpoints nothing but the loop counter. A dynamic
+// operation is kept at every endpoint, so once the kernel's locations are
+// `dyn` the idle endpoints perform every operation too, producing `null`
+// payloads. u6-bystander-n2, -n4 and -n8 differ only in the number of idle
+// endpoints; on a single machine they compete with `owner` for cores.
+//
+// Mechanisms: K6 (redundant execution).
+//
+// Output: owner prints the checksum `acc`.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ITERS: integer@every = 20000@every;
+
+// ---------------------------------------------------------------------------
+// Kernel
+// ---------------------------------------------------------------------------
+
+let x: integer@owner = 1@owner;
+let acc: integer@owner = 0@owner;
+
+for (let i: integer@every = 0@every; i < ITERS; i = i + 1@every) {
+    x = (x * 75@owner + 74@owner) % 65537@owner;
+    let hi: integer@owner = x / 256@owner;
+    let lo: integer@owner = x - hi * 256@owner;
+    acc = (acc + hi * 3@owner + lo) % 1000003@owner;
+}
+
+print(acc);

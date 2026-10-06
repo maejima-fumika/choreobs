@@ -1,0 +1,10 @@
+{
+  "name": "c-replicated-kvs",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "client", "board": "host" },
+    { "name": "primary", "board": "host" },
+    { "name": "backup1", "board": "host" },
+    { "name": "backup2", "board": "host" }
+  ]
+}

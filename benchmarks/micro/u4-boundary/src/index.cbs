@@ -1,0 +1,49 @@
+// u4-boundary: crossing the static/dynamic boundary.
+//
+// Endpoints: alice, bob.
+//
+// The same computation as u1-arith-int, but the arithmetic lives in local
+// functions at alice, which can never hold `dyn` (spec §8.4). The loop only
+// passes choreography-level values in and out. When those values are `dyn`,
+// each call casts its arguments to alice (`__cast`) and injects its result
+// back (`__inject`), while the arithmetic itself stays static. Comparing it
+// with u1-arith-int separates the cost of the boundary from the cost of the
+// dynamic operators.
+//
+// Mechanisms: K4 (inject/cast).
+//
+// Output: alice prints the checksum `acc`.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ITERS: integer@every = 20000@every;
+
+// ---------------------------------------------------------------------------
+// Local kernels at alice
+// ---------------------------------------------------------------------------
+
+function step@alice(x: integer@alice): integer@alice {
+    return (x * 75@alice + 74@alice) % 65537@alice;
+}
+
+function mix@alice(x: integer@alice, acc: integer@alice): integer@alice {
+    let hi: integer@alice = x / 256@alice;
+    let lo: integer@alice = x - hi * 256@alice;
+    return (acc + hi * 3@alice + lo) % 1000003@alice;
+}
+
+// ---------------------------------------------------------------------------
+// The loop: only calls cross the boundary
+// ---------------------------------------------------------------------------
+
+let x: integer@alice = 1@alice;
+let acc: integer@alice = 0@alice;
+
+for (let i: integer@every = 0@every; i < ITERS; i = i + 1@every) {
+    x = step(x);
+    acc = mix(x, acc);
+}
+
+print(acc);

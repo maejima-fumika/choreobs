@@ -1,0 +1,401 @@
+// D kmeans: distributed k-means clustering (Lloyd's algorithm) with restarts.
+//
+// Endpoints: coordinator, worker1, worker2, worker3, worker4.
+//
+// Each worker holds its own share of the points, flattened as a `float[]`.
+// Each iteration:
+//
+//   1. the coordinator broadcasts the centroids;
+//   2. each worker assigns its points to the nearest centroid and sends back
+//      per-cluster sums, counts and its share of the inertia;
+//   3. the coordinator reduces the partials, moves the centroids, and
+//      broadcasts whether any centroid still moves, which drives the loop.
+//
+// The whole clustering is restarted RESTARTS times from fresh random
+// centroids, and the best inertia is kept. The assignment pass is a local
+// kernel at each worker; the reduction, the centroid update and the
+// convergence test are choreography code at the coordinator.
+//
+// Self-check: within each restart the inertia never increases (up to float
+// rounding), and the best inertia is below a bound that only a good
+// clustering meets. All values are floats: compare checksums with a tolerance
+// (see benchmarks/README.md).
+//
+// Output: the coordinator prints `ok`, the best inertia and the total number
+// of iterations.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let POINTS: integer@every = 200@every;
+let K: integer@every = 4@every;
+let MAX_ITERS: integer@every = 20@every;
+let RESTARTS: integer@every = 4@every;
+
+// ---------------------------------------------------------------------------
+// worker1: local kernels
+// ---------------------------------------------------------------------------
+
+// n points around four true centres, flattened as [x0, y0, x1, y1, ...].
+function makePoints1@worker1(n: integer@worker1, seed: integer@worker1): float[]@worker1 {
+    let xs: float[]@worker1 = []@worker1;
+    let s = seed;
+    for (let i = 0@worker1; i < n; i = i + 1@worker1) {
+        s = (s * 75@worker1 + 74@worker1) % 65537@worker1;
+        let c = s % 4@worker1;
+        let cx = 20.0@worker1 + 60.0@worker1 * ((c % 2@worker1) as float);
+        let cy = 20.0@worker1 + 60.0@worker1 * ((c / 2@worker1) as float);
+        s = (s * 75@worker1 + 74@worker1) % 65537@worker1;
+        let dx = (s as float) / 65537.0@worker1 * 24.0@worker1 - 12.0@worker1;
+        s = (s * 75@worker1 + 74@worker1) % 65537@worker1;
+        let dy = (s as float) / 65537.0@worker1 * 24.0@worker1 - 12.0@worker1;
+        xs.push(cx + dx);
+        xs.push(cy + dy);
+    }
+    return xs;
+}
+
+// One assignment pass. The result holds, for each cluster j, the sums of x
+// and y and the count at 3j, 3j+1 and 3j+2, and the inertia at 3k.
+function assign1@worker1(points: float[]@worker1, centroids: float[]@worker1, k: integer@worker1): float[]@worker1 {
+    let part: float[]@worker1 = []@worker1;
+    for (let j = 0@worker1; j < k * 3@worker1 + 1@worker1; j = j + 1@worker1) {
+        part.push(0.0@worker1);
+    }
+    let n = points.length / 2@worker1;
+    for (let i = 0@worker1; i < n; i = i + 1@worker1) {
+        let x = points[2@worker1 * i];
+        let y = points[2@worker1 * i + 1@worker1];
+        let best = 0@worker1;
+        let bestD = 1000000.0@worker1;
+        for (let j = 0@worker1; j < k; j = j + 1@worker1) {
+            let dx = x - centroids[2@worker1 * j];
+            let dy = y - centroids[2@worker1 * j + 1@worker1];
+            let d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = j;
+            }
+        }
+        part[3@worker1 * best] = part[3@worker1 * best] + x;
+        part[3@worker1 * best + 1@worker1] = part[3@worker1 * best + 1@worker1] + y;
+        part[3@worker1 * best + 2@worker1] = part[3@worker1 * best + 2@worker1] + 1.0@worker1;
+        part[3@worker1 * k] = part[3@worker1 * k] + bestD;
+    }
+    return part;
+}
+
+// ---------------------------------------------------------------------------
+// worker2: local kernels
+// ---------------------------------------------------------------------------
+
+// n points around four true centres, flattened as [x0, y0, x1, y1, ...].
+function makePoints2@worker2(n: integer@worker2, seed: integer@worker2): float[]@worker2 {
+    let xs: float[]@worker2 = []@worker2;
+    let s = seed;
+    for (let i = 0@worker2; i < n; i = i + 1@worker2) {
+        s = (s * 75@worker2 + 74@worker2) % 65537@worker2;
+        let c = s % 4@worker2;
+        let cx = 20.0@worker2 + 60.0@worker2 * ((c % 2@worker2) as float);
+        let cy = 20.0@worker2 + 60.0@worker2 * ((c / 2@worker2) as float);
+        s = (s * 75@worker2 + 74@worker2) % 65537@worker2;
+        let dx = (s as float) / 65537.0@worker2 * 24.0@worker2 - 12.0@worker2;
+        s = (s * 75@worker2 + 74@worker2) % 65537@worker2;
+        let dy = (s as float) / 65537.0@worker2 * 24.0@worker2 - 12.0@worker2;
+        xs.push(cx + dx);
+        xs.push(cy + dy);
+    }
+    return xs;
+}
+
+// One assignment pass. The result holds, for each cluster j, the sums of x
+// and y and the count at 3j, 3j+1 and 3j+2, and the inertia at 3k.
+function assign2@worker2(points: float[]@worker2, centroids: float[]@worker2, k: integer@worker2): float[]@worker2 {
+    let part: float[]@worker2 = []@worker2;
+    for (let j = 0@worker2; j < k * 3@worker2 + 1@worker2; j = j + 1@worker2) {
+        part.push(0.0@worker2);
+    }
+    let n = points.length / 2@worker2;
+    for (let i = 0@worker2; i < n; i = i + 1@worker2) {
+        let x = points[2@worker2 * i];
+        let y = points[2@worker2 * i + 1@worker2];
+        let best = 0@worker2;
+        let bestD = 1000000.0@worker2;
+        for (let j = 0@worker2; j < k; j = j + 1@worker2) {
+            let dx = x - centroids[2@worker2 * j];
+            let dy = y - centroids[2@worker2 * j + 1@worker2];
+            let d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = j;
+            }
+        }
+        part[3@worker2 * best] = part[3@worker2 * best] + x;
+        part[3@worker2 * best + 1@worker2] = part[3@worker2 * best + 1@worker2] + y;
+        part[3@worker2 * best + 2@worker2] = part[3@worker2 * best + 2@worker2] + 1.0@worker2;
+        part[3@worker2 * k] = part[3@worker2 * k] + bestD;
+    }
+    return part;
+}
+
+// ---------------------------------------------------------------------------
+// worker3: local kernels
+// ---------------------------------------------------------------------------
+
+// n points around four true centres, flattened as [x0, y0, x1, y1, ...].
+function makePoints3@worker3(n: integer@worker3, seed: integer@worker3): float[]@worker3 {
+    let xs: float[]@worker3 = []@worker3;
+    let s = seed;
+    for (let i = 0@worker3; i < n; i = i + 1@worker3) {
+        s = (s * 75@worker3 + 74@worker3) % 65537@worker3;
+        let c = s % 4@worker3;
+        let cx = 20.0@worker3 + 60.0@worker3 * ((c % 2@worker3) as float);
+        let cy = 20.0@worker3 + 60.0@worker3 * ((c / 2@worker3) as float);
+        s = (s * 75@worker3 + 74@worker3) % 65537@worker3;
+        let dx = (s as float) / 65537.0@worker3 * 24.0@worker3 - 12.0@worker3;
+        s = (s * 75@worker3 + 74@worker3) % 65537@worker3;
+        let dy = (s as float) / 65537.0@worker3 * 24.0@worker3 - 12.0@worker3;
+        xs.push(cx + dx);
+        xs.push(cy + dy);
+    }
+    return xs;
+}
+
+// One assignment pass. The result holds, for each cluster j, the sums of x
+// and y and the count at 3j, 3j+1 and 3j+2, and the inertia at 3k.
+function assign3@worker3(points: float[]@worker3, centroids: float[]@worker3, k: integer@worker3): float[]@worker3 {
+    let part: float[]@worker3 = []@worker3;
+    for (let j = 0@worker3; j < k * 3@worker3 + 1@worker3; j = j + 1@worker3) {
+        part.push(0.0@worker3);
+    }
+    let n = points.length / 2@worker3;
+    for (let i = 0@worker3; i < n; i = i + 1@worker3) {
+        let x = points[2@worker3 * i];
+        let y = points[2@worker3 * i + 1@worker3];
+        let best = 0@worker3;
+        let bestD = 1000000.0@worker3;
+        for (let j = 0@worker3; j < k; j = j + 1@worker3) {
+            let dx = x - centroids[2@worker3 * j];
+            let dy = y - centroids[2@worker3 * j + 1@worker3];
+            let d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = j;
+            }
+        }
+        part[3@worker3 * best] = part[3@worker3 * best] + x;
+        part[3@worker3 * best + 1@worker3] = part[3@worker3 * best + 1@worker3] + y;
+        part[3@worker3 * best + 2@worker3] = part[3@worker3 * best + 2@worker3] + 1.0@worker3;
+        part[3@worker3 * k] = part[3@worker3 * k] + bestD;
+    }
+    return part;
+}
+
+// ---------------------------------------------------------------------------
+// worker4: local kernels
+// ---------------------------------------------------------------------------
+
+// n points around four true centres, flattened as [x0, y0, x1, y1, ...].
+function makePoints4@worker4(n: integer@worker4, seed: integer@worker4): float[]@worker4 {
+    let xs: float[]@worker4 = []@worker4;
+    let s = seed;
+    for (let i = 0@worker4; i < n; i = i + 1@worker4) {
+        s = (s * 75@worker4 + 74@worker4) % 65537@worker4;
+        let c = s % 4@worker4;
+        let cx = 20.0@worker4 + 60.0@worker4 * ((c % 2@worker4) as float);
+        let cy = 20.0@worker4 + 60.0@worker4 * ((c / 2@worker4) as float);
+        s = (s * 75@worker4 + 74@worker4) % 65537@worker4;
+        let dx = (s as float) / 65537.0@worker4 * 24.0@worker4 - 12.0@worker4;
+        s = (s * 75@worker4 + 74@worker4) % 65537@worker4;
+        let dy = (s as float) / 65537.0@worker4 * 24.0@worker4 - 12.0@worker4;
+        xs.push(cx + dx);
+        xs.push(cy + dy);
+    }
+    return xs;
+}
+
+// One assignment pass. The result holds, for each cluster j, the sums of x
+// and y and the count at 3j, 3j+1 and 3j+2, and the inertia at 3k.
+function assign4@worker4(points: float[]@worker4, centroids: float[]@worker4, k: integer@worker4): float[]@worker4 {
+    let part: float[]@worker4 = []@worker4;
+    for (let j = 0@worker4; j < k * 3@worker4 + 1@worker4; j = j + 1@worker4) {
+        part.push(0.0@worker4);
+    }
+    let n = points.length / 2@worker4;
+    for (let i = 0@worker4; i < n; i = i + 1@worker4) {
+        let x = points[2@worker4 * i];
+        let y = points[2@worker4 * i + 1@worker4];
+        let best = 0@worker4;
+        let bestD = 1000000.0@worker4;
+        for (let j = 0@worker4; j < k; j = j + 1@worker4) {
+            let dx = x - centroids[2@worker4 * j];
+            let dy = y - centroids[2@worker4 * j + 1@worker4];
+            let d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = j;
+            }
+        }
+        part[3@worker4 * best] = part[3@worker4 * best] + x;
+        part[3@worker4 * best + 1@worker4] = part[3@worker4 * best + 1@worker4] + y;
+        part[3@worker4 * best + 2@worker4] = part[3@worker4 * best + 2@worker4] + 1.0@worker4;
+        part[3@worker4 * k] = part[3@worker4 * k] + bestD;
+    }
+    return part;
+}
+
+// ---------------------------------------------------------------------------
+// coordinator: local kernels
+// ---------------------------------------------------------------------------
+
+function randC@coordinator(rng: integer[]@coordinator, bound: integer@coordinator): integer@coordinator {
+    let s = (rng[0@coordinator] * 75@coordinator + 74@coordinator) % 65537@coordinator;
+    rng[0@coordinator] = s;
+    return s % bound;
+}
+
+// k random centroids in the square [0, 100]^2.
+function randomCentroids@coordinator(rng: integer[]@coordinator, k: integer@coordinator): float[]@coordinator {
+    let cs: float[]@coordinator = []@coordinator;
+    for (let j = 0@coordinator; j < 2@coordinator * k; j = j + 1@coordinator) {
+        cs.push((randC(rng, 10000@coordinator) as float) / 100.0@coordinator);
+    }
+    return cs;
+}
+
+// A cluster's new coordinate, or its old one if no point was assigned to it.
+function meanOr@coordinator(sum: float@coordinator, count: float@coordinator, old: float@coordinator): float@coordinator {
+    if (count < 0.5@coordinator) {
+        return old;
+    }
+    return sum / count;
+}
+
+function maxOf@coordinator(a: float@coordinator, b: float@coordinator): float@coordinator {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+function minOf@coordinator(a: float@coordinator, b: float@coordinator): float@coordinator {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// The reduction at the coordinator
+// ---------------------------------------------------------------------------
+
+// Moves each centroid to the mean of its points, in place, and returns the
+// largest squared distance any centroid moved.
+function update(p1: float[]@coordinator, p2: float[]@coordinator, p3: float[]@coordinator, p4: float[]@coordinator, centroids: float[]@coordinator, k: integer@every): float@coordinator {
+    let shift: float@coordinator = 0.0@coordinator;
+    for (let j: integer@every = 0@every; j < k; j = j + 1@every) {
+        let jc: integer@coordinator <- j;
+        let b: integer@coordinator = 3@coordinator * jc;
+        let sx: float@coordinator = p1[b] + p2[b] + p3[b] + p4[b];
+        let sy: float@coordinator = p1[b + 1@coordinator] + p2[b + 1@coordinator] + p3[b + 1@coordinator] + p4[b + 1@coordinator];
+        let count: float@coordinator = p1[b + 2@coordinator] + p2[b + 2@coordinator] + p3[b + 2@coordinator] + p4[b + 2@coordinator];
+        let ix: integer@coordinator = 2@coordinator * jc;
+        let iy: integer@coordinator = ix + 1@coordinator;
+        let ox: float@coordinator = centroids[ix];
+        let oy: float@coordinator = centroids[iy];
+        let nx: float@coordinator = meanOr(sx, count, ox);
+        let ny: float@coordinator = meanOr(sy, count, oy);
+        centroids[ix] = nx;
+        centroids[iy] = ny;
+        let dx: float@coordinator = nx - ox;
+        let dy: float@coordinator = ny - oy;
+        shift = maxOf(shift, dx * dx + dy * dy);
+    }
+    return shift;
+}
+
+// The total inertia: the sum of the workers' shares.
+function inertiaOf(p1: float[]@coordinator, p2: float[]@coordinator, p3: float[]@coordinator, p4: float[]@coordinator, k: integer@coordinator): float@coordinator {
+    let at: integer@coordinator = 3@coordinator * k;
+    let total: float@coordinator = p1[at] + p2[at] + p3[at] + p4[at];
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let n1: integer@worker1 <- POINTS;
+let k1: integer@worker1 <- K;
+let points1: float[]@worker1 = makePoints1(n1, 1361@worker1);
+let n2: integer@worker2 <- POINTS;
+let k2: integer@worker2 <- K;
+let points2: float[]@worker2 = makePoints2(n2, 2722@worker2);
+let n3: integer@worker3 <- POINTS;
+let k3: integer@worker3 <- K;
+let points3: float[]@worker3 = makePoints3(n3, 4083@worker3);
+let n4: integer@worker4 <- POINTS;
+let k4: integer@worker4 <- K;
+let points4: float[]@worker4 = makePoints4(n4, 5444@worker4);
+let kC: integer@coordinator <- K;
+let rng: integer[]@coordinator = [31337]@coordinator;
+
+let best: float@coordinator = 1000000000.0@coordinator;
+let monotone: boolean@coordinator = true@coordinator;
+let iterations: integer@coordinator = 0@coordinator;
+
+// ---------------------------------------------------------------------------
+// Restarts
+// ---------------------------------------------------------------------------
+
+for (let restart: integer@every = 0@every; restart < RESTARTS; restart = restart + 1@every) {
+    let centroids: float[]@coordinator = randomCentroids(rng, kC);
+    let previous: float@coordinator = 1000000000.0@coordinator;
+    let inertia: float@coordinator = previous;
+    let iter: integer@every = 0@every;
+    let moving: boolean@every = true@every;
+    while (moving) {
+        // 1. broadcast the centroids
+        let shared: float[]@every <- centroids;
+
+        // 2. assignment at each worker, partials back to the coordinator
+        let c1: float[]@worker1 <- shared;
+        let part1: float[]@worker1 = assign1(points1, c1, k1);
+        let p1: float[]@coordinator <- part1;
+        let c2: float[]@worker2 <- shared;
+        let part2: float[]@worker2 = assign2(points2, c2, k2);
+        let p2: float[]@coordinator <- part2;
+        let c3: float[]@worker3 <- shared;
+        let part3: float[]@worker3 = assign3(points3, c3, k3);
+        let p3: float[]@coordinator <- part3;
+        let c4: float[]@worker4 <- shared;
+        let part4: float[]@worker4 = assign4(points4, c4, k4);
+        let p4: float[]@coordinator <- part4;
+
+        // 3. reduce, move the centroids, decide whether to go on
+        inertia = inertiaOf(p1, p2, p3, p4, kC);
+        monotone = monotone && inertia <= previous + 0.01@coordinator;
+        previous = inertia;
+        let shift: float@coordinator = update(p1, p2, p3, p4, centroids, K);
+        iterations = iterations + 1@coordinator;
+        let movingC: boolean@coordinator = shift > 0.000001@coordinator;
+        let stillMoving: boolean@every <- movingC;
+        iter = iter + 1@every;
+        moving = stillMoving && iter < MAX_ITERS;
+    }
+    best = minOf(best, inertia);
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+// Four well-separated clusters of points spread +-12 around their centres:
+// a correct clustering has a mean squared distance of about 2 * 12^2 / 3 = 96.
+let pointsC: integer@coordinator <- POINTS;
+let bound: float@coordinator = 4.0@coordinator * (pointsC as float) * 110.0@coordinator;
+let ok: boolean@coordinator = monotone && best < bound;
+print(ok);
+print(best);
+print(iterations);

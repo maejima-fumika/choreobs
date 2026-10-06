@@ -1,0 +1,12 @@
+{
+  "name": "b-sensor-fusion",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "sensor1", "board": "host" },
+    { "name": "sensor2", "board": "host" },
+    { "name": "sensor3", "board": "host" },
+    { "name": "fusion", "board": "host" },
+    { "name": "controller", "board": "host" },
+    { "name": "actuator", "board": "host" }
+  ]
+}

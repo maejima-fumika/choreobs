@@ -4,4 +4,6 @@
 tsconfig.tsbuildinfo
 /examples/**/*.bs
 /examples/*/workspace/
+/benchmarks/**/*.bs
+/benchmarks/**/workspace/
 /scratchpad

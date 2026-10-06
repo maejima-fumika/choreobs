@@ -1,0 +1,11 @@
+{
+  "name": "d-kmeans",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "coordinator", "board": "host" },
+    { "name": "worker1", "board": "host" },
+    { "name": "worker2", "board": "host" },
+    { "name": "worker3", "board": "host" },
+    { "name": "worker4", "board": "host" }
+  ]
+}

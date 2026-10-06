@@ -1,0 +1,8 @@
+{
+  "name": "u1-arith-float",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
+}

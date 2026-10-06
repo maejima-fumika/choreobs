@@ -1,0 +1,11 @@
+{
+  "name": "g-secure-aggregation",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "server", "board": "host" },
+    { "name": "client1", "board": "host" },
+    { "name": "client2", "board": "host" },
+    { "name": "client3", "board": "host" },
+    { "name": "client4", "board": "host" }
+  ]
+}

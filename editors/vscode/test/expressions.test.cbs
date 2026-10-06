@@ -1,0 +1,48 @@
+// SYNTAX TEST "source.choreobs" "statements and expressions"
+
+let v: integer@bob <- x;
+//                 ^^ keyword.control.transfer.choreobs
+let w = a<-b;
+//       ^^ keyword.control.transfer.choreobs
+let z = a < -b;
+//        ^ keyword.operator.relational.choreobs
+//          ^ keyword.operator.arithmetic.choreobs
+
+if (a === b && c !== d || !e) {
+// <-- keyword.control.choreobs
+//    ^^^ keyword.operator.comparison.choreobs
+//          ^^ keyword.operator.logical.choreobs
+//               ^^^ keyword.operator.comparison.choreobs
+//                     ^^ keyword.operator.logical.choreobs
+//                        ^ keyword.operator.logical.choreobs
+} else {
+//^^^^ keyword.control.choreobs
+}
+
+for (let i = 0@every; i <= n; i = i + 1@every) {
+// <--- keyword.control.choreobs
+//       ^ variable.other.readwrite.choreobs
+//         ^ keyword.operator.assignment.choreobs
+//                      ^^ keyword.operator.relational.choreobs
+//                                  ^ keyword.operator.arithmetic.choreobs
+    while (f(i) > 2.5@alice) { }
+//  ^^^^^ keyword.control.choreobs
+//         ^ entity.name.function.call.choreobs
+//                ^^^ constant.numeric.float.choreobs
+}
+
+let r = x as float * 2.0@alice % 3;
+//        ^^ keyword.operator.expression.as.choreobs
+//           ^^^^^ support.type.primitive.choreobs
+
+xs.push(1@alice);
+//^ punctuation.accessor.choreobs
+// ^^^^ support.function.array.choreobs
+let len = xs.length;
+//           ^^^^^^ support.variable.property.array.choreobs
+print(xs[0@alice]);
+// <----- support.function.builtin.choreobs
+//      ^ meta.brace.square.choreobs
+let push = length(xs);
+//  ^^^^ variable.other.readwrite.choreobs
+//         ^^^^^^ entity.name.function.call.choreobs

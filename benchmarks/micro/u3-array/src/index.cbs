@@ -1,0 +1,62 @@
+// u3-array: array operations and array transfers in a choreography context.
+//
+// Endpoints: alice, bob.
+//
+// Phase 1 rebuilds an `integer[]@alice` PASSES times: each pass reads every
+// element, pushes a new value onto a fresh array, writes it back into place
+// and reads `.length`. All of it is choreography code, so each array
+// operation becomes a `__dynArray*` call once its locations are `dyn`.
+// Phase 2 sends the array to bob SENDS times. A received array is always a
+// fresh copy, and a dynamic transfer copies the payload too (`__copyArray`).
+//
+// Mechanisms: K1 (boxing), K5 (communication and copying).
+//
+// Output: alice prints `aliceSum` and bob prints `bobSum`.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let N: integer@every = 256@every;
+let PASSES: integer@every = 20@every;
+let SENDS: integer@every = 50@every;
+
+// ---------------------------------------------------------------------------
+// Phase 1: element access, push and length at alice
+// ---------------------------------------------------------------------------
+
+let xs: integer[]@alice = []@alice;
+for (let i: integer@every = 0@every; i < N; i = i + 1@every) {
+    let ia: integer@alice <- i;
+    xs.push((ia * 7@alice) % 101@alice);
+}
+
+let aliceSum: integer@alice = 0@alice;
+for (let p: integer@every = 0@every; p < PASSES; p = p + 1@every) {
+    let ys: integer[]@alice = []@alice;
+    for (let j: integer@every = 0@every; j < N; j = j + 1@every) {
+        let ja: integer@alice <- j;
+        let next: integer@alice = (xs[ja] * 3@alice + 1@alice) % 65537@alice;
+        ys.push(next);
+        xs[ja] = next;
+        aliceSum = (aliceSum + ys[ja]) % 1000003@alice;
+    }
+    let len: integer@alice = ys.length;
+    aliceSum = (aliceSum + len) % 1000003@alice;
+    xs = ys;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: whole-array transfers to bob
+// ---------------------------------------------------------------------------
+
+let bobSum: integer@bob = 0@bob;
+for (let s: integer@every = 0@every; s < SENDS; s = s + 1@every) {
+    let copy: integer[]@bob <- xs;
+    let sb: integer@bob <- s;
+    let k: integer@bob = (sb * 31@bob) % copy.length;
+    bobSum = (bobSum + copy[k]) % 1000003@bob;
+}
+
+print(aliceSum);
+print(bobSum);

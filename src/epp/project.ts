@@ -834,7 +834,7 @@ class Projector {
    * A dynamic operation is a call to the runtime, and every endpoint makes it,
    * exactly as every endpoint calls a choreography function (spec §dyn-lowering,
    * §calls-survive-an-absent-result). That holds where the result does not reside here too:
-   * `__cast(v, "alice")` still binds `v`'s location at bob, and every endpoint
+   * `__cast(v, __loc_alice)` still binds `v`'s location at bob, and every endpoint
    * must add the same constraints in the same order.
    */
   private projectRuntimeCall(expr: TypedRuntimeCallExpression): ProjectedExpression {

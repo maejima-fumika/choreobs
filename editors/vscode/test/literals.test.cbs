@@ -1,0 +1,31 @@
+// SYNTAX TEST "source.choreobs" "literals and comments"
+
+let s = "a\"b\\c\n\r\t" + "\q";
+//      ^ punctuation.definition.string.begin.choreobs
+//        ^^ constant.character.escape.choreobs
+//           ^^ constant.character.escape.choreobs
+//              ^^ constant.character.escape.choreobs
+//                ^^ constant.character.escape.choreobs
+//                  ^^ constant.character.escape.choreobs
+//                    ^ punctuation.definition.string.end.choreobs
+//                         ^^ invalid.illegal.unknown-escape.choreobs
+let t = "unterminated
+//      ^^^^^^^^^^^^^ string.quoted.double.choreobs
+let u = 1;
+//  ^ variable.other.readwrite.choreobs
+//      ^ constant.numeric.integer.choreobs
+
+/* a block comment
+   let inside = 1;
+// ^^^^^^^^^^^^^^^ comment.block.choreobs
+*/ let after = 1;
+// ^^^ storage.type.choreobs
+
+let arr = [1, 2]@alice; // trailing
+//        ^ meta.brace.square.choreobs
+//          ^ punctuation.separator.comma.choreobs
+//                      ^^^^^^^^^^^ comment.line.double-slash.choreobs
+let sensor1 = 3.x;
+//  ^^^^^^^ variable.other.readwrite.choreobs
+//            ^ constant.numeric.integer.choreobs
+//             ^ punctuation.accessor.choreobs

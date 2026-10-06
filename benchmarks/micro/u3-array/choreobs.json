@@ -1,0 +1,8 @@
+{
+  "name": "u3-array",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
+}

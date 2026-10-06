@@ -11,13 +11,8 @@ import type {
 import { childExpressions } from "../ir/traverse.js";
 import type { SpecCited, SpecRefs } from "../spec/ref.js";
 import { TOP_SCOPE } from "./tags.js";
-import { ALL_COMM_KINDS } from "../runtime/names.js";
 import { receiveFunction, sendFunction } from "../emit/comm.js";
-import {
-  DYN_LOCATION_NAME,
-  DYN_TRANSFER,
-  EVERY_LOCATION_NAME,
-} from "../runtime/dyn.js";
+import { DYN_TRANSFER, kindOfConstant, locationConstants } from "../runtime/dyn.js";
 
 /** Scope key for communication tags (spec §communication-tags): top-level or function name. */
 export type CommScopeId = string;
@@ -63,7 +58,8 @@ interface Occurrence {
   readonly role: CommRole;
   /**
    * Destination for `send`, source for `receive`, unused for `broadcast`, and
-   * the `to` argument — an endpoint, `every` or `dyn` — for `dynTransfer`.
+   * for `dynTransfer` the location its `to` constant names — an endpoint,
+   * `every` or `dyn` (spec §location-and-kind-codes).
    */
   readonly peer?: string;
   readonly path: ControlPath;
@@ -269,21 +265,23 @@ class CommConsistencyChecker {
   }
 
   /**
-   * `__dynTransfer("tag", "kind", "to", v)`: the first three arguments are
-   * the constants the compiler wrote (spec §dyn-lowering).
+   * `__dynTransfer("tag", __kind_k, __loc_L, v)`: the first three arguments
+   * are what the compiler wrote, a tag literal and two constants of the
+   * runtime file (spec §dyn-lowering, §location-and-kind-codes).
    */
   private registerDynTransfer(
     ctx: WalkContext,
     call: ProjectedExpression & { readonly kind: "CallExpression" },
   ): void {
-    const [tag, kind, to] = call.args.slice(0, 3).map((arg) =>
-      arg?.kind === "StringLiteralExpression" ? arg.value : undefined,
-    );
+    const [tagArg, kindArg, toArg] = call.args;
+    const tag = tagArg?.kind === "StringLiteralExpression" ? tagArg.value : undefined;
+    const kind = kindArg?.kind === "IdentifierExpression" ? kindArg.name : undefined;
+    const toName = toArg?.kind === "IdentifierExpression" ? toArg.name : undefined;
     if (
       call.args.length !== 4 ||
       tag === undefined ||
       kind === undefined ||
-      to === undefined
+      toName === undefined
     ) {
       this.error(
         `malformed ${DYN_TRANSFER} call at ${ctx.endpoint} (scope ${ctx.scope}): expected a tag, a kind, a location and a value`,
@@ -291,17 +289,18 @@ class CommConsistencyChecker {
       );
       return;
     }
-    const comm = ALL_COMM_KINDS.find((k) => k === kind);
+    const comm = kindOfConstant(kind);
     if (comm === undefined) {
       this.error(
-        `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} names unknown kind '${kind}' (scope ${ctx.scope})`,
+        `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} names unknown kind constant '${kind}' (scope ${ctx.scope})`,
         call.span,
       );
       return;
     }
-    if (to !== DYN_LOCATION_NAME && to !== EVERY_LOCATION_NAME && !this.endpoints.includes(to)) {
+    const to = locationConstants(this.endpoints).find((c) => c.name === toName)?.location;
+    if (to === undefined) {
       this.error(
-        `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} transfers to unknown location '${to}' (scope ${ctx.scope})`,
+        `${DYN_TRANSFER} for tag ${tag} at ${ctx.endpoint} transfers to unknown location constant '${toName}' (scope ${ctx.scope})`,
         call.span,
       );
     }
@@ -309,7 +308,7 @@ class CommConsistencyChecker {
       tag,
       comm,
       role: "dynTransfer",
-      peer: to,
+      peer: to ?? toName,
       span: call.span,
     });
   }

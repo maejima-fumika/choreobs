@@ -1,0 +1,38 @@
+// u2-ping-pong: point-to-point transfer latency.
+//
+// Endpoints: alice, bob.
+//
+// A scalar makes ROUNDS round trips alice -> bob -> alice, with one addition
+// at bob per round. The loop is dominated by the two transfers, so this
+// measures what a transfer costs once one of its sides is `dyn`: the
+// `__dynTransfer` call, its dispatch on where the source turns out to be, and,
+// when the destination is `dyn`, a broadcast in place of a send.
+//
+// The three configurations of interest (see benchmarks/README.md):
+//   source dyn       `ball` is `integer@dyn`
+//   destination dyn  `atBob` is `integer@dyn`
+//   both             both of them
+//
+// Mechanisms: K3 (dispatch), K5 (communication).
+//
+// Output: alice prints the final value of `ball`.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ROUNDS: integer@every = 2000@every;
+
+// ---------------------------------------------------------------------------
+// Kernel
+// ---------------------------------------------------------------------------
+
+let ball: integer@alice = 0@alice;
+
+for (let i: integer@every = 0@every; i < ROUNDS; i = i + 1@every) {
+    let atBob: integer@bob <- ball;
+    let back: integer@bob = (atBob * 3@bob + 1@bob) % 65537@bob;
+    ball <- back;
+}
+
+print(ball);

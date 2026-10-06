@@ -1,0 +1,665 @@
+// A smallbank-2pc: SmallBank transactions over two-phase commit.
+//
+// Endpoints: coordinator, shard1, shard2, shard3.
+//
+// Each shard holds a partition of the bank: checking and savings balances and
+// a lock per account. The coordinator generates a stream of SmallBank
+// transactions and runs each one with two-phase commit:
+//
+//   1. the coordinator broadcasts the transaction header;
+//   2. prepare: the source shard (and, for a distributed transaction, the
+//      destination shard) locks the account, checks its constraint and votes;
+//   3. the coordinator decides and broadcasts the decision;
+//   4. commit: the source applies the transaction and sends the amount it
+//      moved straight to the destination shard, which applies it; both ack.
+//      abort: each participant releases its lock and acks.
+//
+// Balance is a read at the source shard, answered to the coordinator.
+//
+// Every routing decision is an `if` chain on a shard id that is broadcast at
+// `every`, so the code is large and branch-heavy and almost all of it is
+// choreography code. Only the workload generator, initialisation and the
+// final audit are local kernels.
+//
+// Self-check: money is conserved (the shards' totals equal the initial total
+// plus the deposits committed), every participant acked, and no lock is left
+// held.
+//
+// Output: the coordinator prints `ok`, the number of committed and aborted
+// transactions, and a checksum of the balances read.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let TXNS: integer@every = 300@every;
+let ACCOUNTS: integer@every = 64@every;
+let INITIAL: integer@every = 1000@every;
+
+// ---------------------------------------------------------------------------
+// coordinator: workload generation
+// ---------------------------------------------------------------------------
+
+function rand@coordinator(rng: integer[]@coordinator, bound: integer@coordinator): integer@coordinator {
+    let s = (rng[0@coordinator] * 75@coordinator + 74@coordinator) % 65537@coordinator;
+    rng[0@coordinator] = s;
+    return s % bound;
+}
+
+// The next transaction, as [type, srcShard, srcAccount, dstShard, dstAccount, amount].
+// The mix is SmallBank's, without WriteCheck:
+//   0 Balance 15%, 1 DepositChecking 20%, 2 TransactSavings 15%,
+//   3 SendPayment 35%, 4 Amalgamate 15%.
+// The destination shard always differs from the source shard, so types 3 and
+// 4 are distributed transactions.
+function nextTxn@coordinator(rng: integer[]@coordinator, accounts: integer@coordinator): integer[]@coordinator {
+    let r = rand(rng, 100@coordinator);
+    let ty = 0@coordinator;
+    if (r >= 15@coordinator) {
+        ty = 1@coordinator;
+    }
+    if (r >= 35@coordinator) {
+        ty = 2@coordinator;
+    }
+    if (r >= 50@coordinator) {
+        ty = 3@coordinator;
+    }
+    if (r >= 85@coordinator) {
+        ty = 4@coordinator;
+    }
+    let src = rand(rng, 3@coordinator) + 1@coordinator;
+    let dst = (src + rand(rng, 2@coordinator)) % 3@coordinator + 1@coordinator;
+    let a = rand(rng, accounts);
+    let b = rand(rng, accounts);
+    let amt = rand(rng, 200@coordinator) + 1@coordinator;
+    if (ty === 2@coordinator) {
+        amt = amt - 100@coordinator;
+    }
+    let hdr: integer[]@coordinator = [ty, src, a, dst, b, amt]@coordinator;
+    return hdr;
+}
+
+// ---------------------------------------------------------------------------
+// shard1: local kernels
+// ---------------------------------------------------------------------------
+
+function newAccounts1@shard1(n: integer@shard1, initial: integer@shard1): integer[]@shard1 {
+    let xs: integer[]@shard1 = []@shard1;
+    for (let i = 0@shard1; i < n; i = i + 1@shard1) {
+        xs.push(initial);
+    }
+    return xs;
+}
+
+function newLocks1@shard1(n: integer@shard1): boolean[]@shard1 {
+    let xs: boolean[]@shard1 = []@shard1;
+    for (let i = 0@shard1; i < n; i = i + 1@shard1) {
+        xs.push(false@shard1);
+    }
+    return xs;
+}
+
+function rand1@shard1(rng: integer[]@shard1, bound: integer@shard1): integer@shard1 {
+    let s = (rng[0@shard1] * 75@shard1 + 74@shard1) % 65537@shard1;
+    rng[0@shard1] = s;
+    return s % bound;
+}
+
+function total1@shard1(checking: integer[]@shard1, savings: integer[]@shard1): integer@shard1 {
+    let sum = 0@shard1;
+    for (let i = 0@shard1; i < checking.length; i = i + 1@shard1) {
+        sum = sum + checking[i] + savings[i];
+    }
+    return sum;
+}
+
+function lockedCount1@shard1(locked: boolean[]@shard1): integer@shard1 {
+    let n = 0@shard1;
+    for (let i = 0@shard1; i < locked.length; i = i + 1@shard1) {
+        if (locked[i]) {
+            n = n + 1@shard1;
+        }
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// shard2: local kernels
+// ---------------------------------------------------------------------------
+
+function newAccounts2@shard2(n: integer@shard2, initial: integer@shard2): integer[]@shard2 {
+    let xs: integer[]@shard2 = []@shard2;
+    for (let i = 0@shard2; i < n; i = i + 1@shard2) {
+        xs.push(initial);
+    }
+    return xs;
+}
+
+function newLocks2@shard2(n: integer@shard2): boolean[]@shard2 {
+    let xs: boolean[]@shard2 = []@shard2;
+    for (let i = 0@shard2; i < n; i = i + 1@shard2) {
+        xs.push(false@shard2);
+    }
+    return xs;
+}
+
+function rand2@shard2(rng: integer[]@shard2, bound: integer@shard2): integer@shard2 {
+    let s = (rng[0@shard2] * 75@shard2 + 74@shard2) % 65537@shard2;
+    rng[0@shard2] = s;
+    return s % bound;
+}
+
+function total2@shard2(checking: integer[]@shard2, savings: integer[]@shard2): integer@shard2 {
+    let sum = 0@shard2;
+    for (let i = 0@shard2; i < checking.length; i = i + 1@shard2) {
+        sum = sum + checking[i] + savings[i];
+    }
+    return sum;
+}
+
+function lockedCount2@shard2(locked: boolean[]@shard2): integer@shard2 {
+    let n = 0@shard2;
+    for (let i = 0@shard2; i < locked.length; i = i + 1@shard2) {
+        if (locked[i]) {
+            n = n + 1@shard2;
+        }
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// shard3: local kernels
+// ---------------------------------------------------------------------------
+
+function newAccounts3@shard3(n: integer@shard3, initial: integer@shard3): integer[]@shard3 {
+    let xs: integer[]@shard3 = []@shard3;
+    for (let i = 0@shard3; i < n; i = i + 1@shard3) {
+        xs.push(initial);
+    }
+    return xs;
+}
+
+function newLocks3@shard3(n: integer@shard3): boolean[]@shard3 {
+    let xs: boolean[]@shard3 = []@shard3;
+    for (let i = 0@shard3; i < n; i = i + 1@shard3) {
+        xs.push(false@shard3);
+    }
+    return xs;
+}
+
+function rand3@shard3(rng: integer[]@shard3, bound: integer@shard3): integer@shard3 {
+    let s = (rng[0@shard3] * 75@shard3 + 74@shard3) % 65537@shard3;
+    rng[0@shard3] = s;
+    return s % bound;
+}
+
+function total3@shard3(checking: integer[]@shard3, savings: integer[]@shard3): integer@shard3 {
+    let sum = 0@shard3;
+    for (let i = 0@shard3; i < checking.length; i = i + 1@shard3) {
+        sum = sum + checking[i] + savings[i];
+    }
+    return sum;
+}
+
+function lockedCount3@shard3(locked: boolean[]@shard3): integer@shard3 {
+    let n = 0@shard3;
+    for (let i = 0@shard3; i < locked.length; i = i + 1@shard3) {
+        if (locked[i]) {
+            n = n + 1@shard3;
+        }
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// shard1: its side of the protocol
+// ---------------------------------------------------------------------------
+
+// Balance: the source account's checking plus savings.
+function balance1(hdr: integer[]@every, checking: integer[]@shard1, savings: integer[]@shard1): integer@shard1 {
+    let a: integer@shard1 <- hdr[2@every];
+    let b: integer@shard1 = checking[a] + savings[a];
+    return b;
+}
+
+// Prepare as the source: lock the account and check the funds the
+// transaction would take from it. A participant may also fail (2%).
+function prepareSrc1(hdr: integer[]@every, checking: integer[]@shard1, savings: integer[]@shard1, locked: boolean[]@shard1, rng: integer[]@shard1): boolean@shard1 {
+    let ty: integer@every = hdr[0@every];
+    let a: integer@shard1 <- hdr[2@every];
+    let amt: integer@shard1 <- hdr[5@every];
+    let free: boolean@shard1 = !locked[a];
+    let fault: boolean@shard1 = rand1(rng, 100@shard1) < 2@shard1;
+    let funds: boolean@shard1 = true@shard1;
+    if (ty === 2@every) {
+        funds = savings[a] + amt >= 0@shard1;
+    }
+    if (ty === 3@every) {
+        funds = checking[a] >= amt;
+    }
+    let vote: boolean@shard1 = free && funds && !fault;
+    locked[a] = locked[a] || vote;
+    return vote;
+}
+
+// Prepare as the destination: lock the account that will be credited.
+function prepareDst1(hdr: integer[]@every, locked: boolean[]@shard1, rng: integer[]@shard1): boolean@shard1 {
+    let a: integer@shard1 <- hdr[4@every];
+    let free: boolean@shard1 = !locked[a];
+    let fault: boolean@shard1 = rand1(rng, 100@shard1) < 2@shard1;
+    let vote: boolean@shard1 = free && !fault;
+    locked[a] = locked[a] || vote;
+    return vote;
+}
+
+// Commit as the source. Returns the amount that leaves the account for the
+// destination: the payment, or everything for Amalgamate.
+function commitSrc1(hdr: integer[]@every, checking: integer[]@shard1, savings: integer[]@shard1, locked: boolean[]@shard1): integer@shard1 {
+    let ty: integer@every = hdr[0@every];
+    let a: integer@shard1 <- hdr[2@every];
+    let amt: integer@shard1 <- hdr[5@every];
+    let moved: integer@shard1 = 0@shard1;
+    if (ty === 1@every) {
+        checking[a] = checking[a] + amt;
+    }
+    if (ty === 2@every) {
+        savings[a] = savings[a] + amt;
+    }
+    if (ty === 3@every) {
+        checking[a] = checking[a] - amt;
+        moved = amt;
+    }
+    if (ty === 4@every) {
+        moved = checking[a] + savings[a];
+        checking[a] = 0@shard1;
+        savings[a] = 0@shard1;
+    }
+    locked[a] = false@shard1;
+    return moved;
+}
+
+// Commit as the destination: credit what the source sent.
+function commitDst1(hdr: integer[]@every, moved: integer@shard1, checking: integer[]@shard1, locked: boolean[]@shard1): boolean@shard1 {
+    let a: integer@shard1 <- hdr[4@every];
+    checking[a] = checking[a] + moved;
+    locked[a] = false@shard1;
+    return true@shard1;
+}
+
+// Abort: release whatever this participant locked.
+function abort1(hdr: integer[]@every, field: integer@every, locked: boolean[]@shard1): boolean@shard1 {
+    let a: integer@shard1 <- hdr[field];
+    locked[a] = false@shard1;
+    return true@shard1;
+}
+
+// ---------------------------------------------------------------------------
+// shard2: its side of the protocol
+// ---------------------------------------------------------------------------
+
+// Balance: the source account's checking plus savings.
+function balance2(hdr: integer[]@every, checking: integer[]@shard2, savings: integer[]@shard2): integer@shard2 {
+    let a: integer@shard2 <- hdr[2@every];
+    let b: integer@shard2 = checking[a] + savings[a];
+    return b;
+}
+
+// Prepare as the source: lock the account and check the funds the
+// transaction would take from it. A participant may also fail (2%).
+function prepareSrc2(hdr: integer[]@every, checking: integer[]@shard2, savings: integer[]@shard2, locked: boolean[]@shard2, rng: integer[]@shard2): boolean@shard2 {
+    let ty: integer@every = hdr[0@every];
+    let a: integer@shard2 <- hdr[2@every];
+    let amt: integer@shard2 <- hdr[5@every];
+    let free: boolean@shard2 = !locked[a];
+    let fault: boolean@shard2 = rand2(rng, 100@shard2) < 2@shard2;
+    let funds: boolean@shard2 = true@shard2;
+    if (ty === 2@every) {
+        funds = savings[a] + amt >= 0@shard2;
+    }
+    if (ty === 3@every) {
+        funds = checking[a] >= amt;
+    }
+    let vote: boolean@shard2 = free && funds && !fault;
+    locked[a] = locked[a] || vote;
+    return vote;
+}
+
+// Prepare as the destination: lock the account that will be credited.
+function prepareDst2(hdr: integer[]@every, locked: boolean[]@shard2, rng: integer[]@shard2): boolean@shard2 {
+    let a: integer@shard2 <- hdr[4@every];
+    let free: boolean@shard2 = !locked[a];
+    let fault: boolean@shard2 = rand2(rng, 100@shard2) < 2@shard2;
+    let vote: boolean@shard2 = free && !fault;
+    locked[a] = locked[a] || vote;
+    return vote;
+}
+
+// Commit as the source. Returns the amount that leaves the account for the
+// destination: the payment, or everything for Amalgamate.
+function commitSrc2(hdr: integer[]@every, checking: integer[]@shard2, savings: integer[]@shard2, locked: boolean[]@shard2): integer@shard2 {
+    let ty: integer@every = hdr[0@every];
+    let a: integer@shard2 <- hdr[2@every];
+    let amt: integer@shard2 <- hdr[5@every];
+    let moved: integer@shard2 = 0@shard2;
+    if (ty === 1@every) {
+        checking[a] = checking[a] + amt;
+    }
+    if (ty === 2@every) {
+        savings[a] = savings[a] + amt;
+    }
+    if (ty === 3@every) {
+        checking[a] = checking[a] - amt;
+        moved = amt;
+    }
+    if (ty === 4@every) {
+        moved = checking[a] + savings[a];
+        checking[a] = 0@shard2;
+        savings[a] = 0@shard2;
+    }
+    locked[a] = false@shard2;
+    return moved;
+}
+
+// Commit as the destination: credit what the source sent.
+function commitDst2(hdr: integer[]@every, moved: integer@shard2, checking: integer[]@shard2, locked: boolean[]@shard2): boolean@shard2 {
+    let a: integer@shard2 <- hdr[4@every];
+    checking[a] = checking[a] + moved;
+    locked[a] = false@shard2;
+    return true@shard2;
+}
+
+// Abort: release whatever this participant locked.
+function abort2(hdr: integer[]@every, field: integer@every, locked: boolean[]@shard2): boolean@shard2 {
+    let a: integer@shard2 <- hdr[field];
+    locked[a] = false@shard2;
+    return true@shard2;
+}
+
+// ---------------------------------------------------------------------------
+// shard3: its side of the protocol
+// ---------------------------------------------------------------------------
+
+// Balance: the source account's checking plus savings.
+function balance3(hdr: integer[]@every, checking: integer[]@shard3, savings: integer[]@shard3): integer@shard3 {
+    let a: integer@shard3 <- hdr[2@every];
+    let b: integer@shard3 = checking[a] + savings[a];
+    return b;
+}
+
+// Prepare as the source: lock the account and check the funds the
+// transaction would take from it. A participant may also fail (2%).
+function prepareSrc3(hdr: integer[]@every, checking: integer[]@shard3, savings: integer[]@shard3, locked: boolean[]@shard3, rng: integer[]@shard3): boolean@shard3 {
+    let ty: integer@every = hdr[0@every];
+    let a: integer@shard3 <- hdr[2@every];
+    let amt: integer@shard3 <- hdr[5@every];
+    let free: boolean@shard3 = !locked[a];
+    let fault: boolean@shard3 = rand3(rng, 100@shard3) < 2@shard3;
+    let funds: boolean@shard3 = true@shard3;
+    if (ty === 2@every) {
+        funds = savings[a] + amt >= 0@shard3;
+    }
+    if (ty === 3@every) {
+        funds = checking[a] >= amt;
+    }
+    let vote: boolean@shard3 = free && funds && !fault;
+    locked[a] = locked[a] || vote;
+    return vote;
+}
+
+// Prepare as the destination: lock the account that will be credited.
+function prepareDst3(hdr: integer[]@every, locked: boolean[]@shard3, rng: integer[]@shard3): boolean@shard3 {
+    let a: integer@shard3 <- hdr[4@every];
+    let free: boolean@shard3 = !locked[a];
+    let fault: boolean@shard3 = rand3(rng, 100@shard3) < 2@shard3;
+    let vote: boolean@shard3 = free && !fault;
+    locked[a] = locked[a] || vote;
+    return vote;
+}
+
+// Commit as the source. Returns the amount that leaves the account for the
+// destination: the payment, or everything for Amalgamate.
+function commitSrc3(hdr: integer[]@every, checking: integer[]@shard3, savings: integer[]@shard3, locked: boolean[]@shard3): integer@shard3 {
+    let ty: integer@every = hdr[0@every];
+    let a: integer@shard3 <- hdr[2@every];
+    let amt: integer@shard3 <- hdr[5@every];
+    let moved: integer@shard3 = 0@shard3;
+    if (ty === 1@every) {
+        checking[a] = checking[a] + amt;
+    }
+    if (ty === 2@every) {
+        savings[a] = savings[a] + amt;
+    }
+    if (ty === 3@every) {
+        checking[a] = checking[a] - amt;
+        moved = amt;
+    }
+    if (ty === 4@every) {
+        moved = checking[a] + savings[a];
+        checking[a] = 0@shard3;
+        savings[a] = 0@shard3;
+    }
+    locked[a] = false@shard3;
+    return moved;
+}
+
+// Commit as the destination: credit what the source sent.
+function commitDst3(hdr: integer[]@every, moved: integer@shard3, checking: integer[]@shard3, locked: boolean[]@shard3): boolean@shard3 {
+    let a: integer@shard3 <- hdr[4@every];
+    checking[a] = checking[a] + moved;
+    locked[a] = false@shard3;
+    return true@shard3;
+}
+
+// Abort: release whatever this participant locked.
+function abort3(hdr: integer[]@every, field: integer@every, locked: boolean[]@shard3): boolean@shard3 {
+    let a: integer@shard3 <- hdr[field];
+    locked[a] = false@shard3;
+    return true@shard3;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let accountsC: integer@coordinator <- ACCOUNTS;
+let rng: integer[]@coordinator = [4242]@coordinator;
+
+let n1: integer@shard1 <- ACCOUNTS;
+let init1: integer@shard1 <- INITIAL;
+let checking1: integer[]@shard1 = newAccounts1(n1, init1);
+let savings1: integer[]@shard1 = newAccounts1(n1, init1);
+let locked1: boolean[]@shard1 = newLocks1(n1);
+let rng1: integer[]@shard1 = [101]@shard1;
+
+let n2: integer@shard2 <- ACCOUNTS;
+let init2: integer@shard2 <- INITIAL;
+let checking2: integer[]@shard2 = newAccounts2(n2, init2);
+let savings2: integer[]@shard2 = newAccounts2(n2, init2);
+let locked2: boolean[]@shard2 = newLocks2(n2);
+let rng2: integer[]@shard2 = [202]@shard2;
+
+let n3: integer@shard3 <- ACCOUNTS;
+let init3: integer@shard3 <- INITIAL;
+let checking3: integer[]@shard3 = newAccounts3(n3, init3);
+let savings3: integer[]@shard3 = newAccounts3(n3, init3);
+let locked3: boolean[]@shard3 = newLocks3(n3);
+let rng3: integer[]@shard3 = [303]@shard3;
+
+let committed: integer@coordinator = 0@coordinator;
+let aborted: integer@coordinator = 0@coordinator;
+let inflow: integer@coordinator = 0@coordinator;
+let balanceSum: integer@coordinator = 0@coordinator;
+let allAcked: boolean@coordinator = true@coordinator;
+
+// ---------------------------------------------------------------------------
+// The transaction stream
+// ---------------------------------------------------------------------------
+
+for (let t: integer@every = 0@every; t < TXNS; t = t + 1@every) {
+    let hdrC: integer[]@coordinator = nextTxn(rng, accountsC);
+    let hdr: integer[]@every <- hdrC;
+    let ty: integer@every = hdr[0@every];
+    let src: integer@every = hdr[1@every];
+    let dst: integer@every = hdr[3@every];
+    let cross: boolean@every = ty >= 3@every;
+
+    if (ty === 0@every) {
+        // Balance: a single read, no commit protocol.
+        let bal: integer@coordinator = 0@coordinator;
+        if (src === 1@every) {
+            let b1: integer@shard1 = balance1(hdr, checking1, savings1);
+            bal <- b1;
+        } else {
+            if (src === 2@every) {
+                let b2: integer@shard2 = balance2(hdr, checking2, savings2);
+                bal <- b2;
+            } else {
+                let b3: integer@shard3 = balance3(hdr, checking3, savings3);
+                bal <- b3;
+            }
+        }
+        balanceSum = (balanceSum + bal) % 1000003@coordinator;
+    } else {
+        // Phase 1: prepare.
+        let voteSrc: boolean@coordinator = false@coordinator;
+        if (src === 1@every) {
+            let v1: boolean@shard1 = prepareSrc1(hdr, checking1, savings1, locked1, rng1);
+            voteSrc <- v1;
+        } else {
+            if (src === 2@every) {
+                let v2: boolean@shard2 = prepareSrc2(hdr, checking2, savings2, locked2, rng2);
+                voteSrc <- v2;
+            } else {
+                let v3: boolean@shard3 = prepareSrc3(hdr, checking3, savings3, locked3, rng3);
+                voteSrc <- v3;
+            }
+        }
+        let voteDst: boolean@coordinator = true@coordinator;
+        if (cross) {
+            if (dst === 1@every) {
+                let w1: boolean@shard1 = prepareDst1(hdr, locked1, rng1);
+                voteDst <- w1;
+            } else {
+                if (dst === 2@every) {
+                    let w2: boolean@shard2 = prepareDst2(hdr, locked2, rng2);
+                    voteDst <- w2;
+                } else {
+                    let w3: boolean@shard3 = prepareDst3(hdr, locked3, rng3);
+                    voteDst <- w3;
+                }
+            }
+        }
+
+        // Phase 2: decide, then commit or abort.
+        let decisionC: boolean@coordinator = voteSrc && voteDst;
+        let decision: boolean@every <- decisionC;
+        let ackSrc: boolean@coordinator = false@coordinator;
+        let ackDst: boolean@coordinator = true@coordinator;
+        if (decision) {
+            if (src === 1@every) {
+                let out1: integer@shard1 = commitSrc1(hdr, checking1, savings1, locked1);
+                let acked1: boolean@shard1 = true@shard1;
+                ackSrc <- acked1;
+                if (cross) {
+                    if (dst === 2@every) {
+                        let in2: integer@shard2 <- out1;
+                        let done2: boolean@shard2 = commitDst2(hdr, in2, checking2, locked2);
+                        ackDst <- done2;
+                    } else {
+                        let in3: integer@shard3 <- out1;
+                        let done3: boolean@shard3 = commitDst3(hdr, in3, checking3, locked3);
+                        ackDst <- done3;
+                    }
+                }
+            } else {
+                if (src === 2@every) {
+                    let out2: integer@shard2 = commitSrc2(hdr, checking2, savings2, locked2);
+                    let acked2: boolean@shard2 = true@shard2;
+                    ackSrc <- acked2;
+                    if (cross) {
+                        if (dst === 1@every) {
+                            let in1: integer@shard1 <- out2;
+                            let done1: boolean@shard1 = commitDst1(hdr, in1, checking1, locked1);
+                            ackDst <- done1;
+                        } else {
+                            let in3: integer@shard3 <- out2;
+                            let done3: boolean@shard3 = commitDst3(hdr, in3, checking3, locked3);
+                            ackDst <- done3;
+                        }
+                    }
+                } else {
+                    let out3: integer@shard3 = commitSrc3(hdr, checking3, savings3, locked3);
+                    let acked3: boolean@shard3 = true@shard3;
+                    ackSrc <- acked3;
+                    if (cross) {
+                        if (dst === 1@every) {
+                            let in1: integer@shard1 <- out3;
+                            let done1: boolean@shard1 = commitDst1(hdr, in1, checking1, locked1);
+                            ackDst <- done1;
+                        } else {
+                            let in2: integer@shard2 <- out3;
+                            let done2: boolean@shard2 = commitDst2(hdr, in2, checking2, locked2);
+                            ackDst <- done2;
+                        }
+                    }
+                }
+            }
+            committed = committed + 1@coordinator;
+            let local: boolean@every = ty <= 2@every;
+            if (local) {
+                inflow = inflow + hdrC[5@coordinator];
+            }
+        } else {
+            // Each participant releases the account it would have locked.
+            // Transactions run one at a time, so no other transaction holds
+            // it, and releasing an account that was never locked is harmless.
+            if (src === 1@every) {
+                let r1: boolean@shard1 = abort1(hdr, 2@every, locked1);
+                ackSrc <- r1;
+            } else {
+                if (src === 2@every) {
+                    let r2: boolean@shard2 = abort2(hdr, 2@every, locked2);
+                    ackSrc <- r2;
+                } else {
+                    let r3: boolean@shard3 = abort3(hdr, 2@every, locked3);
+                    ackSrc <- r3;
+                }
+            }
+            if (cross) {
+                if (dst === 1@every) {
+                    let q1: boolean@shard1 = abort1(hdr, 4@every, locked1);
+                    ackDst <- q1;
+                } else {
+                    if (dst === 2@every) {
+                        let q2: boolean@shard2 = abort2(hdr, 4@every, locked2);
+                        ackDst <- q2;
+                    } else {
+                        let q3: boolean@shard3 = abort3(hdr, 4@every, locked3);
+                        ackDst <- q3;
+                    }
+                }
+            }
+            aborted = aborted + 1@coordinator;
+        }
+        allAcked = allAcked && ackSrc && ackDst;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+let sum1: integer@coordinator <- total1(checking1, savings1);
+let held1: integer@coordinator <- lockedCount1(locked1);
+let sum2: integer@coordinator <- total2(checking2, savings2);
+let held2: integer@coordinator <- lockedCount2(locked2);
+let sum3: integer@coordinator <- total3(checking3, savings3);
+let held3: integer@coordinator <- lockedCount3(locked3);
+let initialTotal: integer@coordinator = 3@coordinator * 2@coordinator * accountsC * 1000@coordinator;
+let conserved: boolean@coordinator = sum1 + sum2 + sum3 === initialTotal + inflow;
+let unlocked: boolean@coordinator = held1 + held2 + held3 === 0@coordinator;
+let ok: boolean@coordinator = conserved && unlocked && allAcked;
+print(ok);
+print(committed);
+print(aborted);
+print(balanceSum);

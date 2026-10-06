@@ -55,8 +55,10 @@ So the driver treats every outcome other than success as something to look at:
   every endpoint, or hold the dynamic-location runtime when no program imports
   from it or lack it when one does (spec §runtime-files),
   compilation is not deterministic, the output depends on the order endpoints
-  are declared in, or a program written for strict mode compiles differently
-  without it (spec §strict-mode).
+  are declared in, a program written for strict mode compiles differently
+  without it (spec §strict-mode), or leaving out every location written inside
+  its local functions changes its acceptance or its output
+  (spec §local-function-location-inference; the rewrite is [`strip.ts`](strip.ts)).
 
 These output checks live in [`inspect.ts`](inspect.ts), which the fixed corpus in
 `test/integration/fuzz.test.ts` uses too.

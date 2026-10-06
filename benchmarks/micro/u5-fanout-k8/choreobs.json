@@ -1,0 +1,15 @@
+{
+  "name": "u5-fanout-k8",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "root", "board": "host" },
+    { "name": "worker1", "board": "host" },
+    { "name": "worker2", "board": "host" },
+    { "name": "worker3", "board": "host" },
+    { "name": "worker4", "board": "host" },
+    { "name": "worker5", "board": "host" },
+    { "name": "worker6", "board": "host" },
+    { "name": "worker7", "board": "host" },
+    { "name": "worker8", "board": "host" }
+  ]
+}

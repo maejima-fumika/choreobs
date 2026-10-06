@@ -1,0 +1,39 @@
+// SYNTAX TEST "source.choreobs" "function declarations, types and locations"
+
+function add@alice(a: integer@alice, b: float[]@alice): integer@alice {
+// <-------- storage.type.function.choreobs
+//       ^^^ entity.name.function.choreobs
+//          ^^^^^^ variable.other.constant.location.choreobs
+//          ^ punctuation.definition.location.choreobs
+//                 ^ variable.other.readwrite.choreobs
+//                  ^ punctuation.separator.colon.choreobs
+//                    ^^^^^^^ support.type.primitive.choreobs
+//                           ^^^^^^ variable.other.constant.location.choreobs
+//                                      ^^^^^ support.type.primitive.choreobs
+//                                           ^^ meta.brace.square.choreobs
+//                                             ^^^^^^ variable.other.constant.location.choreobs
+    return a;
+//  ^^^^^^ keyword.control.choreobs
+}
+
+function main(): void {
+//       ^^^^ entity.name.function.choreobs
+//               ^^^^ support.type.primitive.choreobs
+    let c: boolean@every = true@every;
+//  ^^^ storage.type.choreobs
+//         ^^^^^^^ support.type.primitive.choreobs
+//                ^^^^^^ constant.language.location.every.choreobs
+//                ^ punctuation.definition.location.choreobs
+//                         ^^^^ constant.language.boolean.choreobs
+//                             ^^^^^^ constant.language.location.every.choreobs
+    let x: integer@dyn = 3@dyn;
+//                ^^^^ constant.language.location.dyn.choreobs
+//                       ^ constant.numeric.integer.choreobs
+//                        ^^^^ constant.language.location.dyn.choreobs
+    let y: integer@ everyone = 3@ dynamo;
+//                ^^^^^^^^^^ variable.other.constant.location.choreobs
+//                               ^^^^^^^ variable.other.constant.location.choreobs
+    let n: null@Sensor1 = null@Sensor1;
+//         ^^^^ constant.language.null.choreobs
+//             ^^^^^^^^ variable.other.constant.location.choreobs
+}

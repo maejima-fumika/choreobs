@@ -1,0 +1,308 @@
+// C replicated-kvs: a primary-backup key-value store under a YCSB-style load.
+//
+// Endpoints: client, primary, backup1, backup2.
+//
+// Each replica holds an open-addressing hash table in two `integer[]` arrays
+// (keys and values; -1 marks an empty slot). The client issues a stream of
+// operations against the primary:
+//
+//   read              the primary answers with the value (-1 if absent);
+//   update            the primary writes, replicates the write to both
+//                     backups, waits for their acks, then acks the client;
+//   read-modify-write a read, a new value computed at the client, and an
+//                     update.
+//
+// The mix is 50/35/15 (YCSB workloads A and F). Which kind each operation is
+// is drawn from a seed at `every`, standing in for a workload every endpoint
+// knows; keys and values come from the client's own generator. Every
+// CHECK_EVERY operations the replicas compare table checksums at the primary
+// and the verdict is broadcast.
+//
+// Computation is small: probing and checksums are local kernels, and
+// everything else is choreography code and messages. This is the
+// communication-bound end of the macro suite.
+//
+// Self-check: every consistency check, and a final one, found the three
+// replicas identical.
+//
+// Output: the client prints `ok`, the number of writes and a checksum of
+// the values read.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let OPS: integer@every = 400@every;
+let KEYS: integer@every = 200@every;
+let CAPACITY: integer@every = 512@every;
+let CHECK_EVERY: integer@every = 50@every;
+
+// ---------------------------------------------------------------------------
+// client: workload kernels
+// ---------------------------------------------------------------------------
+
+function randC@client(rng: integer[]@client, bound: integer@client): integer@client {
+    let s = (rng[0@client] * 75@client + 74@client) % 65537@client;
+    rng[0@client] = s;
+    return s % bound;
+}
+
+// The new value of a read-modify-write: an absent key counts as 0.
+function bump@client(old: integer@client, delta: integer@client): integer@client {
+    let base = old;
+    if (old < 0@client) {
+        base = 0@client;
+    }
+    return (base + delta) % 100000@client;
+}
+
+// ---------------------------------------------------------------------------
+// primary: hash-table kernels
+// ---------------------------------------------------------------------------
+
+function newTableP@primary(capacity: integer@primary, fill: integer@primary): integer[]@primary {
+    let xs: integer[]@primary = []@primary;
+    for (let i = 0@primary; i < capacity; i = i + 1@primary) {
+        xs.push(fill);
+    }
+    return xs;
+}
+
+// Linear probing: the slot that holds `key`, or the empty slot where it goes.
+function findP@primary(keys: integer[]@primary, key: integer@primary): integer@primary {
+    let capacity = keys.length;
+    let slot = (key * 31@primary) % capacity;
+    let searching = true@primary;
+    while (searching) {
+        let k = keys[slot];
+        if (k === key || k === -1@primary) {
+            searching = false@primary;
+        } else {
+            slot = (slot + 1@primary) % capacity;
+        }
+    }
+    return slot;
+}
+
+function checksumP@primary(keys: integer[]@primary, values: integer[]@primary): integer@primary {
+    let sum = 0@primary;
+    for (let i = 0@primary; i < keys.length; i = i + 1@primary) {
+        sum = (sum + (keys[i] + 2@primary) * 7@primary + values[i] * (i % 13@primary + 1@primary)) % 1000003@primary;
+    }
+    return sum;
+}
+
+// ---------------------------------------------------------------------------
+// backup1: hash-table kernels
+// ---------------------------------------------------------------------------
+
+function newTableB1@backup1(capacity: integer@backup1, fill: integer@backup1): integer[]@backup1 {
+    let xs: integer[]@backup1 = []@backup1;
+    for (let i = 0@backup1; i < capacity; i = i + 1@backup1) {
+        xs.push(fill);
+    }
+    return xs;
+}
+
+// Linear probing: the slot that holds `key`, or the empty slot where it goes.
+function findB1@backup1(keys: integer[]@backup1, key: integer@backup1): integer@backup1 {
+    let capacity = keys.length;
+    let slot = (key * 31@backup1) % capacity;
+    let searching = true@backup1;
+    while (searching) {
+        let k = keys[slot];
+        if (k === key || k === -1@backup1) {
+            searching = false@backup1;
+        } else {
+            slot = (slot + 1@backup1) % capacity;
+        }
+    }
+    return slot;
+}
+
+function checksumB1@backup1(keys: integer[]@backup1, values: integer[]@backup1): integer@backup1 {
+    let sum = 0@backup1;
+    for (let i = 0@backup1; i < keys.length; i = i + 1@backup1) {
+        sum = (sum + (keys[i] + 2@backup1) * 7@backup1 + values[i] * (i % 13@backup1 + 1@backup1)) % 1000003@backup1;
+    }
+    return sum;
+}
+
+// ---------------------------------------------------------------------------
+// backup2: hash-table kernels
+// ---------------------------------------------------------------------------
+
+function newTableB2@backup2(capacity: integer@backup2, fill: integer@backup2): integer[]@backup2 {
+    let xs: integer[]@backup2 = []@backup2;
+    for (let i = 0@backup2; i < capacity; i = i + 1@backup2) {
+        xs.push(fill);
+    }
+    return xs;
+}
+
+// Linear probing: the slot that holds `key`, or the empty slot where it goes.
+function findB2@backup2(keys: integer[]@backup2, key: integer@backup2): integer@backup2 {
+    let capacity = keys.length;
+    let slot = (key * 31@backup2) % capacity;
+    let searching = true@backup2;
+    while (searching) {
+        let k = keys[slot];
+        if (k === key || k === -1@backup2) {
+            searching = false@backup2;
+        } else {
+            slot = (slot + 1@backup2) % capacity;
+        }
+    }
+    return slot;
+}
+
+function checksumB2@backup2(keys: integer[]@backup2, values: integer[]@backup2): integer@backup2 {
+    let sum = 0@backup2;
+    for (let i = 0@backup2; i < keys.length; i = i + 1@backup2) {
+        sum = (sum + (keys[i] + 2@backup2) * 7@backup2 + values[i] * (i % 13@backup2 + 1@backup2)) % 1000003@backup2;
+    }
+    return sum;
+}
+
+// ---------------------------------------------------------------------------
+// primary: the read value of a slot
+// ---------------------------------------------------------------------------
+
+function valueAt@primary(keys: integer[]@primary, values: integer[]@primary, slot: integer@primary, key: integer@primary): integer@primary {
+    if (keys[slot] === key) {
+        return values[slot];
+    }
+    return -1@primary;
+}
+
+// ---------------------------------------------------------------------------
+// The protocol
+// ---------------------------------------------------------------------------
+
+// A write at the primary, replicated synchronously to both backups. Returns
+// whether both backups acked.
+function replicatedWrite(key: integer@primary, value: integer@primary,
+                         keysP: integer[]@primary, valuesP: integer[]@primary,
+                         keysB1: integer[]@backup1, valuesB1: integer[]@backup1,
+                         keysB2: integer[]@backup2, valuesB2: integer[]@backup2): boolean@primary {
+    let slotP: integer@primary = findP(keysP, key);
+    keysP[slotP] = key;
+    valuesP[slotP] = value;
+
+    let key1: integer@backup1 <- key;
+    let value1: integer@backup1 <- value;
+    let slot1: integer@backup1 = findB1(keysB1, key1);
+    keysB1[slot1] = key1;
+    valuesB1[slot1] = value1;
+    let done1: boolean@backup1 = true@backup1;
+    let ack1: boolean@primary <- done1;
+
+    let key2: integer@backup2 <- key;
+    let value2: integer@backup2 <- value;
+    let slot2: integer@backup2 = findB2(keysB2, key2);
+    keysB2[slot2] = key2;
+    valuesB2[slot2] = value2;
+    let done2: boolean@backup2 = true@backup2;
+    let ack2: boolean@primary <- done2;
+
+    let acked: boolean@primary = ack1 && ack2;
+    return acked;
+}
+
+// A read at the primary.
+function readAtPrimary(key: integer@primary, keysP: integer[]@primary, valuesP: integer[]@primary): integer@primary {
+    let slot: integer@primary = findP(keysP, key);
+    let found: integer@primary = valueAt(keysP, valuesP, slot, key);
+    return found;
+}
+
+// The replicas' checksums, compared at the primary and broadcast.
+function consistent(keysP: integer[]@primary, valuesP: integer[]@primary,
+                    keysB1: integer[]@backup1, valuesB1: integer[]@backup1,
+                    keysB2: integer[]@backup2, valuesB2: integer[]@backup2): boolean@every {
+    let sumP: integer@primary = checksumP(keysP, valuesP);
+    let sum1: integer@backup1 = checksumB1(keysB1, valuesB1);
+    let sum2: integer@backup2 = checksumB2(keysB2, valuesB2);
+    let seen1: integer@primary <- sum1;
+    let seen2: integer@primary <- sum2;
+    let sameP: boolean@primary = sumP === seen1 && sumP === seen2;
+    let same: boolean@every <- sameP;
+    return same;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let rngC: integer[]@client = [2024]@client;
+let keysC: integer@client <- KEYS;
+
+let capacityP: integer@primary <- CAPACITY;
+let keysP: integer[]@primary = newTableP(capacityP, -1@primary);
+let valuesP: integer[]@primary = newTableP(capacityP, 0@primary);
+let capacityB1: integer@backup1 <- CAPACITY;
+let keysB1: integer[]@backup1 = newTableB1(capacityB1, -1@backup1);
+let valuesB1: integer[]@backup1 = newTableB1(capacityB1, 0@backup1);
+let capacityB2: integer@backup2 <- CAPACITY;
+let keysB2: integer[]@backup2 = newTableB2(capacityB2, -1@backup2);
+let valuesB2: integer[]@backup2 = newTableB2(capacityB2, 0@backup2);
+
+let workload: integer@every = 77@every;
+let writes: integer@client = 0@client;
+let readSum: integer@client = 0@client;
+let allAcked: boolean@client = true@client;
+let allConsistent: boolean@every = true@every;
+
+// ---------------------------------------------------------------------------
+// The operation stream
+// ---------------------------------------------------------------------------
+
+for (let op: integer@every = 0@every; op < OPS; op = op + 1@every) {
+    workload = (workload * 75@every + 74@every) % 65537@every;
+    let kind: integer@every = workload % 100@every;
+    let isRead: boolean@every = kind < 50@every;
+    let isUpdate: boolean@every = kind >= 50@every && kind < 85@every;
+
+    let key: integer@client = randC(rngC, keysC);
+    let keyP: integer@primary <- key;
+
+    if (isRead) {
+        let found: integer@primary = readAtPrimary(keyP, keysP, valuesP);
+        let got: integer@client <- found;
+        readSum = (readSum + got + 1@client) % 1000003@client;
+    } else {
+        let value: integer@client = 0@client;
+        if (isUpdate) {
+            value = randC(rngC, 100000@client);
+        } else {
+            // read-modify-write: read first, compute the new value at the client
+            let old: integer@primary = readAtPrimary(keyP, keysP, valuesP);
+            let oldC: integer@client <- old;
+            readSum = (readSum + oldC + 1@client) % 1000003@client;
+            let delta: integer@client = randC(rngC, 1000@client);
+            value = bump(oldC, delta);
+        }
+        let valueP: integer@primary <- value;
+        let acked: boolean@primary = replicatedWrite(keyP, valueP, keysP, valuesP, keysB1, valuesB1, keysB2, valuesB2);
+        let ackC: boolean@client <- acked;
+        allAcked = allAcked && ackC;
+        writes = writes + 1@client;
+    }
+
+    let checkNow: boolean@every = op % CHECK_EVERY === CHECK_EVERY - 1@every;
+    if (checkNow) {
+        let same: boolean@every = consistent(keysP, valuesP, keysB1, valuesB1, keysB2, valuesB2);
+        allConsistent = allConsistent && same;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+let finalSame: boolean@every = consistent(keysP, valuesP, keysB1, valuesB1, keysB2, valuesB2);
+let replicasAgree: boolean@client <- allConsistent && finalSame;
+let ok: boolean@client = replicasAgree && allAcked;
+print(ok);
+print(writes);
+print(readSum);

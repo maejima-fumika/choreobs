@@ -169,11 +169,13 @@ export function compileSource(
 
   // The runtime file is written for every endpoint, each with the same parts:
   // the dynamic-location runtime is there for all of them or none, since a
-  // `dyn` value lives at all of them (spec §runtime-files).
+  // `dyn` value lives at all of them (spec §runtime-files). Its location
+  // constants number the endpoints, so every file is made from the one list
+  // (spec §location-and-kind-codes).
   const usesDyn = imports.some(importsDynRuntime);
   const runtimeOutputs: CompileOutput[] = config.endpoints.map((endpoint) => ({
     endpoint,
-    source: runtimeSource(endpoint, usesDyn),
+    source: runtimeSource(endpoint, config.endpoints, usesDyn),
   }));
 
   return { success: true, outputs, runtimeOutputs, errors };

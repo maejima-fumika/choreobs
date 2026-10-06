@@ -1,0 +1,36 @@
+// u1-arith-float: float arithmetic in a choreography context.
+//
+// Endpoints: alice, bob.
+//
+// The float counterpart of u1-arith-int: a loop counted at `every` runs a few
+// float operations on scalars held at `alice`, with no communication and no
+// local function. A float payload is boxed in a BlueScript `any` as well, so
+// comparing the two isolates any extra cost of float boxing.
+//
+// Mechanisms: K1 (boxing), K2 (location variables), K3 (dispatch).
+//
+// Output: alice prints the checksum `acc`.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let ITERS: integer@every = 20000@every;
+
+// ---------------------------------------------------------------------------
+// Kernel
+// ---------------------------------------------------------------------------
+
+// A damped recurrence: `v` converges to 500, and `acc` grows by at most 0.5
+// per iteration, so every value stays in the range a boxed float keeps exactly.
+let v: float@alice = 1.0@alice;
+let acc: float@alice = 0.0@alice;
+
+for (let i: integer@every = 0@every; i < ITERS; i = i + 1@every) {
+    v = v * 0.999@alice + 0.5@alice;
+    let scaled: float@alice = v / 1000.0@alice;
+    let damped: float@alice = scaled - scaled * 0.25@alice;
+    acc = acc + damped;
+}
+
+print(acc);

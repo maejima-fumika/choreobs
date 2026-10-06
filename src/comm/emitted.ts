@@ -41,8 +41,15 @@ function kindOf(names: ReadonlyMap<string, CommKind>, name: string): CommKind {
 const SEND_RE = new RegExp(`${anyOf(SEND)}\\("([^"]+)", "([^"]+)",`, "g");
 const RECEIVE_RE = new RegExp(`${anyOf(RECEIVE)}\\("([^"]+)", "([^"]+)"\\)`, "g");
 const BROADCAST_RE = new RegExp(`${anyOf(BROADCAST)}\\("([^"]+)",`, "g");
-/** `__dynTransfer("tag", "kind", "to", …)` (spec §dynamic-transfer). */
-const DYN_TRANSFER_RE = new RegExp(`${DYN_TRANSFER}\\("([^"]+)", "([^"]+)", "([^"]+)",`, "g");
+/**
+ * `__dynTransfer("tag", __kind_k, __loc_L, …)` (spec §dynamic-transfer): the
+ * kind and the destination are constants of the runtime file
+ * (spec §location-and-kind-codes).
+ */
+const DYN_TRANSFER_RE = new RegExp(
+  `${DYN_TRANSFER}\\("([^"]+)", ([A-Za-z_][A-Za-z0-9_]*), ([A-Za-z_][A-Za-z0-9_]*),`,
+  "g",
+);
 
 /**
  * The type of a `let` rebuilt from emitted text. The consistency check reads a
@@ -118,15 +125,14 @@ function emittedToProjectedProgram(
   }
 
   for (const match of source.matchAll(DYN_TRANSFER_RE)) {
-    const constant = (value: string) =>
-      ({ kind: "StringLiteralExpression", value, span }) as const;
+    const constant = (name: string) => ({ kind: "IdentifierExpression", name, span }) as const;
     body.push({
       kind: "ExpressionStatement",
       expression: {
         kind: "CallExpression",
         callee: DYN_TRANSFER,
         args: [
-          constant(match[1]!),
+          { kind: "StringLiteralExpression", value: match[1]!, span },
           constant(match[2]!),
           constant(match[3]!),
           { kind: "IdentifierExpression", name: "_", span },

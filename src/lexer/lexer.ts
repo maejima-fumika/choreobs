@@ -18,7 +18,11 @@ export interface TokenizeResult {
   readonly errors: readonly LexicalError[];
 }
 
-const KEYWORDS: Readonly<Record<string, TokenKind>> = {
+/**
+ * The reserved words (spec §keywords). Exported for the editor grammar's
+ * test, which checks that `editors/vscode` highlights exactly these words.
+ */
+export const KEYWORDS: Readonly<Record<string, TokenKind>> = {
   function: TokenKind.Function,
   let: TokenKind.Let,
   if: TokenKind.If,

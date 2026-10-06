@@ -46,10 +46,13 @@ import {
 } from "../types/located.js";
 import {
   DYN_RUNTIME,
-  runtimeLocationName,
+  kindOfConstant,
+  locationConstantName,
+  locationOfConstant,
   type ArgumentShape,
   type DynRuntimeFunction,
 } from "../runtime/dyn.js";
+import { RUNTIME_CONSTANT_TYPE } from "./dyn.js";
 
 /**
  * Checks what `lowerDyn` promises (spec §dyn-lowering): the lowered
@@ -300,6 +303,20 @@ class LoweredVerifier {
     call.args.forEach((arg, i) => {
       this.argument(call.callee, arg, signature.args[i]!);
     });
+    const shapes: readonly ArgumentShape[] = signature.args;
+    const locationAt = shapes.indexOf("location");
+    const concreteAt = shapes.indexOf("concrete");
+    if (locationAt >= 0 && concreteAt >= 0) {
+      // `__inject(e, __loc_q)`: the constant names where `e` is.
+      const named = this.locationConstant(call.args[locationAt]!);
+      const value = call.args[concreteAt]!.choreoType;
+      if (locationConstantName(value.location) !== named) {
+        this.fail(
+          `${call.callee}(…, ${named}) must take a value at ${locationOfConstant(named)}, not ${formatLocatedType(value)}`,
+          span,
+        );
+      }
+    }
     const result = call.choreoType;
     switch (signature.result) {
       case "dyn":
@@ -313,11 +330,11 @@ class LoweredVerifier {
         }
         return;
       case "named": {
-        const named = this.constantValue(call.args[1]!);
+        const named = this.locationConstant(call.args[locationAt]!);
         this.concrete(result.location, call.callee, span);
-        if (runtimeLocationName(result.location) !== named) {
+        if (locationConstantName(result.location) !== named) {
           this.fail(
-            `${call.callee}(…, "${named}") must yield a value at ${named}, not ${formatLocatedType(result)}`,
+            `${call.callee}(…, ${named}) must yield a value at ${locationOfConstant(named)}, not ${formatLocatedType(result)}`,
             span,
           );
         }
@@ -340,8 +357,14 @@ class LoweredVerifier {
         this.expr(arg);
         this.concrete(arg.choreoType.location, `${callee} argument`, span);
         return;
-      case "constant":
-        this.constantValue(arg);
+      case "tag":
+        this.tag(arg);
+        return;
+      case "kind":
+        this.runtimeConstant(arg, kindOfConstant, "a kind constant");
+        return;
+      case "location":
+        this.locationConstant(arg);
         return;
       case "payload":
         if (
@@ -354,15 +377,40 @@ class LoweredVerifier {
     }
   }
 
-  /** The value of a compiler-supplied `string@every` literal argument. */
-  private constantValue(arg: TypedExpression): string {
+  /** A compiler-supplied tag argument must be a `string@every` literal. */
+  private tag(arg: TypedExpression): void {
     if (arg.expr.kind === "LiteralExpression") {
       const raw = (arg as TypedLiteralExpression).literal.literal;
       if (raw.kind === "StringLiteral" && arg.choreoType.location.kind === "every") {
-        return raw.value;
+        return;
       }
     }
-    return this.fail("expected a string@every constant argument", arg.expr.span);
+    this.fail("expected a string@every tag argument", arg.expr.span);
+  }
+
+  /** The name of a location constant argument (spec §location-and-kind-codes). */
+  private locationConstant(arg: TypedExpression): string {
+    return this.runtimeConstant(arg, locationOfConstant, "a location constant");
+  }
+
+  /**
+   * The name of a constant of the runtime file used as an argument: an
+   * identifier of `RUNTIME_CONSTANT_TYPE` that `decode` reads as a constant
+   * (spec §location-and-kind-codes).
+   */
+  private runtimeConstant(
+    arg: TypedExpression,
+    decode: (name: string) => unknown,
+    what: string,
+  ): string {
+    if (
+      arg.expr.kind === "IdentifierExpression" &&
+      formatLocatedType(arg.choreoType) === formatLocatedType(RUNTIME_CONSTANT_TYPE) &&
+      decode(arg.expr.name) !== undefined
+    ) {
+      return arg.expr.name;
+    }
+    return this.fail(`expected ${what} argument`, arg.expr.span);
   }
 
   /** `expr` must sit exactly at `location`: no `~` is left after lowering. */

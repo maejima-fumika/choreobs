@@ -1,0 +1,19 @@
+// SYNTAX TEST "source.choreobs" "what the lexer and parser always reject"
+
+const k = 1;
+// <----- invalid.illegal.unsupported-keyword.choreobs
+while (true) { break; continue; }
+//             ^^^^^ invalid.illegal.unsupported-keyword.choreobs
+//                    ^^^^^^^^ invalid.illegal.unsupported-keyword.choreobs
+let q = a == b != c & d | e;
+//        ^^ invalid.illegal.operator.choreobs
+//             ^^ invalid.illegal.operator.choreobs
+//                  ^ invalid.illegal.operator.choreobs
+//                      ^ invalid.illegal.operator.choreobs
+let h = #x + 'c' + $;
+//      ^ invalid.illegal.character.choreobs
+//           ^ invalid.illegal.character.choreobs
+//                 ^ invalid.illegal.character.choreobs
+let ok = "#'$ in a string"; // # and ' in a comment
+//        ^^^ string.quoted.double.choreobs
+//                            ^^^^^^^^^^^^^^^^^^^^^^ comment.line.double-slash.choreobs

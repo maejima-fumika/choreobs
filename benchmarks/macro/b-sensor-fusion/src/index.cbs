@@ -1,0 +1,265 @@
+// B sensor-fusion: a closed control loop over redundant, imperfect sensors.
+//
+// Endpoints: sensor1, sensor2, sensor3, fusion, controller, actuator.
+//
+// The actuator simulates the plant (a damped mass) and, standing in for
+// physics, sends its true position to the sensors each tick. Each sensor
+// reports that position with noise: sensor2 also drifts, and sensor3 now and
+// then produces a spike. Fusion runs a Kalman filter over the three readings,
+// predicting with an estimated speed and gating out outliers, and decides the
+// mode of the tick:
+//
+//   0 normal    every reading was accepted;
+//   1 degraded  some reading was rejected. Fusion tells each sensor whether
+//               its reading was kept, and a rejected sensor recalibrates
+//               (drops its bias). The controller switches to gentler gains.
+//
+// The mode is broadcast so that every endpoint takes the same branch. The
+// controller runs a PID law towards a setpoint that changes half-way through,
+// and sends the command to the actuator.
+//
+// The per-tick arithmetic (measurement, filter update, PID, plant step) is all
+// choreography code. Only noise generation, gating, the mode rule and
+// clamping are local kernels.
+//
+// Self-check: at the end the plant is within 2.0 of the final setpoint. All
+// values are floats, so compare checksums with a tolerance (see
+// benchmarks/README.md).
+//
+// Output: the controller prints `ok`, the final position, the number of
+// degraded ticks and the number of readings rejected.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let TICKS: integer@every = 400@every;
+
+// ---------------------------------------------------------------------------
+// sensor1: local kernels
+// ---------------------------------------------------------------------------
+
+// A noise sample in (-1, 1): the sum of two uniform draws, roughly bell-shaped.
+function noise1@sensor1(rng: integer[]@sensor1): float@sensor1 {
+    let s = (rng[0@sensor1] * 75@sensor1 + 74@sensor1) % 65537@sensor1;
+    let t = (s * 75@sensor1 + 74@sensor1) % 65537@sensor1;
+    rng[0@sensor1] = t;
+    let u = (s as float) / 65537.0@sensor1;
+    let v = (t as float) / 65537.0@sensor1;
+    return u + v - 1.0@sensor1;
+}
+
+// ---------------------------------------------------------------------------
+// sensor2: local kernels
+// ---------------------------------------------------------------------------
+
+// A noise sample in (-1, 1): the sum of two uniform draws, roughly bell-shaped.
+function noise2@sensor2(rng: integer[]@sensor2): float@sensor2 {
+    let s = (rng[0@sensor2] * 75@sensor2 + 74@sensor2) % 65537@sensor2;
+    let t = (s * 75@sensor2 + 74@sensor2) % 65537@sensor2;
+    rng[0@sensor2] = t;
+    let u = (s as float) / 65537.0@sensor2;
+    let v = (t as float) / 65537.0@sensor2;
+    return u + v - 1.0@sensor2;
+}
+
+// ---------------------------------------------------------------------------
+// sensor3: local kernels
+// ---------------------------------------------------------------------------
+
+// A noise sample in (-1, 1): the sum of two uniform draws, roughly bell-shaped.
+function noise3@sensor3(rng: integer[]@sensor3): float@sensor3 {
+    let s = (rng[0@sensor3] * 75@sensor3 + 74@sensor3) % 65537@sensor3;
+    let t = (s * 75@sensor3 + 74@sensor3) % 65537@sensor3;
+    rng[0@sensor3] = t;
+    let u = (s as float) / 65537.0@sensor3;
+    let v = (t as float) / 65537.0@sensor3;
+    return u + v - 1.0@sensor3;
+}
+
+// sensor3 is the faulty one: 3% of its readings carry a large spike.
+function spike3@sensor3(rng: integer[]@sensor3): float@sensor3 {
+    let s = (rng[0@sensor3] * 75@sensor3 + 74@sensor3) % 65537@sensor3;
+    rng[0@sensor3] = s;
+    if (s % 100@sensor3 < 3@sensor3) {
+        return 25.0@sensor3;
+    }
+    return 0.0@sensor3;
+}
+
+// ---------------------------------------------------------------------------
+// fusion: local kernels
+// ---------------------------------------------------------------------------
+
+// Innovation gating: 1.0 accepts a measurement, 0.0 rejects it as an outlier
+// (more than three standard deviations from the prediction).
+function gate@fusion(innovation: float@fusion, variance: float@fusion): float@fusion {
+    if (innovation * innovation > 9.0@fusion * variance) {
+        return 0.0@fusion;
+    }
+    return 1.0@fusion;
+}
+
+// The mode of a tick, from the number of readings accepted (out of three).
+function modeOf@fusion(accepted: float@fusion): integer@fusion {
+    if (accepted > 2.5@fusion) {
+        return 0@fusion;
+    }
+    return 1@fusion;
+}
+
+// ---------------------------------------------------------------------------
+// controller: local kernels
+// ---------------------------------------------------------------------------
+
+function clamp@controller(x: float@controller, limit: float@controller): float@controller {
+    if (x > limit) {
+        return limit;
+    }
+    if (x < 0.0@controller - limit) {
+        return 0.0@controller - limit;
+    }
+    return x;
+}
+
+function abs@controller(x: float@controller): float@controller {
+    if (x < 0.0@controller) {
+        return 0.0@controller - x;
+    }
+    return x;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+// The plant.
+let position: float@actuator = 0.0@actuator;
+let velocity: float@actuator = 0.0@actuator;
+let dt: float@actuator = 0.1@actuator;
+
+// The sensors.
+let rng1: integer[]@sensor1 = [977]@sensor1;
+let bias1: float@sensor1 = 0.0@sensor1;
+let rng2: integer[]@sensor2 = [1954]@sensor2;
+let bias2: float@sensor2 = 0.0@sensor2;
+let rng3: integer[]@sensor3 = [2931]@sensor3;
+let bias3: float@sensor3 = 0.0@sensor3;
+
+// The filter, with each sensor's measurement variance.
+let estimate: float@fusion = 0.0@fusion;
+let speed: float@fusion = 0.0@fusion;
+let variance: float@fusion = 100.0@fusion;
+let processVar: float@fusion = 0.5@fusion;
+let step: float@fusion = 0.1@fusion;
+let noiseVar1: float@fusion = 0.2@fusion;
+let noiseVar2: float@fusion = 0.3@fusion;
+let noiseVar3: float@fusion = 0.25@fusion;
+let rejected: float@fusion = 0.0@fusion;
+
+// The controller.
+let setpoint: float@controller = 50.0@controller;
+let integral: float@controller = 0.0@controller;
+let previousError: float@controller = 50.0@controller;
+let degradedTicks: integer@controller = 0@controller;
+let period: float@controller = 0.1@controller;
+
+// ---------------------------------------------------------------------------
+// The loop
+// ---------------------------------------------------------------------------
+
+let half: integer@every = TICKS / 2@every;
+for (let tick: integer@every = 0@every; tick < TICKS; tick = tick + 1@every) {
+    let retarget: boolean@every = tick === half;
+    if (retarget) {
+        setpoint = 20.0@controller;
+    }
+
+    // Sensing.
+    let truth1: float@sensor1 <- position;
+    let z1: float@sensor1 = truth1 + noise1(rng1) * 0.6@sensor1 + bias1;
+    let m1: float@fusion <- z1;
+    let truth2: float@sensor2 <- position;
+    bias2 = bias2 + 0.02@sensor2;
+    let z2: float@sensor2 = truth2 + noise2(rng2) * 0.6@sensor2 + bias2;
+    let m2: float@fusion <- z2;
+    let truth3: float@sensor3 <- position;
+    let z3: float@sensor3 = truth3 + noise3(rng3) * 0.6@sensor3 + bias3 + spike3(rng3);
+    let m3: float@fusion <- z3;
+
+    // Fusion: predict with the estimated speed, then update with each
+    // reading in turn, then correct the speed estimate.
+    let predicted: float@fusion = estimate + speed * step;
+    estimate = predicted;
+    variance = variance + processVar;
+    let y1: float@fusion = m1 - estimate;
+    let s1: float@fusion = variance + noiseVar1;
+    let w1: float@fusion = gate(y1, s1);
+    let gain1: float@fusion = w1 * variance / s1;
+    estimate = estimate + gain1 * y1;
+    variance = (1.0@fusion - gain1) * variance;
+    rejected = rejected + (1.0@fusion - w1);
+    let y2: float@fusion = m2 - estimate;
+    let s2: float@fusion = variance + noiseVar2;
+    let w2: float@fusion = gate(y2, s2);
+    let gain2: float@fusion = w2 * variance / s2;
+    estimate = estimate + gain2 * y2;
+    variance = (1.0@fusion - gain2) * variance;
+    rejected = rejected + (1.0@fusion - w2);
+    let y3: float@fusion = m3 - estimate;
+    let s3: float@fusion = variance + noiseVar3;
+    let w3: float@fusion = gate(y3, s3);
+    let gain3: float@fusion = w3 * variance / s3;
+    estimate = estimate + gain3 * y3;
+    variance = (1.0@fusion - gain3) * variance;
+    rejected = rejected + (1.0@fusion - w3);
+    speed = speed + 0.3@fusion * (estimate - predicted) / step;
+    let accepted: float@fusion = w1 + w2 + w3;
+    let modeAtFusion: integer@fusion = modeOf(accepted);
+    let mode: integer@every <- modeAtFusion;
+
+    // The fused estimate goes to the controller.
+    let seen: float@controller <- estimate;
+    let error: float@controller = setpoint - seen;
+    let derivative: float@controller = (error - previousError) / period;
+    previousError = error;
+
+    let kp: float@controller = 0.8@controller;
+    let ki: float@controller = 0.05@controller;
+    let kd: float@controller = 0.6@controller;
+    let degraded: boolean@every = mode > 0@every;
+    if (degraded) {
+        // Degraded: rejected sensors recalibrate, and the controller backs off.
+        let keep1: float@sensor1 <- w1;
+        bias1 = bias1 * keep1;
+        let keep2: float@sensor2 <- w2;
+        bias2 = bias2 * keep2;
+        let keep3: float@sensor3 <- w3;
+        bias3 = bias3 * keep3;
+        kp = 0.5@controller;
+        ki = 0.02@controller;
+        kd = 0.3@controller;
+        degradedTicks = degradedTicks + 1@controller;
+    }
+    integral = clamp(integral + error * period, 40.0@controller);
+    let command: float@controller = clamp(kp * error + ki * integral + kd * derivative, 30.0@controller);
+
+    // The actuator applies the command to the plant.
+    let force: float@actuator <- command;
+    let acceleration: float@actuator = force - 0.8@actuator * velocity;
+    velocity = velocity + acceleration * dt;
+    position = position + velocity * dt;
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+let finalPosition: float@controller <- position;
+let distance: float@controller = abs(finalPosition - setpoint);
+let ok: boolean@controller = distance < 2.0@controller;
+let rejectedCount: float@controller <- rejected;
+print(ok);
+print(finalPosition);
+print(degradedTicks);
+print(rejectedCount);

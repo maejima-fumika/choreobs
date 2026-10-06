@@ -1,0 +1,8 @@
+{
+  "name": "u4-boundary",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
+}

@@ -1,11 +1,15 @@
 import type { BinaryOperator, UnaryOperator } from "../ast/operators.js";
 import type { NumericType } from "../ast/syntax-types.js";
 import type { Location } from "../ast/location.js";
+import type { CommKind } from "../ir/projected.js";
+import { DYN, EVERY, formatLocation } from "../types/located.js";
+import { ALL_COMM_KINDS } from "./names.js";
 
 /**
  * The dynamic-location runtime (spec §dyn-runtime): the names the
- * generated code calls, what each of them takes and yields, and the one type
- * it declares values with.
+ * generated code calls, what each of them takes and yields, the one type it
+ * declares values with, and the constants it names locations and payload
+ * kinds with (spec §location-and-kind-codes).
  *
  * Every name carries the compiler's `__` prefix, which the source language
  * reserves (spec §identifiers, §function-names), so none needs listing among
@@ -21,12 +25,19 @@ export type ArgumentShape =
   | "dyn"
   /** A value at a concrete location. */
   | "concrete"
-  /** A compiler-supplied `string@every` literal: a location, a kind or a tag. */
-  | "constant"
+  /** A compiler-supplied `string@every` literal: a communication tag. */
+  | "tag"
+  /** A kind constant of the runtime file, `integer@every` (spec §location-and-kind-codes). */
+  | "kind"
+  /** A location constant of the runtime file, `integer@every` (spec §location-and-kind-codes). */
+  | "location"
   /** A literal at `every`: the payload of an unbound value. */
   | "payload";
 
-/** The result: a `T@dyn` value, a value at the location named by the second argument, or none. */
+/**
+ * The result: a `T@dyn` value, a value at the location the second argument's
+ * constant names, or none.
+ */
 export type ResultShape = "dyn" | "named" | "void";
 
 export interface Signature {
@@ -48,8 +59,8 @@ const UNARY = { args: ["dyn"], result: "dyn" } as const satisfies Signature;
  */
 export const DYN_RUNTIME = {
   __dynUnbound: { args: ["payload"], result: "dyn" },
-  __inject: { args: ["concrete", "constant"], result: "dyn" },
-  __cast: { args: ["dyn", "constant"], result: "named" },
+  __inject: { args: ["concrete", "location"], result: "dyn" },
+  __cast: { args: ["dyn", "location"], result: "named" },
   __dynIntegerToFloat: UNARY,
   __dynFloatToInteger: UNARY,
   __dynPlus: BINARY,
@@ -73,7 +84,7 @@ export const DYN_RUNTIME = {
   __dynArrayLength: UNARY,
   __dynArrayNew: { args: [], result: "dyn" },
   __dynArrayAppend: BINARY,
-  __dynTransfer: { args: ["constant", "constant", "constant", "dyn"], result: "dyn" },
+  __dynTransfer: { args: ["tag", "kind", "location", "dyn"], result: "dyn" },
   __dynPrint: { args: ["dyn"], result: "void" },
 } as const satisfies Record<string, Signature>;
 
@@ -87,7 +98,11 @@ export function isDynRuntimeFunction(name: string): name is DynRuntimeFunction {
   return RUNTIME_FUNCTION_SET.has(name);
 }
 
-/** Everything a generated file may import from the runtime, in import order. */
+/**
+ * Everything a generated file may import from the runtime, in import order,
+ * apart from the location and kind constants, which depend on the endpoints
+ * (spec §runtime-import).
+ */
 export const DYN_RUNTIME_EXPORTS: readonly string[] = [
   DYN_VALUE_TYPE,
   ...DYN_RUNTIME_FUNCTIONS,
@@ -129,31 +144,94 @@ export const DYN_CONVERSION: Readonly<Record<NumericType, DynRuntimeFunction>> =
 /** The runtime function a dynamic transfer becomes (spec §dynamic-transfer). */
 export const DYN_TRANSFER = "__dynTransfer" satisfies DynRuntimeFunction;
 
-/** How the runtime names `every` (spec §location-functions). */
-export const EVERY_LOCATION_NAME = "every";
-
-/** How the runtime names a destination that is not bound to one location (spec §location-functions). */
-export const DYN_LOCATION_NAME = "dyn";
-
-/**
- * A location as a runtime call passes it (spec §runtime-functions): the
- * endpoint's name, or one of the two names no endpoint may take
- * (spec §using-every-as-an-endpoint).
- */
-export function runtimeLocationName(location: Location): string {
-  switch (location.kind) {
-    case "individual":
-      return location.name;
-    case "every":
-      return EVERY_LOCATION_NAME;
-    case "dyn":
-      return DYN_LOCATION_NAME;
-  }
-}
-
 /**
  * The runtime file, imported without its extension: BlueScript appends `.bs`.
  * Each endpoint's sits in that endpoint's own project, next to its program, so
  * they all have this one name (spec §runtime-import).
  */
 export const RUNTIME_MODULE = "__runtime";
+
+// --- §location-and-kind-codes ----------------------------------------------
+
+const LOCATION_CONSTANT_PREFIX = "__loc_";
+
+const KIND_CONSTANT_PREFIX = "__kind_";
+
+/** The constant for the location written `name` after `@`: `dyn`, `every` or an endpoint. */
+function locationConstant(name: string): string {
+  return `${LOCATION_CONSTANT_PREFIX}${name}`;
+}
+
+/** A constant of the runtime file: its name and its integer code. */
+export interface RuntimeConstant {
+  readonly name: string;
+  readonly code: number;
+}
+
+/**
+ * The constant the generated code names `location` with: `__loc_alice`,
+ * `__loc_every` or `__loc_dyn`, the location as written after `@`.
+ */
+export function locationConstantName(location: Location): string {
+  return locationConstant(formatLocation(location));
+}
+
+/** The constant for `dyn`, which also marks an unbound location variable. */
+export const DYN_LOCATION_CONSTANT = locationConstantName(DYN);
+
+/** The constant for `every`. */
+export const EVERY_LOCATION_CONSTANT = locationConstantName(EVERY);
+
+/**
+ * The location constants of the runtime file for `endpoints`, in code order,
+ * each with the location it names: `dyn` is 0, `every` is 1, and the
+ * endpoints follow from 2 in the order `choreobs.json` lists them.
+ */
+export function locationConstants(
+  endpoints: readonly string[],
+): readonly (RuntimeConstant & { readonly location: string })[] {
+  return [formatLocation(DYN), formatLocation(EVERY), ...endpoints].map((location, code) => ({
+    name: locationConstant(location),
+    code,
+    location,
+  }));
+}
+
+/** The constant the generated code names payload kind `kind` with: `__kind_integer`, … */
+export function kindConstantName(kind: CommKind): string {
+  return `${KIND_CONSTANT_PREFIX}${kind}`;
+}
+
+/**
+ * The kind constants, in code order: the order the communication API lists
+ * its payload kinds in (spec §communication-api).
+ */
+export const KIND_CONSTANTS: readonly (RuntimeConstant & { readonly kind: CommKind })[] =
+  ALL_COMM_KINDS.map((kind, code) => ({ name: kindConstantName(kind), code, kind }));
+
+/**
+ * The location `name` names if it has the form of a location constant —
+ * `dyn`, `every` or what may be an endpoint — or `undefined`. Only the form is
+ * checked: which endpoints exist is known where the endpoint list is, and
+ * `locationConstants` decodes exactly against it.
+ */
+export function locationOfConstant(name: string): string | undefined {
+  if (!name.startsWith(LOCATION_CONSTANT_PREFIX)) {
+    return undefined;
+  }
+  const location = name.slice(LOCATION_CONSTANT_PREFIX.length);
+  return location.length > 0 ? location : undefined;
+}
+
+/** The payload kind a kind constant names, or `undefined` if `name` is not one. */
+export function kindOfConstant(name: string): CommKind | undefined {
+  return KIND_CONSTANTS.find((constant) => constant.name === name)?.kind;
+}
+
+/**
+ * Whether `name` has the form of a location constant or is a kind constant
+ * (see `locationOfConstant` for what the form leaves unchecked).
+ */
+export function isRuntimeConstant(name: string): boolean {
+  return locationOfConstant(name) !== undefined || kindOfConstant(name) !== undefined;
+}

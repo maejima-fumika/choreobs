@@ -1,0 +1,10 @@
+{
+  "name": "a-smallbank-2pc",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "coordinator", "board": "host" },
+    { "name": "shard1", "board": "host" },
+    { "name": "shard2", "board": "host" },
+    { "name": "shard3", "board": "host" }
+  ]
+}

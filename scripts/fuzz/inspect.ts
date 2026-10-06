@@ -4,7 +4,7 @@
  * wider search and the corpus cannot drift apart.
  */
 import type { CompileResult } from "../../src/driver/index.js";
-import { DYN_RUNTIME_EXPORTS } from "../../src/runtime/dyn.js";
+import { importsDynRuntime } from "../../src/runtime/imports.js";
 
 /**
  * What choreographic residue `source` carries, if any: a location annotation,
@@ -24,6 +24,16 @@ export function choreoResidue(source: string): string | undefined {
   return undefined;
 }
 
+/** The names `source` imports from the runtime file, in the order it lists them (spec §runtime-import). */
+export function importsOf(source: string): string[] {
+  return /^import \{ ([^}]*) \}/.exec(source)?.[1]?.split(", ") ?? [];
+}
+
+/** Whether `source` declares `name` as an export of its own. */
+export function exportsName(source: string, name: string): boolean {
+  return new RegExp(`^export (?:class|function|const) ${name}\\b`, "m").test(source);
+}
+
 /** What is wrong with the files a compilation produced for `endpoints`, if anything. */
 export function inspectOutputs(
   result: CompileResult,
@@ -39,13 +49,20 @@ export function inspectOutputs(
   }
   // Each holds the dynamic-location runtime exactly when some program imports
   // a name of it (spec §runtime-files).
-  const importsDyn = result.outputs.some((o) => {
-    const names = /^import \{ ([^}]*) \}/.exec(o.source)?.[1]?.split(", ") ?? [];
-    return names.some((name) => DYN_RUNTIME_EXPORTS.includes(name));
-  });
+  const importsDyn = result.outputs.some((o) => importsDynRuntime(importsOf(o.source)));
   for (const out of result.runtimeOutputs) {
-    if (/^export class __DynVal\b/m.test(out.source) !== importsDyn) {
+    if (exportsName(out.source, "__DynVal") !== importsDyn) {
       return `${out.endpoint}: the runtime file ${importsDyn ? "lacks" : "holds"} the dynamic-location runtime`;
+    }
+  }
+  // Every name a program imports is one its own runtime file exports: a
+  // location constant names an endpoint of this compilation
+  // (spec §runtime-import, §location-and-kind-codes).
+  for (const out of result.outputs) {
+    const runtime = result.runtimeOutputs.find((r) => r.endpoint === out.endpoint)?.source ?? "";
+    const missing = importsOf(out.source).find((name) => !exportsName(runtime, name));
+    if (missing !== undefined) {
+      return `${out.endpoint}: imports ${missing}, which its runtime file does not export`;
     }
   }
   for (const out of [...result.outputs, ...result.runtimeOutputs]) {

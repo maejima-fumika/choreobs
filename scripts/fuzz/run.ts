@@ -17,6 +17,7 @@ import { compileSource } from "../../src/driver/index.js";
 import { assertUsableEndpoints, generate } from "./generator.js";
 import { describeMode, fuzzGenOptions, parseFuzzArgs } from "./options.js";
 import { inspectOutputs, outputsKey } from "./inspect.js";
+import { stripLocalFunctionLocations } from "./strip.js";
 
 type Verdict = "ok" | "crash" | "commConsistency" | "rejected" | "badOutput";
 
@@ -159,6 +160,25 @@ function run(): void {
       const same = implicit.success && outputsKey(implicit) === before;
       if (!same) {
         record("badOutput", "a program with explicit locations only compiles differently without strict mode");
+        continue;
+      }
+    }
+
+    // Metamorphic: a location left out inside a local function is the
+    // function's own (spec §local-function-location-inference), so leaving out every
+    // location written there changes nothing.
+    const stripped = stripLocalFunctionLocations(program.source);
+    if (stripped !== program.source) {
+      const omitted = compileSource(stripped, "index.cbs", config);
+      if (!omitted.success) {
+        record(
+          "badOutput",
+          `leaving out the locations inside local functions changed acceptance: ${omitted.errors[0]?.message ?? "(no message)"}`,
+        );
+        continue;
+      }
+      if (outputsKey(omitted) !== before) {
+        record("badOutput", "leaving out the locations inside local functions changed the output");
         continue;
       }
     }

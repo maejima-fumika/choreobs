@@ -396,8 +396,9 @@ describe("communication consistency — dynamic transfers (spec §dynamic-transf
     return { kind: "StringLiteralExpression" as const, value, span };
   }
 
+  /** `__dynTransfer("tag", __kind_k, __loc_to, v)`, as lowering writes it (spec §location-and-kind-codes). */
   function dynTransfer(tag: string, kind = "integer", to = "dyn") {
-    return exprStmt(call("__dynTransfer", str(tag), str(kind), str(to), ident("v")));
+    return exprStmt(call("__dynTransfer", str(tag), ident(`__kind_${kind}`), ident(`__loc_${to}`), ident("v")));
   }
 
   function messages(programs: Parameters<typeof checkCommunicationConsistency>[0]) {
@@ -473,11 +474,37 @@ let w: integer@bob <- a;
       program([dynTransfer("__top_0", "integer", "carol")], "alice"),
       program([dynTransfer("__top_0", "integer", "carol")], "bob"),
     ]);
-    assert.ok(errors.some((m) => m.includes("unknown location 'carol'")), JSON.stringify(errors));
+    assert.ok(errors.some((m) => m.includes("unknown location constant '__loc_carol'")), JSON.stringify(errors));
+  });
+
+  it("reports a kind or a location passed as anything but a constant", () => {
+    for (const args of [
+      [str("__top_0"), str("integer"), ident("__loc_dyn")],
+      [str("__top_0"), ident("__kind_integer"), str("dyn")],
+      [ident("__top_0"), ident("__kind_integer"), ident("__loc_dyn")],
+    ]) {
+      const stmt = exprStmt(call("__dynTransfer", ...args, ident("v")));
+      const errors = messages([program([stmt], "alice"), program([stmt], "bob")]);
+      assert.ok(errors.some((m) => m.includes("malformed __dynTransfer call")), JSON.stringify(errors));
+    }
+  });
+
+  it("reports a kind constant the runtime does not have", () => {
+    const errors = messages([
+      program([dynTransfer("__top_0", "complex")], "alice"),
+      program([dynTransfer("__top_0", "complex")], "bob"),
+    ]);
+    assert.ok(errors.some((m) => m.includes("names unknown kind constant '__kind_complex'")), JSON.stringify(errors));
+  });
+
+  it("reports a location slot holding something other than a location constant", () => {
+    const stmt = exprStmt(call("__dynTransfer", str("__top_0"), ident("__kind_integer"), ident("__kind_float"), ident("v")));
+    const errors = messages([program([stmt], "alice"), program([stmt], "bob")]);
+    assert.ok(errors.some((m) => m.includes("unknown location constant '__kind_float'")), JSON.stringify(errors));
   });
 
   it("checks the emitted text as well", () => {
-    const line = `__dynTransfer("__top_0", "integer", "dyn", v);\n`;
+    const line = `__dynTransfer("__top_0", __kind_integer, __loc_dyn, v);\n`;
     const result = verifyCommunicationConsistency(
       [program([dynTransfer("__top_0")], "alice"), program([dynTransfer("__top_0")], "bob")],
       [

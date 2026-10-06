@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { writeProject } from "../../src/workspace/index.js";
 import { runtimeSource } from "../../src/runtime/source.js";
 import { readJson, scaffold, withTempDir, writeFiles } from "../support/project.js";
+import { aliceBob } from "../support/config.js";
 
 const TRANSFER = `let x: integer@alice = 1@alice;\nlet y: integer@bob <- x;\n`;
 const ALICE_BOB = [
@@ -43,7 +44,7 @@ describe("choreobs compile — writing into the workspace (spec §output-files)"
         join(root, "workspace/bob/src/__runtime.bs"),
       ]);
       assert.match(readFileSync(join(root, "workspace/alice/src/index.bs"), "utf8"), /sendInteger\("bob", "__top_0", x\)/);
-      assert.equal(readFileSync(join(root, "workspace/bob/src/__runtime.bs"), "utf8"), runtimeSource("bob", false));
+      assert.equal(readFileSync(join(root, "workspace/bob/src/__runtime.bs"), "utf8"), runtimeSource("bob", aliceBob.endpoints, false));
     });
   });
 

@@ -1276,10 +1276,10 @@ class Generator {
         lines.push(`let ${taken.name}: integer@${p} = 1@${p};`);
         break;
       }
-      // An omission is an error in strict mode, and in a local function in either
-      // mode (spec §strict-mode, §local-function-strict-location-rule, §omitted-locations).
+      // An omission is an error in strict mode (spec §strict-mode, §omitted-locations),
+      // outside a local function: there it is the function's location
+      // (spec §local-function-location-inference).
       case "arrayLiteralWithoutLocation":
-      case "arrayLiteralWithoutLocationInLocal":
         lines.push(`let ${n}: integer[]@${p} = [1, 2, 3];`);
         break;
       case "nestedArray":
@@ -1292,10 +1292,9 @@ class Generator {
         lines.push(`let ${n}: integer@${p};`);
         break;
       // Locations are never inferred from the expected type (spec §explicit-location-annotations); an
-      // omission is an error in strict mode, and in a local function in either
-      // mode (spec §strict-mode, §local-function-strict-location-rule).
+      // omission is an error in strict mode (spec §strict-mode), outside a local
+      // function (spec §local-function-location-inference).
       case "literalWithoutLocation":
-      case "literalWithoutLocationInLocal":
         lines.push(`let ${n}: integer@${p} = 1;`);
         break;
       case "emptyArrayWithoutType":
@@ -1524,11 +1523,11 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
     spec: "err-name-already-held",
     expect: ["is a function name and cannot be used as a"],
   },
-  { id: "arrayLiteralWithoutLocation", spec: "array-literal-without-required-location", expect: ["location"], strict: true },
+  { id: "arrayLiteralWithoutLocation", where: "choreography", spec: "array-literal-without-required-location", expect: ["location"], strict: true },
   { id: "nestedArray", spec: "nested-array", expect: ["nested", "array"] },
   { id: "typeMismatch", spec: "type-mismatch", expect: ["cannot assign boolean"] },
   { id: "uninitializedLet", spec: "uninitialized-let", expect: ["=", "<-"] },
-  { id: "literalWithoutLocation", spec: "location-annotation-omission", expect: ["location"], strict: true },
+  { id: "literalWithoutLocation", where: "choreography", spec: "location-annotation-omission", expect: ["location"], strict: true },
   { id: "emptyArrayWithoutType", spec: "cannot-infer-empty-array-element-type", expect: ["element type", "empty"] },
   { id: "stringArray", spec: "unsupported-array-element-type", expect: ["array element type"] },
   { id: "breakStatement", spec: "err-break-and-continue", expect: ["break"] },
@@ -1540,8 +1539,6 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "choreographyCallFromLocal", where: "local", spec: "calling-choreography-from-local", expect: ["cannot call choreography function"] },
   // Gradual locating (spec §dyn). None of these needs the generator's own
   // `dyn` mode: each writes its `dyn` out.
-  { id: "literalWithoutLocationInLocal", where: "local", spec: "location-annotation-omission", expect: ["location annotation required"] },
-  { id: "arrayLiteralWithoutLocationInLocal", where: "local", spec: "array-literal-without-required-location", expect: ["location annotation required"] },
   { id: "dynValueInLocalFunction", where: "local", spec: "dyn-in-a-local-function", expect: [] },
   { id: "dynVariableInLocalFunction", where: "local", spec: "dyn-in-a-local-function", expect: [] },
   { id: "dynArrayLiteralInLocalFunction", where: "local", spec: "dyn-in-a-local-function", expect: [] },

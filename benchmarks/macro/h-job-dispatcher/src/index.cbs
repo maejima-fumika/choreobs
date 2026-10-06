@@ -1,0 +1,289 @@
+// H job-dispatcher: load-aware dispatch of jobs to heterogeneous workers.
+//
+// Endpoints: dispatcher, worker1, worker2, worker3, worker4.
+//
+// The dispatcher receives a stream of jobs of random size. Each tick:
+//
+//   1. every REPORT_EVERY ticks, the workers report their backlogs, and the
+//      dispatcher resets its estimates to them; in between it keeps its own
+//      estimates up to date, which go stale;
+//   2. the dispatcher picks the worker with the least expected waiting time
+//      (backlog divided by speed) and broadcasts its choice;
+//   3. the job goes to the chosen worker: an `if` chain on the choice, so
+//      where the job's size ends up is decided by data;
+//   4. every worker works off up to its speed (3, 2, 2 and 1 units per tick).
+//
+// After the last job the system drains: ticks go on, without new jobs, until
+// the dispatcher sees that every backlog is empty.
+//
+// Where a value goes depending on run-time data is the situation that
+// motivates `dyn`. The work itself is a local kernel; the scheduling, the
+// bookkeeping and the reports are choreography code.
+//
+// Self-check: the work done equals the work issued, and every backlog ends
+// empty.
+//
+// Output: the dispatcher prints `ok`, the number of ticks, the units issued
+// and a checksum of the work.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let JOBS: integer@every = 200@every;
+let MAX_SIZE: integer@every = 8@every;
+let REPORT_EVERY: integer@every = 4@every;
+
+// ---------------------------------------------------------------------------
+// dispatcher: local kernels
+// ---------------------------------------------------------------------------
+
+function rand@dispatcher(rng: integer[]@dispatcher, bound: integer@dispatcher): integer@dispatcher {
+    let s = (rng[0@dispatcher] * 75@dispatcher + 74@dispatcher) % 65537@dispatcher;
+    rng[0@dispatcher] = s;
+    return s % bound;
+}
+
+// The worker (1-based) with the least expected waiting time. `weights` holds
+// 12 / speed for each worker, so that the comparison stays in integers.
+function choose@dispatcher(estimates: integer[]@dispatcher, weights: integer[]@dispatcher): integer@dispatcher {
+    let best = 0@dispatcher;
+    let bestCost = estimates[0@dispatcher] * weights[0@dispatcher];
+    for (let i = 1@dispatcher; i < estimates.length; i = i + 1@dispatcher) {
+        let cost = estimates[i] * weights[i];
+        if (cost < bestCost) {
+            best = i;
+            bestCost = cost;
+        }
+    }
+    return best + 1@dispatcher;
+}
+
+function newEstimates@dispatcher(n: integer@dispatcher): integer[]@dispatcher {
+    let xs: integer[]@dispatcher = []@dispatcher;
+    for (let i = 0@dispatcher; i < n; i = i + 1@dispatcher) {
+        xs.push(0@dispatcher);
+    }
+    return xs;
+}
+
+// ---------------------------------------------------------------------------
+// worker1: local kernels
+// ---------------------------------------------------------------------------
+
+// Performs `units` units of work, each a short run of a hash, folded into
+// `acc`. Stands in for whatever a job computes.
+function work1@worker1(units: integer@worker1, acc: integer@worker1): integer@worker1 {
+    let h = acc;
+    for (let u = 0@worker1; u < units; u = u + 1@worker1) {
+        for (let r = 0@worker1; r < 50@worker1; r = r + 1@worker1) {
+            h = (h * 31@worker1 + u + r + 7@worker1) % 1000003@worker1;
+        }
+    }
+    return h;
+}
+
+function minOf1@worker1(a: integer@worker1, b: integer@worker1): integer@worker1 {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// worker2: local kernels
+// ---------------------------------------------------------------------------
+
+// Performs `units` units of work, each a short run of a hash, folded into
+// `acc`. Stands in for whatever a job computes.
+function work2@worker2(units: integer@worker2, acc: integer@worker2): integer@worker2 {
+    let h = acc;
+    for (let u = 0@worker2; u < units; u = u + 1@worker2) {
+        for (let r = 0@worker2; r < 50@worker2; r = r + 1@worker2) {
+            h = (h * 31@worker2 + u + r + 7@worker2) % 1000003@worker2;
+        }
+    }
+    return h;
+}
+
+function minOf2@worker2(a: integer@worker2, b: integer@worker2): integer@worker2 {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// worker3: local kernels
+// ---------------------------------------------------------------------------
+
+// Performs `units` units of work, each a short run of a hash, folded into
+// `acc`. Stands in for whatever a job computes.
+function work3@worker3(units: integer@worker3, acc: integer@worker3): integer@worker3 {
+    let h = acc;
+    for (let u = 0@worker3; u < units; u = u + 1@worker3) {
+        for (let r = 0@worker3; r < 50@worker3; r = r + 1@worker3) {
+            h = (h * 31@worker3 + u + r + 7@worker3) % 1000003@worker3;
+        }
+    }
+    return h;
+}
+
+function minOf3@worker3(a: integer@worker3, b: integer@worker3): integer@worker3 {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// worker4: local kernels
+// ---------------------------------------------------------------------------
+
+// Performs `units` units of work, each a short run of a hash, folded into
+// `acc`. Stands in for whatever a job computes.
+function work4@worker4(units: integer@worker4, acc: integer@worker4): integer@worker4 {
+    let h = acc;
+    for (let u = 0@worker4; u < units; u = u + 1@worker4) {
+        for (let r = 0@worker4; r < 50@worker4; r = r + 1@worker4) {
+            h = (h * 31@worker4 + u + r + 7@worker4) % 1000003@worker4;
+        }
+    }
+    return h;
+}
+
+function minOf4@worker4(a: integer@worker4, b: integer@worker4): integer@worker4 {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let rng: integer[]@dispatcher = [9001]@dispatcher;
+let maxSize: integer@dispatcher <- MAX_SIZE;
+let estimates: integer[]@dispatcher = newEstimates(4@dispatcher);
+let weights: integer[]@dispatcher = [4, 6, 6, 12]@dispatcher;
+let issued: integer@dispatcher = 0@dispatcher;
+
+let backlog1: integer@worker1 = 0@worker1;
+let speed1: integer@worker1 = 3@worker1;
+let done1: integer@worker1 = 0@worker1;
+let hash1: integer@worker1 = 1@worker1;
+let backlog2: integer@worker2 = 0@worker2;
+let speed2: integer@worker2 = 2@worker2;
+let done2: integer@worker2 = 0@worker2;
+let hash2: integer@worker2 = 2@worker2;
+let backlog3: integer@worker3 = 0@worker3;
+let speed3: integer@worker3 = 2@worker3;
+let done3: integer@worker3 = 0@worker3;
+let hash3: integer@worker3 = 3@worker3;
+let backlog4: integer@worker4 = 0@worker4;
+let speed4: integer@worker4 = 1@worker4;
+let done4: integer@worker4 = 0@worker4;
+let hash4: integer@worker4 = 4@worker4;
+
+// ---------------------------------------------------------------------------
+// Ticks
+// ---------------------------------------------------------------------------
+
+let tick: integer@every = 0@every;
+let busy: boolean@every = true@every;
+while (busy) {
+    // 1. backlog reports refresh the dispatcher's estimates
+    let report: boolean@every = tick % REPORT_EVERY === 0@every;
+    if (report) {
+        let seen1: integer@dispatcher <- backlog1;
+        estimates[0@dispatcher] = seen1;
+        let seen2: integer@dispatcher <- backlog2;
+        estimates[1@dispatcher] = seen2;
+        let seen3: integer@dispatcher <- backlog3;
+        estimates[2@dispatcher] = seen3;
+        let seen4: integer@dispatcher <- backlog4;
+        estimates[3@dispatcher] = seen4;
+    }
+
+    // 2.-3. a new job, while there are jobs left
+    let arriving: boolean@every = tick < JOBS;
+    if (arriving) {
+        let size: integer@dispatcher = rand(rng, maxSize) + 1@dispatcher;
+        issued = issued + size;
+        let pick: integer@dispatcher = choose(estimates, weights);
+        let slot: integer@dispatcher = pick - 1@dispatcher;
+        estimates[slot] = estimates[slot] + size;
+        let choice: integer@every <- pick;
+        if (choice === 1@every) {
+            let job1: integer@worker1 <- size;
+            backlog1 = backlog1 + job1;
+        } else {
+            if (choice === 2@every) {
+                let job2: integer@worker2 <- size;
+                backlog2 = backlog2 + job2;
+            } else {
+                if (choice === 3@every) {
+                    let job3: integer@worker3 <- size;
+                    backlog3 = backlog3 + job3;
+                } else {
+                    let job4: integer@worker4 <- size;
+                    backlog4 = backlog4 + job4;
+                }
+            }
+        }
+    }
+
+    // 4. every worker works off up to its speed
+    let units1: integer@worker1 = minOf1(backlog1, speed1);
+    hash1 = work1(units1, hash1);
+    backlog1 = backlog1 - units1;
+    done1 = done1 + units1;
+    let units2: integer@worker2 = minOf2(backlog2, speed2);
+    hash2 = work2(units2, hash2);
+    backlog2 = backlog2 - units2;
+    done2 = done2 + units2;
+    let units3: integer@worker3 = minOf3(backlog3, speed3);
+    hash3 = work3(units3, hash3);
+    backlog3 = backlog3 - units3;
+    done3 = done3 + units3;
+    let units4: integer@worker4 = minOf4(backlog4, speed4);
+    hash4 = work4(units4, hash4);
+    backlog4 = backlog4 - units4;
+    done4 = done4 + units4;
+
+    // Drained once no job is left to arrive and every backlog is empty.
+    tick = tick + 1@every;
+    let more: boolean@every = tick < JOBS;
+    if (!more) {
+        let left1: integer@dispatcher <- backlog1;
+        let left2: integer@dispatcher <- backlog2;
+        let left3: integer@dispatcher <- backlog3;
+        let left4: integer@dispatcher <- backlog4;
+        let leftC: integer@dispatcher = left1 + left2 + left3 + left4;
+        let draining: boolean@dispatcher = leftC > 0@dispatcher;
+        let stillBusy: boolean@every <- draining;
+        busy = stillBusy;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+let doneAt1: integer@dispatcher <- done1;
+let hashAt1: integer@dispatcher <- hash1;
+let doneAt2: integer@dispatcher <- done2;
+let hashAt2: integer@dispatcher <- hash2;
+let doneAt3: integer@dispatcher <- done3;
+let hashAt3: integer@dispatcher <- hash3;
+let doneAt4: integer@dispatcher <- done4;
+let hashAt4: integer@dispatcher <- hash4;
+let doneTotal: integer@dispatcher = doneAt1 + doneAt2 + doneAt3 + doneAt4;
+let ok: boolean@dispatcher = doneTotal === issued;
+let checksum: integer@dispatcher = (hashAt1 + hashAt2 * 3@dispatcher + hashAt3 * 5@dispatcher + hashAt4 * 7@dispatcher) % 1000003@dispatcher;
+let ticks: integer@dispatcher <- tick;
+print(ok);
+print(ticks);
+print(issued);
+print(checksum);

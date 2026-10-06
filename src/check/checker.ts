@@ -187,7 +187,7 @@ class TypeChecker {
   /** Used to check `@L` against the declared set; the set itself is validated
    * by `validateEndpoints` before the checker runs (spec §choreobs-json). */
   private readonly endpoints: Set<string>;
-  /** Whether an omission that nothing infers is `dyn` (spec §omitted-locations, §strict-mode). */
+  /** Whether an omission that nothing infers is `dyn` outside a local function (spec §omitted-locations, §strict-mode). */
   private readonly implicitDyn: boolean;
   private currentFunction: FunctionDeclaration | undefined;
   /** Resolved return type for the function currently being type-checked. */
@@ -399,7 +399,10 @@ class TypeChecker {
     this.currentFunctionReturnType = undefined;
     // Returns at two different concrete locations give `dyn` exactly where an
     // omission would (spec §strict-mode, §function-return-type-inference), and are an error elsewhere.
-    const onIncompatible = this.omittedLocation(decl.context);
+    // A local function's omissions are its own location, but that location is
+    // no answer for returns that disagree, so there they stay an error.
+    const onIncompatible =
+      decl.context.kind === "choreography" ? this.omittedLocation(decl.context) : undefined;
     let returnType: LocatedType;
     if (decl.returnType !== undefined) {
       // A partial annotation (spec §partial-return-annotations): the base is written,
@@ -438,9 +441,9 @@ class TypeChecker {
   /**
    * `function f(): integer { … }` — a return type written without its location
    * (spec §partial-return-annotations). Its location is inferred like an omitted return
-   * type's, in either mode. A local function may not omit a location at all
-   * (spec §local-function-strict-location-rule), so there it is left to the
-   * ordinary resolution, which reports it.
+   * type's, in either mode. In a local function it is the function's own
+   * location instead (spec §local-function-location-inference), which the ordinary
+   * resolution supplies, so there the type is resolved like a written one.
    */
   private hasPartialReturnType(decl: FunctionDeclaration): boolean {
     const ann = decl.returnType;
@@ -453,13 +456,16 @@ class TypeChecker {
   }
 
   /**
-   * What an omitted location that nothing infers stands for in `ctx`
-   * (spec §omitted-locations, §strict-mode): `dyn` in a choreography context unless
-   * strict mode is on. A local function never omits a location
-   * (spec §local-function-strict-location-rule), so there it stays an error.
+   * What an omitted location that nothing infers stands for in `ctx`. In a
+   * local function it is the function's own location, in either mode
+   * (spec §local-function-location-inference): nothing else may stand there. Elsewhere it is `dyn`
+   * unless strict mode is on (spec §omitted-locations, §strict-mode).
    */
   private omittedLocation(ctx: ExecutionContext): Location | undefined {
-    return ctx.kind === "choreography" && this.implicitDyn ? DYN : undefined;
+    if (ctx.kind === "local") {
+      return contextAsLocation(ctx);
+    }
+    return this.implicitDyn ? DYN : undefined;
   }
 
   /** Return type after resolution or inference; does not read raw AST annotations. */
@@ -813,8 +819,9 @@ class TypeChecker {
     stmt: LetTransferStatement,
     ctx: ExecutionContext,
   ): TypedLetTransferStatement {
-    // An omitted destination is `dyn` (spec §omitted-locations); it is never
-    // taken from the source (spec §transfer-let-does-not-infer-destination-type).
+    // An omitted destination is `dyn` (spec §omitted-locations), or the
+    // function's own location in a local function (spec §local-function-location-inference);
+    // it is never taken from the source (spec §transfer-let-does-not-infer-destination-type).
     const choreoType = this.resolveType(stmt.type, ctx, undefined, [
       "transfer-let-does-not-infer-destination-type",
     ]);
@@ -1297,8 +1304,9 @@ class TypeChecker {
     expr: ArrayLiteralExpression,
     ctx: ExecutionContext,
   ): TypedArrayLiteralExpression {
-    // An unannotated array literal is `dyn`; its elements are never looked at
-    // for a location (spec §array-literals).
+    // An unannotated array literal is `dyn`, or the function's own location in
+    // a local function; its elements are never looked at for a location
+    // (spec §array-literals, §local-function-location-inference).
     const location = this.resolveLocation(
       expr.location,
       undefined,
@@ -1826,7 +1834,8 @@ class TypeChecker {
   /**
    * A parameter's type. `buildParameterEnv` and `functionSymbol` both ask for
    * it; it is resolved once, so the two cannot disagree — an omitted location
-   * is `dyn` in a choreography function (spec §omitted-locations).
+   * is `dyn` in a choreography function (spec §omitted-locations), and the
+   * function's own in a local one (spec §local-function-location-inference).
    */
   private resolveParameterType(
     decl: FunctionDeclaration,
@@ -1905,9 +1914,9 @@ class TypeChecker {
   /**
    * The location of a type, a literal or an array literal
    * (spec §explicit-location-annotations): the written one, else `inferred` from the
-   * declaration itself — never from the context — else what an omission means
-   * here: `dyn`, or an error in strict mode and in a local function
-   * (spec §omitted-locations, §strict-mode). The error is `omission`, at `omissionSpan`;
+   * declaration itself, else what an omission means here (see
+   * {@link omittedLocation}): the function's own location in a local function,
+   * elsewhere `dyn`, or an error in strict mode. The error is `omission`, at `omissionSpan`;
    * whatever the location is, it is then checked at `validateSpan`.
    */
   private resolveLocation(

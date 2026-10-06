@@ -1,0 +1,698 @@
+// E sample-sort: distributed sample sort with an all-to-all exchange.
+//
+// Endpoints: coordinator, worker1, worker2, worker3, worker4.
+//
+// Each round, every worker generates N_PER_WORKER fresh integers and:
+//
+//   1. sorts them locally and sends SAMPLES evenly spaced ones to the
+//      coordinator;
+//   2. the coordinator merges the samples, picks three splitters and
+//      broadcasts them as an `integer[]@every`;
+//   3. each worker cuts its sorted data into four buckets by the splitters;
+//   4. all-to-all: worker i sends bucket j to worker j, twelve array
+//      transfers in all;
+//   5. each worker merges the four buckets it now holds.
+//
+// Sorting, cutting and merging are local kernels; sampling, splitter choice,
+// the exchange and the audit are choreography code. Most of the bytes that
+// move are whole arrays, so array transfers and copies dominate.
+//
+// Self-check, every round: each worker's result is sorted, the ranges are
+// ordered across workers, no element was lost, and the element checksum is
+// conserved.
+//
+// Output: the coordinator prints `ok` and a checksum over all rounds.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let N_PER_WORKER: integer@every = 100@every;
+let SAMPLES: integer@every = 16@every;
+let ROUNDS: integer@every = 5@every;
+
+// ---------------------------------------------------------------------------
+// worker1: local kernels
+// ---------------------------------------------------------------------------
+
+function makeData1@worker1(n: integer@worker1, seed: integer@worker1): integer[]@worker1 {
+    let xs: integer[]@worker1 = []@worker1;
+    let s = seed % 65537@worker1;
+    for (let i = 0@worker1; i < n; i = i + 1@worker1) {
+        s = (s * 75@worker1 + 74@worker1) % 65537@worker1;
+        let hi = s;
+        s = (s * 75@worker1 + 74@worker1) % 65537@worker1;
+        xs.push((hi * 16@worker1 + s % 16@worker1) % 1000000@worker1);
+    }
+    return xs;
+}
+
+// In-place quicksort of xs[lo..hi] (Lomuto partition).
+function sort1@worker1(xs: integer[]@worker1, lo: integer@worker1, hi: integer@worker1): void {
+    if (lo < hi) {
+        let pivot = xs[hi];
+        let i = lo;
+        for (let j = lo; j < hi; j = j + 1@worker1) {
+            if (xs[j] < pivot) {
+                let t = xs[i];
+                xs[i] = xs[j];
+                xs[j] = t;
+                i = i + 1@worker1;
+            }
+        }
+        let t = xs[i];
+        xs[i] = xs[hi];
+        xs[hi] = t;
+        sort1(xs, lo, i - 1@worker1);
+        sort1(xs, i + 1@worker1, hi);
+    }
+}
+
+// The merge of two sorted arrays, as a fresh array.
+function merge1@worker1(a: integer[]@worker1, b: integer[]@worker1): integer[]@worker1 {
+    let out: integer[]@worker1 = []@worker1;
+    let i = 0@worker1;
+    let j = 0@worker1;
+    while (i < a.length || j < b.length) {
+        let takeA = j >= b.length;
+        if (i < a.length && j < b.length) {
+            takeA = a[i] <= b[j];
+        }
+        if (takeA) {
+            out.push(a[i]);
+            i = i + 1@worker1;
+        } else {
+            out.push(b[j]);
+            j = j + 1@worker1;
+        }
+    }
+    return out;
+}
+
+// m evenly spaced elements of a sorted array.
+function sample1@worker1(xs: integer[]@worker1, m: integer@worker1): integer[]@worker1 {
+    let out: integer[]@worker1 = []@worker1;
+    for (let i = 0@worker1; i < m; i = i + 1@worker1) {
+        out.push(xs[(i * xs.length) / m]);
+    }
+    return out;
+}
+
+// The elements of bucket b (1-based): those v with splitters[b-2] <= v < splitters[b-1].
+function bucket1@worker1(xs: integer[]@worker1, splitters: integer[]@worker1, b: integer@worker1): integer[]@worker1 {
+    let lo = -1@worker1;
+    if (b > 1@worker1) {
+        lo = splitters[b - 2@worker1];
+    }
+    let hi = 1000000@worker1;
+    if (b <= splitters.length) {
+        hi = splitters[b - 1@worker1];
+    }
+    let out: integer[]@worker1 = []@worker1;
+    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+        let v = xs[i];
+        if (v >= lo && v < hi) {
+            out.push(v);
+        }
+    }
+    return out;
+}
+
+function isSorted1@worker1(xs: integer[]@worker1): boolean@worker1 {
+    let sorted = true@worker1;
+    for (let i = 1@worker1; i < xs.length; i = i + 1@worker1) {
+        if (xs[i - 1@worker1] > xs[i]) {
+            sorted = false@worker1;
+        }
+    }
+    return sorted;
+}
+
+function checksum1@worker1(xs: integer[]@worker1): integer@worker1 {
+    let sum = 0@worker1;
+    for (let i = 0@worker1; i < xs.length; i = i + 1@worker1) {
+        sum = (sum + xs[i]) % 1000003@worker1;
+    }
+    return sum;
+}
+
+// The smallest element, or 1000000 for an empty array.
+function lowest1@worker1(xs: integer[]@worker1): integer@worker1 {
+    if (xs.length === 0@worker1) {
+        return 1000000@worker1;
+    }
+    return xs[0@worker1];
+}
+
+// The largest element of a sorted array, or -1 for an empty one.
+function highest1@worker1(xs: integer[]@worker1): integer@worker1 {
+    if (xs.length === 0@worker1) {
+        return -1@worker1;
+    }
+    return xs[xs.length - 1@worker1];
+}
+
+// ---------------------------------------------------------------------------
+// worker2: local kernels
+// ---------------------------------------------------------------------------
+
+function makeData2@worker2(n: integer@worker2, seed: integer@worker2): integer[]@worker2 {
+    let xs: integer[]@worker2 = []@worker2;
+    let s = seed % 65537@worker2;
+    for (let i = 0@worker2; i < n; i = i + 1@worker2) {
+        s = (s * 75@worker2 + 74@worker2) % 65537@worker2;
+        let hi = s;
+        s = (s * 75@worker2 + 74@worker2) % 65537@worker2;
+        xs.push((hi * 16@worker2 + s % 16@worker2) % 1000000@worker2);
+    }
+    return xs;
+}
+
+// In-place quicksort of xs[lo..hi] (Lomuto partition).
+function sort2@worker2(xs: integer[]@worker2, lo: integer@worker2, hi: integer@worker2): void {
+    if (lo < hi) {
+        let pivot = xs[hi];
+        let i = lo;
+        for (let j = lo; j < hi; j = j + 1@worker2) {
+            if (xs[j] < pivot) {
+                let t = xs[i];
+                xs[i] = xs[j];
+                xs[j] = t;
+                i = i + 1@worker2;
+            }
+        }
+        let t = xs[i];
+        xs[i] = xs[hi];
+        xs[hi] = t;
+        sort2(xs, lo, i - 1@worker2);
+        sort2(xs, i + 1@worker2, hi);
+    }
+}
+
+// The merge of two sorted arrays, as a fresh array.
+function merge2@worker2(a: integer[]@worker2, b: integer[]@worker2): integer[]@worker2 {
+    let out: integer[]@worker2 = []@worker2;
+    let i = 0@worker2;
+    let j = 0@worker2;
+    while (i < a.length || j < b.length) {
+        let takeA = j >= b.length;
+        if (i < a.length && j < b.length) {
+            takeA = a[i] <= b[j];
+        }
+        if (takeA) {
+            out.push(a[i]);
+            i = i + 1@worker2;
+        } else {
+            out.push(b[j]);
+            j = j + 1@worker2;
+        }
+    }
+    return out;
+}
+
+// m evenly spaced elements of a sorted array.
+function sample2@worker2(xs: integer[]@worker2, m: integer@worker2): integer[]@worker2 {
+    let out: integer[]@worker2 = []@worker2;
+    for (let i = 0@worker2; i < m; i = i + 1@worker2) {
+        out.push(xs[(i * xs.length) / m]);
+    }
+    return out;
+}
+
+// The elements of bucket b (1-based): those v with splitters[b-2] <= v < splitters[b-1].
+function bucket2@worker2(xs: integer[]@worker2, splitters: integer[]@worker2, b: integer@worker2): integer[]@worker2 {
+    let lo = -1@worker2;
+    if (b > 1@worker2) {
+        lo = splitters[b - 2@worker2];
+    }
+    let hi = 1000000@worker2;
+    if (b <= splitters.length) {
+        hi = splitters[b - 1@worker2];
+    }
+    let out: integer[]@worker2 = []@worker2;
+    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+        let v = xs[i];
+        if (v >= lo && v < hi) {
+            out.push(v);
+        }
+    }
+    return out;
+}
+
+function isSorted2@worker2(xs: integer[]@worker2): boolean@worker2 {
+    let sorted = true@worker2;
+    for (let i = 1@worker2; i < xs.length; i = i + 1@worker2) {
+        if (xs[i - 1@worker2] > xs[i]) {
+            sorted = false@worker2;
+        }
+    }
+    return sorted;
+}
+
+function checksum2@worker2(xs: integer[]@worker2): integer@worker2 {
+    let sum = 0@worker2;
+    for (let i = 0@worker2; i < xs.length; i = i + 1@worker2) {
+        sum = (sum + xs[i]) % 1000003@worker2;
+    }
+    return sum;
+}
+
+// The smallest element, or 1000000 for an empty array.
+function lowest2@worker2(xs: integer[]@worker2): integer@worker2 {
+    if (xs.length === 0@worker2) {
+        return 1000000@worker2;
+    }
+    return xs[0@worker2];
+}
+
+// The largest element of a sorted array, or -1 for an empty one.
+function highest2@worker2(xs: integer[]@worker2): integer@worker2 {
+    if (xs.length === 0@worker2) {
+        return -1@worker2;
+    }
+    return xs[xs.length - 1@worker2];
+}
+
+// ---------------------------------------------------------------------------
+// worker3: local kernels
+// ---------------------------------------------------------------------------
+
+function makeData3@worker3(n: integer@worker3, seed: integer@worker3): integer[]@worker3 {
+    let xs: integer[]@worker3 = []@worker3;
+    let s = seed % 65537@worker3;
+    for (let i = 0@worker3; i < n; i = i + 1@worker3) {
+        s = (s * 75@worker3 + 74@worker3) % 65537@worker3;
+        let hi = s;
+        s = (s * 75@worker3 + 74@worker3) % 65537@worker3;
+        xs.push((hi * 16@worker3 + s % 16@worker3) % 1000000@worker3);
+    }
+    return xs;
+}
+
+// In-place quicksort of xs[lo..hi] (Lomuto partition).
+function sort3@worker3(xs: integer[]@worker3, lo: integer@worker3, hi: integer@worker3): void {
+    if (lo < hi) {
+        let pivot = xs[hi];
+        let i = lo;
+        for (let j = lo; j < hi; j = j + 1@worker3) {
+            if (xs[j] < pivot) {
+                let t = xs[i];
+                xs[i] = xs[j];
+                xs[j] = t;
+                i = i + 1@worker3;
+            }
+        }
+        let t = xs[i];
+        xs[i] = xs[hi];
+        xs[hi] = t;
+        sort3(xs, lo, i - 1@worker3);
+        sort3(xs, i + 1@worker3, hi);
+    }
+}
+
+// The merge of two sorted arrays, as a fresh array.
+function merge3@worker3(a: integer[]@worker3, b: integer[]@worker3): integer[]@worker3 {
+    let out: integer[]@worker3 = []@worker3;
+    let i = 0@worker3;
+    let j = 0@worker3;
+    while (i < a.length || j < b.length) {
+        let takeA = j >= b.length;
+        if (i < a.length && j < b.length) {
+            takeA = a[i] <= b[j];
+        }
+        if (takeA) {
+            out.push(a[i]);
+            i = i + 1@worker3;
+        } else {
+            out.push(b[j]);
+            j = j + 1@worker3;
+        }
+    }
+    return out;
+}
+
+// m evenly spaced elements of a sorted array.
+function sample3@worker3(xs: integer[]@worker3, m: integer@worker3): integer[]@worker3 {
+    let out: integer[]@worker3 = []@worker3;
+    for (let i = 0@worker3; i < m; i = i + 1@worker3) {
+        out.push(xs[(i * xs.length) / m]);
+    }
+    return out;
+}
+
+// The elements of bucket b (1-based): those v with splitters[b-2] <= v < splitters[b-1].
+function bucket3@worker3(xs: integer[]@worker3, splitters: integer[]@worker3, b: integer@worker3): integer[]@worker3 {
+    let lo = -1@worker3;
+    if (b > 1@worker3) {
+        lo = splitters[b - 2@worker3];
+    }
+    let hi = 1000000@worker3;
+    if (b <= splitters.length) {
+        hi = splitters[b - 1@worker3];
+    }
+    let out: integer[]@worker3 = []@worker3;
+    for (let i = 0@worker3; i < xs.length; i = i + 1@worker3) {
+        let v = xs[i];
+        if (v >= lo && v < hi) {
+            out.push(v);
+        }
+    }
+    return out;
+}
+
+function isSorted3@worker3(xs: integer[]@worker3): boolean@worker3 {
+    let sorted = true@worker3;
+    for (let i = 1@worker3; i < xs.length; i = i + 1@worker3) {
+        if (xs[i - 1@worker3] > xs[i]) {
+            sorted = false@worker3;
+        }
+    }
+    return sorted;
+}
+
+function checksum3@worker3(xs: integer[]@worker3): integer@worker3 {
+    let sum = 0@worker3;
+    for (let i = 0@worker3; i < xs.length; i = i + 1@worker3) {
+        sum = (sum + xs[i]) % 1000003@worker3;
+    }
+    return sum;
+}
+
+// The smallest element, or 1000000 for an empty array.
+function lowest3@worker3(xs: integer[]@worker3): integer@worker3 {
+    if (xs.length === 0@worker3) {
+        return 1000000@worker3;
+    }
+    return xs[0@worker3];
+}
+
+// The largest element of a sorted array, or -1 for an empty one.
+function highest3@worker3(xs: integer[]@worker3): integer@worker3 {
+    if (xs.length === 0@worker3) {
+        return -1@worker3;
+    }
+    return xs[xs.length - 1@worker3];
+}
+
+// ---------------------------------------------------------------------------
+// worker4: local kernels
+// ---------------------------------------------------------------------------
+
+function makeData4@worker4(n: integer@worker4, seed: integer@worker4): integer[]@worker4 {
+    let xs: integer[]@worker4 = []@worker4;
+    let s = seed % 65537@worker4;
+    for (let i = 0@worker4; i < n; i = i + 1@worker4) {
+        s = (s * 75@worker4 + 74@worker4) % 65537@worker4;
+        let hi = s;
+        s = (s * 75@worker4 + 74@worker4) % 65537@worker4;
+        xs.push((hi * 16@worker4 + s % 16@worker4) % 1000000@worker4);
+    }
+    return xs;
+}
+
+// In-place quicksort of xs[lo..hi] (Lomuto partition).
+function sort4@worker4(xs: integer[]@worker4, lo: integer@worker4, hi: integer@worker4): void {
+    if (lo < hi) {
+        let pivot = xs[hi];
+        let i = lo;
+        for (let j = lo; j < hi; j = j + 1@worker4) {
+            if (xs[j] < pivot) {
+                let t = xs[i];
+                xs[i] = xs[j];
+                xs[j] = t;
+                i = i + 1@worker4;
+            }
+        }
+        let t = xs[i];
+        xs[i] = xs[hi];
+        xs[hi] = t;
+        sort4(xs, lo, i - 1@worker4);
+        sort4(xs, i + 1@worker4, hi);
+    }
+}
+
+// The merge of two sorted arrays, as a fresh array.
+function merge4@worker4(a: integer[]@worker4, b: integer[]@worker4): integer[]@worker4 {
+    let out: integer[]@worker4 = []@worker4;
+    let i = 0@worker4;
+    let j = 0@worker4;
+    while (i < a.length || j < b.length) {
+        let takeA = j >= b.length;
+        if (i < a.length && j < b.length) {
+            takeA = a[i] <= b[j];
+        }
+        if (takeA) {
+            out.push(a[i]);
+            i = i + 1@worker4;
+        } else {
+            out.push(b[j]);
+            j = j + 1@worker4;
+        }
+    }
+    return out;
+}
+
+// m evenly spaced elements of a sorted array.
+function sample4@worker4(xs: integer[]@worker4, m: integer@worker4): integer[]@worker4 {
+    let out: integer[]@worker4 = []@worker4;
+    for (let i = 0@worker4; i < m; i = i + 1@worker4) {
+        out.push(xs[(i * xs.length) / m]);
+    }
+    return out;
+}
+
+// The elements of bucket b (1-based): those v with splitters[b-2] <= v < splitters[b-1].
+function bucket4@worker4(xs: integer[]@worker4, splitters: integer[]@worker4, b: integer@worker4): integer[]@worker4 {
+    let lo = -1@worker4;
+    if (b > 1@worker4) {
+        lo = splitters[b - 2@worker4];
+    }
+    let hi = 1000000@worker4;
+    if (b <= splitters.length) {
+        hi = splitters[b - 1@worker4];
+    }
+    let out: integer[]@worker4 = []@worker4;
+    for (let i = 0@worker4; i < xs.length; i = i + 1@worker4) {
+        let v = xs[i];
+        if (v >= lo && v < hi) {
+            out.push(v);
+        }
+    }
+    return out;
+}
+
+function isSorted4@worker4(xs: integer[]@worker4): boolean@worker4 {
+    let sorted = true@worker4;
+    for (let i = 1@worker4; i < xs.length; i = i + 1@worker4) {
+        if (xs[i - 1@worker4] > xs[i]) {
+            sorted = false@worker4;
+        }
+    }
+    return sorted;
+}
+
+function checksum4@worker4(xs: integer[]@worker4): integer@worker4 {
+    let sum = 0@worker4;
+    for (let i = 0@worker4; i < xs.length; i = i + 1@worker4) {
+        sum = (sum + xs[i]) % 1000003@worker4;
+    }
+    return sum;
+}
+
+// The smallest element, or 1000000 for an empty array.
+function lowest4@worker4(xs: integer[]@worker4): integer@worker4 {
+    if (xs.length === 0@worker4) {
+        return 1000000@worker4;
+    }
+    return xs[0@worker4];
+}
+
+// The largest element of a sorted array, or -1 for an empty one.
+function highest4@worker4(xs: integer[]@worker4): integer@worker4 {
+    if (xs.length === 0@worker4) {
+        return -1@worker4;
+    }
+    return xs[xs.length - 1@worker4];
+}
+
+// ---------------------------------------------------------------------------
+// coordinator: local kernels
+// ---------------------------------------------------------------------------
+
+// In-place quicksort of xs[lo..hi] (Lomuto partition).
+function sortC@coordinator(xs: integer[]@coordinator, lo: integer@coordinator, hi: integer@coordinator): void {
+    if (lo < hi) {
+        let pivot = xs[hi];
+        let i = lo;
+        for (let j = lo; j < hi; j = j + 1@coordinator) {
+            if (xs[j] < pivot) {
+                let t = xs[i];
+                xs[i] = xs[j];
+                xs[j] = t;
+                i = i + 1@coordinator;
+            }
+        }
+        let t = xs[i];
+        xs[i] = xs[hi];
+        xs[hi] = t;
+        sortC(xs, lo, i - 1@coordinator);
+        sortC(xs, i + 1@coordinator, hi);
+    }
+}
+
+// The merge of two sorted arrays, as a fresh array.
+function mergeC@coordinator(a: integer[]@coordinator, b: integer[]@coordinator): integer[]@coordinator {
+    let out: integer[]@coordinator = []@coordinator;
+    let i = 0@coordinator;
+    let j = 0@coordinator;
+    while (i < a.length || j < b.length) {
+        let takeA = j >= b.length;
+        if (i < a.length && j < b.length) {
+            takeA = a[i] <= b[j];
+        }
+        if (takeA) {
+            out.push(a[i]);
+            i = i + 1@coordinator;
+        } else {
+            out.push(b[j]);
+            j = j + 1@coordinator;
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let n1: integer@worker1 <- N_PER_WORKER;
+let m1: integer@worker1 <- SAMPLES;
+let n2: integer@worker2 <- N_PER_WORKER;
+let m2: integer@worker2 <- SAMPLES;
+let n3: integer@worker3 <- N_PER_WORKER;
+let m3: integer@worker3 <- SAMPLES;
+let n4: integer@worker4 <- N_PER_WORKER;
+let m4: integer@worker4 <- SAMPLES;
+let total: integer@coordinator <- N_PER_WORKER;
+total = 4@coordinator * total;
+
+let ok: boolean@coordinator = true@coordinator;
+let digest: integer@coordinator = 0@coordinator;
+
+// ---------------------------------------------------------------------------
+// Rounds
+// ---------------------------------------------------------------------------
+
+for (let round: integer@every = 0@every; round < ROUNDS; round = round + 1@every) {
+    // Fresh data at each worker, and its checksum before sorting.
+    let seed1: integer@worker1 <- round * 7919@every + 39192@every;
+    let data1: integer[]@worker1 = makeData1(n1, seed1);
+    let before1: integer@coordinator <- checksum1(data1);
+    let seed2: integer@worker2 <- round * 7919@every + 12847@every;
+    let data2: integer[]@worker2 = makeData2(n2, seed2);
+    let before2: integer@coordinator <- checksum2(data2);
+    let seed3: integer@worker3 <- round * 7919@every + 52039@every;
+    let data3: integer[]@worker3 = makeData3(n3, seed3);
+    let before3: integer@coordinator <- checksum3(data3);
+    let seed4: integer@worker4 <- round * 7919@every + 25694@every;
+    let data4: integer[]@worker4 = makeData4(n4, seed4);
+    let before4: integer@coordinator <- checksum4(data4);
+    let before: integer@coordinator = (before1 + before2 + before3 + before4) % 1000003@coordinator;
+
+    // 1. local sort, samples to the coordinator
+    sort1(data1, 0@worker1, data1.length - 1@worker1);
+    let sample1C: integer[]@coordinator <- sample1(data1, m1);
+    sort2(data2, 0@worker2, data2.length - 1@worker2);
+    let sample2C: integer[]@coordinator <- sample2(data2, m2);
+    sort3(data3, 0@worker3, data3.length - 1@worker3);
+    let sample3C: integer[]@coordinator <- sample3(data3, m3);
+    sort4(data4, 0@worker4, data4.length - 1@worker4);
+    let sample4C: integer[]@coordinator <- sample4(data4, m4);
+
+    // 2. splitters: every quarter of the merged samples
+    let samples: integer[]@coordinator = mergeC(mergeC(sample1C, sample2C), mergeC(sample3C, sample4C));
+    let splitters: integer[]@coordinator = []@coordinator;
+    for (let q: integer@every = 1@every; q < 4@every; q = q + 1@every) {
+        let qc: integer@coordinator <- q;
+        let at: integer@coordinator = qc * samples.length / 4@coordinator;
+        splitters.push(samples[at]);
+    }
+    let shared: integer[]@every <- splitters;
+
+    // 3. buckets at each worker
+    let sp1: integer[]@worker1 <- shared;
+    let b1to1: integer[]@worker1 = bucket1(data1, sp1, 1@worker1);
+    let b1to2: integer[]@worker1 = bucket1(data1, sp1, 2@worker1);
+    let b1to3: integer[]@worker1 = bucket1(data1, sp1, 3@worker1);
+    let b1to4: integer[]@worker1 = bucket1(data1, sp1, 4@worker1);
+    let sp2: integer[]@worker2 <- shared;
+    let b2to1: integer[]@worker2 = bucket2(data2, sp2, 1@worker2);
+    let b2to2: integer[]@worker2 = bucket2(data2, sp2, 2@worker2);
+    let b2to3: integer[]@worker2 = bucket2(data2, sp2, 3@worker2);
+    let b2to4: integer[]@worker2 = bucket2(data2, sp2, 4@worker2);
+    let sp3: integer[]@worker3 <- shared;
+    let b3to1: integer[]@worker3 = bucket3(data3, sp3, 1@worker3);
+    let b3to2: integer[]@worker3 = bucket3(data3, sp3, 2@worker3);
+    let b3to3: integer[]@worker3 = bucket3(data3, sp3, 3@worker3);
+    let b3to4: integer[]@worker3 = bucket3(data3, sp3, 4@worker3);
+    let sp4: integer[]@worker4 <- shared;
+    let b4to1: integer[]@worker4 = bucket4(data4, sp4, 1@worker4);
+    let b4to2: integer[]@worker4 = bucket4(data4, sp4, 2@worker4);
+    let b4to3: integer[]@worker4 = bucket4(data4, sp4, 3@worker4);
+    let b4to4: integer[]@worker4 = bucket4(data4, sp4, 4@worker4);
+
+    // 4. all-to-all exchange
+    let r2from1: integer[]@worker2 <- b1to2;
+    let r3from1: integer[]@worker3 <- b1to3;
+    let r4from1: integer[]@worker4 <- b1to4;
+    let r1from2: integer[]@worker1 <- b2to1;
+    let r3from2: integer[]@worker3 <- b2to3;
+    let r4from2: integer[]@worker4 <- b2to4;
+    let r1from3: integer[]@worker1 <- b3to1;
+    let r2from3: integer[]@worker2 <- b3to2;
+    let r4from3: integer[]@worker4 <- b3to4;
+    let r1from4: integer[]@worker1 <- b4to1;
+    let r2from4: integer[]@worker2 <- b4to2;
+    let r3from4: integer[]@worker3 <- b4to3;
+
+    // 5. merge what each worker now holds
+    let result1: integer[]@worker1 = merge1(merge1(b1to1, r1from2), merge1(r1from3, r1from4));
+    let result2: integer[]@worker2 = merge2(merge2(b2to2, r2from1), merge2(r2from3, r2from4));
+    let result3: integer[]@worker3 = merge3(merge3(b3to3, r3from1), merge3(r3from2, r3from4));
+    let result4: integer[]@worker4 = merge4(merge4(b4to4, r4from1), merge4(r4from2, r4from3));
+
+    // Audit at the coordinator.
+    let sorted1: boolean@coordinator <- isSorted1(result1);
+    let low1: integer@coordinator <- lowest1(result1);
+    let high1: integer@coordinator <- highest1(result1);
+    let count1: integer@coordinator <- result1.length;
+    let after1: integer@coordinator <- checksum1(result1);
+    let sorted2: boolean@coordinator <- isSorted2(result2);
+    let low2: integer@coordinator <- lowest2(result2);
+    let high2: integer@coordinator <- highest2(result2);
+    let count2: integer@coordinator <- result2.length;
+    let after2: integer@coordinator <- checksum2(result2);
+    let sorted3: boolean@coordinator <- isSorted3(result3);
+    let low3: integer@coordinator <- lowest3(result3);
+    let high3: integer@coordinator <- highest3(result3);
+    let count3: integer@coordinator <- result3.length;
+    let after3: integer@coordinator <- checksum3(result3);
+    let sorted4: boolean@coordinator <- isSorted4(result4);
+    let low4: integer@coordinator <- lowest4(result4);
+    let high4: integer@coordinator <- highest4(result4);
+    let count4: integer@coordinator <- result4.length;
+    let after4: integer@coordinator <- checksum4(result4);
+    let after: integer@coordinator = (after1 + after2 + after3 + after4) % 1000003@coordinator;
+    let allSorted: boolean@coordinator = sorted1 && sorted2 && sorted3 && sorted4;
+    let ordered: boolean@coordinator = high1 <= low2 && high2 <= low3 && high3 <= low4;
+    let complete: boolean@coordinator = count1 + count2 + count3 + count4 === total;
+    ok = ok && allSorted && ordered && complete && before === after;
+    digest = (digest * 31@coordinator + after + count1) % 1000003@coordinator;
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+print(ok);
+print(digest);

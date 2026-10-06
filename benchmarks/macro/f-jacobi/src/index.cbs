@@ -1,0 +1,277 @@
+// F jacobi: 1-D heat diffusion by Jacobi iteration, with halo exchange.
+//
+// Endpoints: worker1, worker2, worker3, worker4.
+//
+// A rod of 4 * CELLS cells is split into four segments, one per worker, in a
+// line. Each segment has a ghost cell at each end. The left end of the rod is
+// held at 100 and the right end at 0. Each step:
+//
+//   1. halo exchange: each worker sends its edge cells to its neighbours,
+//      which write them into their ghost cells (six transfers);
+//   2. each worker runs one Jacobi sweep over its segment.
+//
+// Every RES_EVERY steps the workers' residuals (sums of squared changes) are
+// reduced at worker1, which broadcasts whether the rod has converged. The
+// `while` loop runs until it has, or until MAX_STEPS.
+//
+// The sweep is a local kernel and dominates the run time; only the halo
+// exchange and the reduction are choreography code. This is the lower bound
+// of the macro suite.
+//
+// Self-check: the residual never increases from one check to the next (the
+// iteration matrix is symmetric, so the update norm is non-increasing) and
+// every interior temperature lies within [0, 100]. All values are floats:
+// compare checksums with a tolerance (see benchmarks/README.md).
+//
+// Output: worker1 prints `ok`, the number of steps, the last residual and
+// the temperature at the middle of the rod.
+
+// ---------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------
+
+let CELLS: integer@every = 16@every;
+let MAX_STEPS: integer@every = 400@every;
+let RES_EVERY: integer@every = 10@every;
+
+// ---------------------------------------------------------------------------
+// worker1: local kernels
+// ---------------------------------------------------------------------------
+
+// A segment of n cells plus a ghost cell at each end, all at `value`.
+function segment1@worker1(n: integer@worker1, value: float@worker1): float[]@worker1 {
+    let u: float[]@worker1 = []@worker1;
+    for (let i = 0@worker1; i < n + 2@worker1; i = i + 1@worker1) {
+        u.push(value);
+    }
+    return u;
+}
+
+// One Jacobi sweep over the interior cells, in place (through `next`).
+// Returns the sum of the squared changes.
+function relax1@worker1(u: float[]@worker1, next: float[]@worker1): float@worker1 {
+    let n = u.length - 2@worker1;
+    let change = 0.0@worker1;
+    for (let i = 1@worker1; i <= n; i = i + 1@worker1) {
+        next[i] = (u[i - 1@worker1] + u[i + 1@worker1]) * 0.5@worker1;
+    }
+    for (let i = 1@worker1; i <= n; i = i + 1@worker1) {
+        let d = next[i] - u[i];
+        change = change + d * d;
+        u[i] = next[i];
+    }
+    return change;
+}
+
+// ---------------------------------------------------------------------------
+// worker2: local kernels
+// ---------------------------------------------------------------------------
+
+// A segment of n cells plus a ghost cell at each end, all at `value`.
+function segment2@worker2(n: integer@worker2, value: float@worker2): float[]@worker2 {
+    let u: float[]@worker2 = []@worker2;
+    for (let i = 0@worker2; i < n + 2@worker2; i = i + 1@worker2) {
+        u.push(value);
+    }
+    return u;
+}
+
+// One Jacobi sweep over the interior cells, in place (through `next`).
+// Returns the sum of the squared changes.
+function relax2@worker2(u: float[]@worker2, next: float[]@worker2): float@worker2 {
+    let n = u.length - 2@worker2;
+    let change = 0.0@worker2;
+    for (let i = 1@worker2; i <= n; i = i + 1@worker2) {
+        next[i] = (u[i - 1@worker2] + u[i + 1@worker2]) * 0.5@worker2;
+    }
+    for (let i = 1@worker2; i <= n; i = i + 1@worker2) {
+        let d = next[i] - u[i];
+        change = change + d * d;
+        u[i] = next[i];
+    }
+    return change;
+}
+
+// ---------------------------------------------------------------------------
+// worker3: local kernels
+// ---------------------------------------------------------------------------
+
+// A segment of n cells plus a ghost cell at each end, all at `value`.
+function segment3@worker3(n: integer@worker3, value: float@worker3): float[]@worker3 {
+    let u: float[]@worker3 = []@worker3;
+    for (let i = 0@worker3; i < n + 2@worker3; i = i + 1@worker3) {
+        u.push(value);
+    }
+    return u;
+}
+
+// One Jacobi sweep over the interior cells, in place (through `next`).
+// Returns the sum of the squared changes.
+function relax3@worker3(u: float[]@worker3, next: float[]@worker3): float@worker3 {
+    let n = u.length - 2@worker3;
+    let change = 0.0@worker3;
+    for (let i = 1@worker3; i <= n; i = i + 1@worker3) {
+        next[i] = (u[i - 1@worker3] + u[i + 1@worker3]) * 0.5@worker3;
+    }
+    for (let i = 1@worker3; i <= n; i = i + 1@worker3) {
+        let d = next[i] - u[i];
+        change = change + d * d;
+        u[i] = next[i];
+    }
+    return change;
+}
+
+// ---------------------------------------------------------------------------
+// worker4: local kernels
+// ---------------------------------------------------------------------------
+
+// A segment of n cells plus a ghost cell at each end, all at `value`.
+function segment4@worker4(n: integer@worker4, value: float@worker4): float[]@worker4 {
+    let u: float[]@worker4 = []@worker4;
+    for (let i = 0@worker4; i < n + 2@worker4; i = i + 1@worker4) {
+        u.push(value);
+    }
+    return u;
+}
+
+// One Jacobi sweep over the interior cells, in place (through `next`).
+// Returns the sum of the squared changes.
+function relax4@worker4(u: float[]@worker4, next: float[]@worker4): float@worker4 {
+    let n = u.length - 2@worker4;
+    let change = 0.0@worker4;
+    for (let i = 1@worker4; i <= n; i = i + 1@worker4) {
+        next[i] = (u[i - 1@worker4] + u[i + 1@worker4]) * 0.5@worker4;
+    }
+    for (let i = 1@worker4; i <= n; i = i + 1@worker4) {
+        let d = next[i] - u[i];
+        change = change + d * d;
+        u[i] = next[i];
+    }
+    return change;
+}
+
+// ---------------------------------------------------------------------------
+// The audit kernels
+// ---------------------------------------------------------------------------
+
+function inRange@worker1(x: float@worker1): boolean@worker1 {
+    return x >= 0.0@worker1 && x <= 100.0@worker1;
+}
+
+function inRange2@worker2(u: float[]@worker2): boolean@worker2 {
+    let ok = true@worker2;
+    for (let i = 1@worker2; i < u.length - 1@worker2; i = i + 1@worker2) {
+        if (u[i] < 0.0@worker2 || u[i] > 100.0@worker2) {
+            ok = false@worker2;
+        }
+    }
+    return ok;
+}
+
+function inRange3@worker3(u: float[]@worker3): boolean@worker3 {
+    let ok = true@worker3;
+    for (let i = 1@worker3; i < u.length - 1@worker3; i = i + 1@worker3) {
+        if (u[i] < 0.0@worker3 || u[i] > 100.0@worker3) {
+            ok = false@worker3;
+        }
+    }
+    return ok;
+}
+
+function inRange4@worker4(u: float[]@worker4): boolean@worker4 {
+    let ok = true@worker4;
+    for (let i = 1@worker4; i < u.length - 1@worker4; i = i + 1@worker4) {
+        if (u[i] < 0.0@worker4 || u[i] > 100.0@worker4) {
+            ok = false@worker4;
+        }
+    }
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+let n1: integer@worker1 <- CELLS;
+let last1: integer@worker1 = n1 + 1@worker1;
+let u1: float[]@worker1 = segment1(n1, 0.0@worker1);
+let next1: float[]@worker1 = segment1(n1, 0.0@worker1);
+let n2: integer@worker2 <- CELLS;
+let last2: integer@worker2 = n2 + 1@worker2;
+let u2: float[]@worker2 = segment2(n2, 0.0@worker2);
+let next2: float[]@worker2 = segment2(n2, 0.0@worker2);
+let n3: integer@worker3 <- CELLS;
+let last3: integer@worker3 = n3 + 1@worker3;
+let u3: float[]@worker3 = segment3(n3, 0.0@worker3);
+let next3: float[]@worker3 = segment3(n3, 0.0@worker3);
+let n4: integer@worker4 <- CELLS;
+let last4: integer@worker4 = n4 + 1@worker4;
+let u4: float[]@worker4 = segment4(n4, 0.0@worker4);
+let next4: float[]@worker4 = segment4(n4, 0.0@worker4);
+
+// The fixed ends of the rod.
+u1[0@worker1] = 100.0@worker1;
+u4[last4] = 0.0@worker4;
+
+let steps: integer@every = 0@every;
+let running: boolean@every = true@every;
+let residual: float@worker1 = 1000000.0@worker1;
+let monotone: boolean@worker1 = true@worker1;
+
+// ---------------------------------------------------------------------------
+// Iteration
+// ---------------------------------------------------------------------------
+
+while (running) {
+    // 1. halo exchange
+    let east1: float@worker2 <- u1[n1];
+    u2[0@worker2] = east1;
+    let west2: float@worker1 <- u2[1@worker2];
+    u1[last1] = west2;
+    let east2: float@worker3 <- u2[n2];
+    u3[0@worker3] = east2;
+    let west3: float@worker2 <- u3[1@worker3];
+    u2[last2] = west3;
+    let east3: float@worker4 <- u3[n3];
+    u4[0@worker4] = east3;
+    let west4: float@worker3 <- u4[1@worker4];
+    u3[last3] = west4;
+
+    // 2. local sweeps
+    let change1: float@worker1 = relax1(u1, next1);
+    let change2: float@worker2 = relax2(u2, next2);
+    let change3: float@worker3 = relax3(u3, next3);
+    let change4: float@worker4 = relax4(u4, next4);
+
+    steps = steps + 1@every;
+    let check: boolean@every = steps % RES_EVERY === 0@every;
+    if (check) {
+        let change2at1: float@worker1 <- change2;
+        let change3at1: float@worker1 <- change3;
+        let change4at1: float@worker1 <- change4;
+        let total: float@worker1 = change1 + change2at1 + change3at1 + change4at1;
+        monotone = monotone && total <= residual;
+        residual = total;
+        let convergedAt1: boolean@worker1 = total < 0.0000001@worker1;
+        let converged: boolean@every <- convergedAt1;
+        running = !converged;
+    }
+    running = running && steps < MAX_STEPS;
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+// The middle of the rod is the boundary between worker2 and worker3.
+let middle: float@worker1 <- u3[1@worker3];
+let edges: boolean@worker1 = inRange(u1[1@worker1]) && inRange(middle);
+let inside2: boolean@worker1 <- inRange2(u2);
+let inside3: boolean@worker1 <- inRange3(u3);
+let inside4: boolean@worker1 <- inRange4(u4);
+let ok: boolean@worker1 = monotone && edges && inside2 && inside3 && inside4;
+let stepCount: integer@worker1 <- steps;
+print(ok);
+print(stepCount);
+print(residual);
+print(middle);

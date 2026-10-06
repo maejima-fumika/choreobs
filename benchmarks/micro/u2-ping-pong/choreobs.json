@@ -1,0 +1,8 @@
+{
+  "name": "u2-ping-pong",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "alice", "board": "host" },
+    { "name": "bob", "board": "host" }
+  ]
+}
