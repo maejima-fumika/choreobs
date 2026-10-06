@@ -14,23 +14,32 @@ export type Statement =
   | ExpressionStatement;
 
 /**
- * Ordinary initialized `let` (spec §let-statement).
+ * The keyword a declaration statement is written with. A `const` is a `let`
+ * whose variable is never stored into again (spec §const-statement), so both
+ * share one node and only this field tells them apart.
+ */
+export type DeclarationKeyword = "let" | "const";
+
+/**
+ * Ordinary initialized `let` or `const` (spec §let-statement, §const-statement).
  * `type` is present for `let x: T = e;`, omitted for `let x = e;` (inferred in §let-type-inference).
  */
 export interface LetStatement extends AstNode {
   readonly kind: "LetStatement";
+  readonly keyword: DeclarationKeyword;
   readonly name: string;
   readonly type?: TypeAnnotation;
   readonly initializer: Expression;
 }
 
 /**
- * Transfer `let` (spec §let-statement, §transfer-let-does-not-infer-destination-type).
+ * Transfer `let` or `const` (spec §let-statement, §const-statement, §transfer-let-does-not-infer-destination-type).
  * `type` is always required; destination type/location are not inferred from the
  * source. A destination written without its location is `dyn` (spec §omitted-locations).
  */
 export interface LetTransferStatement extends AstNode {
   readonly kind: "LetTransferStatement";
+  readonly keyword: DeclarationKeyword;
   readonly name: string;
   readonly type: TypeAnnotation;
   readonly source: Expression;

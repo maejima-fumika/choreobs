@@ -1,20 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compileProject } from "../../src/driver/index.js";
 import { assertNoChoreoResidue } from "../support/compile.js";
+import { projectRoots, REPO_ROOT } from "../support/project.js";
 
-const BENCHMARKS = join(import.meta.dirname, "..", "..", "benchmarks");
 const GROUPS = ["micro", "macro"];
 
+/** The benchmark projects, as paths relative to the repository root. */
 function benchmarkDirs(): string[] {
-  return GROUPS.flatMap((group) =>
-    readdirSync(join(BENCHMARKS, group))
-      .filter((name) => statSync(join(BENCHMARKS, group, name)).isDirectory())
-      .sort()
-      .map((name) => join(group, name)),
-  );
+  return projectRoots().filter((dir) => dir.startsWith("benchmarks/"));
 }
 
 describe("benchmarks/ compile end to end", () => {
@@ -23,7 +19,7 @@ describe("benchmarks/ compile end to end", () => {
   it("finds the benchmark programs", () => {
     for (const group of GROUPS) {
       assert.ok(
-        dirs.some((dir) => dir.startsWith(`${group}/`)),
+        dirs.some((dir) => dir.startsWith(`benchmarks/${group}/`)),
         `expected at least one ${group} benchmark`,
       );
     }
@@ -31,7 +27,7 @@ describe("benchmarks/ compile end to end", () => {
 
   for (const dir of dirs) {
     it(`compiles ${dir}`, () => {
-      const root = join(BENCHMARKS, dir);
+      const root = join(REPO_ROOT, dir);
       // Each benchmark is the fully static baseline: strict mode, so every
       // location is written (benchmarks/README.md).
       const config = JSON.parse(readFileSync(join(root, "choreobs.json"), "utf8"));

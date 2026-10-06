@@ -100,6 +100,7 @@ function emittedToProjectedProgram(
     });
     body.push({
       kind: "LetStatement",
+      keyword: "let",
       name: "_broadcast_local",
       type: RECONSTRUCTED_TYPE,
       initializer: { kind: "IdentifierExpression", name: "_", span },
@@ -111,6 +112,7 @@ function emittedToProjectedProgram(
     const comm = kindOf(RECEIVE, match[1]!);
     body.push({
       kind: "LetStatement",
+      keyword: "let",
       name: `_recv_${match[3]}`,
       type: RECONSTRUCTED_TYPE,
       initializer: {

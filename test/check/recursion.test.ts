@@ -43,8 +43,10 @@ describe("function call graph SCC (spec §inference-and-recursion)", () => {
 
 describe("recursion detection sees calls in every expression position", () => {
   // `collectCalleeNames` builds the call graph these rules run on. It used to
-  // skip an `if` condition and an index-assignment target, so a recursive call
-  // hiding in either escaped §recursion and §inference-and-recursion entirely.
+  // skip an `if` condition and an index-assignment target, and later the index
+  // of an element assigned in a `for` header, so a recursive call hiding in any
+  // of them escaped §recursion and §inference-and-recursion entirely. It now
+  // reads every expression from `statementParts` (src/ast/traverse.ts).
   function expectRejected(source: string, messageIncludes: string): void {
     const result = compileSource(source, "index.cbs", {
       endpoints: ["alice", "bob"],
@@ -107,6 +109,35 @@ function g(): integer@every {
     );
   });
 
+  it("rejects a recursive call in the index of a `for` update's target (§recursion)", () => {
+    expectRejected(
+      `
+function g(): integer@every {
+    let xs: integer[]@every = [0]@every;
+    for (let i = 0@every; i < 1@every; xs[g()] = i) {
+        i = i + 1@every;
+    }
+    return 0@every;
+}
+`,
+      "cannot be recursive",
+    );
+  });
+
+  it("rejects a recursive call in the index of a `for` initializer's target (§recursion)", () => {
+    expectRejected(
+      `
+function g(): integer@every {
+    let xs: integer[]@every = [0]@every;
+    for (xs[g()] = 1@every; false@every; ) {
+    }
+    return 0@every;
+}
+`,
+      "cannot be recursive",
+    );
+  });
+
   it("rejects a recursive local function with an omitted return type called from an if condition (§inference-and-recursion)", () => {
     expectRejected(
       `
@@ -119,5 +150,47 @@ function f@alice(n: integer@alice) {
 `,
       "omitted return type cannot be recursive",
     );
+  });
+});
+
+describe("return type inference waits for callees called from a `for` header (spec §function-return-type-inference)", () => {
+  // A callee missing from the call graph was inferred after its caller, so the
+  // caller's body read a return type that did not exist yet. `b` comes first
+  // so that inference, which takes the later declarations first, reaches `a`
+  // before `b`.
+  function expectCompiles(source: string): void {
+    const result = compileSource(source, "index.cbs", { endpoints: ["alice", "bob"] });
+    assert.equal(result.success, true, JSON.stringify(result.errors));
+  }
+
+  it("infers an omitted return type first", () => {
+    expectCompiles(`
+function b() {
+    return 0@every;
+}
+function a() {
+    let xs: integer[]@every = [0]@every;
+    for (xs[b()] = 1@every; false@every; ) {
+    }
+    return 2@every;
+}
+let r = a();
+`);
+  });
+
+  it("infers a partial return type's location first", () => {
+    expectCompiles(`
+function b(): integer {
+    return 0@every;
+}
+function a() {
+    let xs: integer[]@every = [0]@every;
+    for (let i = 0@every; i < 1@every; xs[b()] = i) {
+        i = i + 1@every;
+    }
+    return 2@every;
+}
+let r = a();
+`);
   });
 });

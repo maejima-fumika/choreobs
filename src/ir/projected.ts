@@ -1,4 +1,5 @@
 import type { Span } from "../ast/span.js";
+import type { DeclarationKeyword } from "../ast/statements.js";
 import type { BaseType, NumericType } from "../ast/syntax-types.js";
 import type {
   ArithmeticOperator,
@@ -197,6 +198,11 @@ export type ProjectedStatement =
 
 export interface LetStatement {
   readonly kind: "LetStatement";
+  /**
+   * The source declaration's keyword, kept in the output (spec §let-projection).
+   * A binding EPP introduces itself is a `let`.
+   */
+  readonly keyword: DeclarationKeyword;
   readonly name: string;
   readonly type: ProjectedType;
   readonly initializer: ProjectedExpression;

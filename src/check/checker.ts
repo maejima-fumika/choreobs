@@ -1,5 +1,5 @@
 import type { Span } from "../ast/span.js";
-import type { Program, TopLevelItem, TopLevelStatement } from "../ast/program.js";
+import type { Program, TopLevelStatement } from "../ast/program.js";
 import type { FunctionDeclaration, Parameter } from "../ast/declarations.js";
 import type {
   Statement,
@@ -93,10 +93,10 @@ import {
   transferModeOf,
 } from "../types/located.js";
 import { rawLiteralBaseType } from "./resolve.js";
-import type { SpecId, SpecRefs } from "../spec/ref.js";
+import { specRef, type SpecId, type SpecRefs } from "../spec/ref.js";
 import { typeCheckError, type TypeCheckError } from "./errors.js";
 import { assertNever } from "../util/exhaustive.js";
-import { childExpressions } from "../ast/traverse.js";
+import { callsIn } from "../ast/traverse.js";
 import { isReservedRuntimeName } from "../runtime/names.js";
 import {
   checkReturnCoverage,
@@ -172,6 +172,18 @@ function withExpectedElementType(
 }
 
 /**
+ * A name in scope: a variable or a parameter.
+ *
+ * `constant` marks a variable declared with `const`, which no assignment or
+ * transfer statement may store into (spec §const-statement). Parameters and
+ * `let` variables are not constant.
+ */
+interface Variable {
+  readonly type: LocatedType;
+  readonly constant: boolean;
+}
+
+/**
  * Thrown by {@link TypeChecker.error} to abandon the rest of type checking.
  *
  * Checking stops at the first error (spec §compile-time-errors). Continuing would mean inventing
@@ -200,8 +212,30 @@ class TypeChecker {
    */
   private returnCandidates: ReturnCandidate[] | undefined;
   private inTopLevel = false;
-  private readonly topLevelEnv = new Map<string, LocatedType>();
-  private envStack: Map<string, LocatedType>[] = [];
+  private readonly topLevelEnv = new Map<string, Variable>();
+  private envStack: Map<string, Variable>[] = [];
+  /**
+   * The constants top-level statements declare themselves, each with the index
+   * of its item in the program (spec §top-level-let). Collected before anything
+   * is checked: a function body may use one whose declaration has not been
+   * checked yet, and that is an error of its own
+   * (spec §top-level-constant-initialization-order) rather than an undefined name.
+   */
+  private readonly topLevelConstants = new Map<string, number>();
+  /** The top-level constants each function's body uses by name (spec §top-level-constant-initialization-order). */
+  private readonly constantUses = new Map<string, Set<string>>();
+  /** The functions each function's body calls, from `checkRecursion`. */
+  private readonly callGraph = new Map<string, readonly string[]>();
+  /** The functions whose return types are being inferred, the first one asked for first. */
+  private readonly inferring: FunctionDeclaration[] = [];
+  /** The index of the top-level item being checked. */
+  private topLevelIndex = -1;
+  /**
+   * The top-level call whose callee is being resolved. Inferring that callee's
+   * return type is the only way a function body is checked before the top
+   * level is done, so a top-level constant it finds undeclared is reported here.
+   */
+  private topLevelCall: CallExpression | undefined;
 
   constructor(
     private readonly program: Program,
@@ -222,15 +256,32 @@ class TypeChecker {
     }
   }
 
+  /**
+   * The top level is checked before any function body, in source order: a
+   * top-level constant has its type once its declaration has been checked, and
+   * function bodies may use it (spec §top-level-let). A return type that is
+   * left to inference is inferred when something first needs it
+   * (see `getResolvedReturnType`), which under
+   * §top-level-constant-initialization-order is never before the constants
+   * that function uses.
+   */
   private checkProgram(): TypeCheckResult {
     this.collectFunctions();
     this.checkRecursion();
     this.resolveExplicitFunctionSignatures();
-    this.inferOmittedReturnTypes();
+    this.collectTopLevelConstants();
     const items: TypedTopLevelItem[] = [];
-    for (const item of this.program.items) {
-      items.push(this.checkTopLevelItem(item));
-    }
+    this.program.items.forEach((item, index) => {
+      if (item.kind === "TopLevelStatement") {
+        items[index] = this.checkTopLevelStatement(item, index);
+      }
+    });
+    this.program.items.forEach((item, index) => {
+      if (item.kind === "FunctionDeclaration") {
+        items[index] = this.checkFunction(item);
+      }
+    });
+    this.checkInitializationOrder();
     const typed: TypedProgram = {
       kind: "TypedProgram",
       program: this.program,
@@ -280,16 +331,15 @@ class TypeChecker {
   /** Recursion rules (spec §inference-and-recursion, §recursion), over the whole call graph. */
   private checkRecursion(): void {
     const names = [...this.functions.keys()];
-    const callGraph = new Map<string, readonly string[]>();
     for (const name of names) {
       const decl = this.functions.get(name)!;
       const callees = [...this.collectCalleeNames(decl.body)].filter((callee) =>
         this.functions.has(callee),
       );
-      callGraph.set(name, callees);
+      this.callGraph.set(name, callees);
     }
     const successors = (name: string): readonly string[] =>
-      callGraph.get(name) ?? [];
+      this.callGraph.get(name) ?? [];
     const components = stronglyConnectedComponents(names, successors);
     for (const component of components) {
       if (!isRecursiveComponent(component, successors)) {
@@ -334,44 +384,43 @@ class TypeChecker {
     }
   }
 
-  private inferOmittedReturnTypes(): void {
-    const pending = [...this.functions.values()].filter(
-      (decl) => !this.resolvedReturnTypes.has(decl.name),
-    );
-    let progress = true;
-    while (pending.length > 0 && progress) {
-      progress = false;
-      for (let i = pending.length - 1; i >= 0; i--) {
-        const decl = pending[i]!;
-        if (!this.calleesReadyForInference(decl)) {
-          continue;
-        }
-        if (this.inferReturnTypeFor(decl)) {
-          pending.splice(i, 1);
-          progress = true;
-        }
-      }
-    }
-    for (const decl of pending) {
-      this.error(
-        `cannot infer return type for '${decl.name}': depends on other functions with omitted return types that are not yet resolved`,
-        decl.span,
-        ["function-return-type-inference"],
+  /**
+   * Infers `decl`'s return type the first time it is needed: at a call, or
+   * where its own body is checked (spec §function-return-type-inference).
+   *
+   * That may be in the middle of another body or of a top-level statement, so
+   * where the checker stands is put aside and restored. The body is checked in
+   * a scope of its own: the blocks the checker is in are not visible from it.
+   *
+   * `checkRecursion` has already rejected every function with an omitted
+   * return type that reaches itself (spec §inference-and-recursion), so the
+   * inferences in progress never include `decl`.
+   */
+  private inferReturnType(decl: FunctionDeclaration): LocatedType {
+    if (this.inferring.includes(decl)) {
+      throw new Error(
+        `internal error: the return type of '${decl.name}' depends on itself ${specRef("inference-and-recursion")}`,
       );
     }
-  }
-
-  private calleesReadyForInference(decl: FunctionDeclaration): boolean {
-    const callees = this.collectCalleeNames(decl.body);
-    for (const name of callees) {
-      if (name === decl.name) {
-        continue;
-      }
-      if (this.functions.has(name) && !this.resolvedReturnTypes.has(name)) {
-        return false;
-      }
-    }
-    return true;
+    const saved = {
+      envStack: this.envStack,
+      currentFunction: this.currentFunction,
+      currentFunctionReturnType: this.currentFunctionReturnType,
+      returnCandidates: this.returnCandidates,
+      inTopLevel: this.inTopLevel,
+    };
+    this.envStack = [];
+    this.inTopLevel = false;
+    this.currentFunctionReturnType = undefined;
+    this.inferring.push(decl);
+    const returnType = this.inferReturnTypeFor(decl);
+    this.inferring.pop();
+    this.envStack = saved.envStack;
+    this.currentFunction = saved.currentFunction;
+    this.currentFunctionReturnType = saved.currentFunctionReturnType;
+    this.returnCandidates = saved.returnCandidates;
+    this.inTopLevel = saved.inTopLevel;
+    return returnType;
   }
 
   /**
@@ -387,7 +436,7 @@ class TypeChecker {
    * that binds a name, or a rule about what may appear in a body, is written
    * once and both passes see it.
    */
-  private inferReturnTypeFor(decl: FunctionDeclaration): boolean {
+  private inferReturnTypeFor(decl: FunctionDeclaration): LocatedType {
     const { env } = this.buildParameterEnv(decl);
     const candidates: ReturnCandidate[] = [];
     this.currentFunction = decl;
@@ -395,9 +444,6 @@ class TypeChecker {
     this.pushEnv(env);
     this.checkBlock(decl.body, decl.context, true);
     this.popEnv();
-    this.returnCandidates = undefined;
-    this.currentFunction = undefined;
-    this.currentFunctionReturnType = undefined;
     // Returns at two different concrete locations give `dyn` exactly where an
     // omission would (spec §strict-mode, §function-return-type-inference), and are an error elsewhere.
     // A local function never gets here with two: the body was just checked to
@@ -433,7 +479,7 @@ class TypeChecker {
       "return type",
     );
     this.resolvedReturnTypes.set(decl.name, returnType);
-    return true;
+    return returnType;
   }
 
   /**
@@ -466,120 +512,142 @@ class TypeChecker {
     return this.implicitDyn ? DYN : undefined;
   }
 
-  /** Return type after resolution or inference; does not read raw AST annotations. */
+  /**
+   * Return type after resolution or inference; does not read raw AST annotations.
+   *
+   * A written return type is resolved, unless it leaves its location to the
+   * body (see `hasPartialReturnType`); resolving that one here would quietly
+   * make it `dyn`. Every other return type is inferred, once, here.
+   */
   private getResolvedReturnType(decl: FunctionDeclaration): LocatedType {
     const resolved = this.resolvedReturnTypes.get(decl.name);
     if (resolved !== undefined) {
       return resolved;
     }
-    if (decl.returnType !== undefined) {
-      if (this.hasPartialReturnType(decl)) {
-        // Its location comes from inference, which resolves every callee first
-        // (see `calleesReadyForInference`); resolving it here instead would
-        // quietly make it `dyn`.
-        throw new Error(
-          `internal error: partial return type of '${decl.name}' used before it was inferred`,
-        );
-      }
+    if (decl.returnType !== undefined && !this.hasPartialReturnType(decl)) {
       const returnType = this.resolveReturnType(decl.returnType, decl);
       this.resolvedReturnTypes.set(decl.name, returnType);
       return returnType;
     }
+    return this.inferReturnType(decl);
+  }
+
+  /**
+   * The functions `block` calls, anywhere in it (spec §inference-and-recursion).
+   *
+   * Every expression a statement evaluates counts, including those in a `for`
+   * header (see `callsIn`): a call missed here is a recursion that goes
+   * unreported, or a constant used before it is initialized
+   * (spec §top-level-constant-initialization-order).
+   */
+  private collectCalleeNames(block: Block): Set<string> {
+    return new Set(callsIn(block.statements).map((call) => call.callee));
+  }
+
+  /** See {@link topLevelConstants}. A second declaration of a name is rejected where it is checked. */
+  private collectTopLevelConstants(): void {
+    this.program.items.forEach((item, index) => {
+      if (item.kind !== "TopLevelStatement") {
+        return;
+      }
+      const stmt = item.statement;
+      if (
+        (stmt.kind === "LetStatement" || stmt.kind === "LetTransferStatement") &&
+        stmt.keyword === "const" &&
+        !this.topLevelConstants.has(stmt.name)
+      ) {
+        this.topLevelConstants.set(stmt.name, index);
+      }
+    });
+  }
+
+  /**
+   * §top-level-constant-initialization-order: no top-level statement calls a
+   * function that reaches a top-level constant declared by that statement or a
+   * later one.
+   *
+   * Run once every body has been checked, since only then is it known which
+   * constants each one uses. A callee whose return type had to be inferred for
+   * the statement was caught earlier, by `useTopLevelConstant`; this catches
+   * the rest, whose bodies the top level never needed.
+   */
+  private checkInitializationOrder(): void {
+    if (this.constantUses.size === 0) {
+      return;
+    }
+    this.program.items.forEach((item, index) => {
+      if (item.kind !== "TopLevelStatement") {
+        return;
+      }
+      for (const call of callsIn([item.statement])) {
+        const reached = this.reachedConstant(
+          call.callee,
+          (constant) => this.topLevelConstants.get(constant)! >= index,
+        );
+        if (reached !== undefined) {
+          this.reportConstantUsedBeforeInitialization(call, index, reached.path, reached.constant);
+        }
+      }
+    });
+  }
+
+  /**
+   * A top-level constant matching `wanted` that `start` reaches: one its body
+   * uses, or one a function it calls reaches (spec §top-level-constant-initialization-order).
+   * `path` runs from `start` to the function that uses it, by fewest calls.
+   */
+  private reachedConstant(
+    start: string,
+    wanted: (constant: string) => boolean,
+  ): { readonly path: readonly string[]; readonly constant: string } | undefined {
+    const paths = new Map<string, readonly string[]>([[start, [start]]]);
+    const queue = [start];
+    for (let i = 0; i < queue.length; i++) {
+      const name = queue[i]!;
+      const path = paths.get(name)!;
+      for (const constant of this.constantUses.get(name) ?? []) {
+        if (wanted(constant)) {
+          return { path, constant };
+        }
+      }
+      for (const callee of this.callGraph.get(name) ?? []) {
+        if (!paths.has(callee)) {
+          paths.set(callee, [...path, callee]);
+          queue.push(callee);
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * A call that would run a function before a top-level constant it reaches is
+   * initialized (spec §top-level-constant-initialization-order). `path` runs
+   * from the callee to the function that uses the constant.
+   */
+  private reportConstantUsedBeforeInitialization(
+    call: CallExpression,
+    statementIndex: number,
+    path: readonly string[],
+    constant: string,
+  ): never {
+    const through = path.length > 1 ? ` through '${path.slice(1).join("', '")}'` : "";
+    const declared =
+      this.topLevelConstants.get(constant) === statementIndex
+        ? "which this statement declares"
+        : "which is declared later";
     this.error(
-      `function '${decl.name}' has no resolved return type`,
-      decl.span,
+      `'${path[0]}' cannot be called here: it uses the top-level constant '${constant}'${through}, ${declared}`,
+      call.span,
+      ["top-level-constant-initialization-order", "constant-used-before-initialization"],
     );
   }
 
-  private collectCalleeNames(block: Block): Set<string> {
-    const names = new Set<string>();
-    const visitExpr = (expr: Expression): void => {
-      if (expr.kind === "CallExpression") {
-        names.add(expr.callee);
-      }
-      for (const child of childExpressions(expr)) {
-        visitExpr(child);
-      }
-    };
-    const visitStmt = (stmt: Statement): void => {
-      switch (stmt.kind) {
-        case "ReturnStatement":
-          if (stmt.value !== undefined) {
-            visitExpr(stmt.value);
-          }
-          break;
-        case "LetStatement":
-          visitExpr(stmt.initializer);
-          break;
-        case "LetTransferStatement":
-          visitExpr(stmt.source);
-          break;
-        case "AssignmentStatement":
-          if (stmt.target.kind === "IndexAssignmentTarget") {
-            visitExpr(stmt.target.index);
-          }
-          visitExpr(stmt.value);
-          break;
-        case "TransferStatement":
-          visitExpr(stmt.source);
-          break;
-        case "IfStatement":
-          visitExpr(stmt.condition);
-          for (const s of stmt.then.statements) {
-            visitStmt(s);
-          }
-          if (stmt.else !== undefined) {
-            for (const s of stmt.else.statements) {
-              visitStmt(s);
-            }
-          }
-          break;
-        case "WhileStatement":
-          visitExpr(stmt.condition);
-          for (const s of stmt.body.statements) {
-            visitStmt(s);
-          }
-          break;
-        case "ForStatement":
-          if (stmt.init?.kind === "ForLetInit") {
-            visitExpr(stmt.init.initializer);
-          } else if (stmt.init?.kind === "ForAssignmentInit") {
-            visitExpr(stmt.init.value);
-          }
-          if (stmt.condition !== undefined) {
-            visitExpr(stmt.condition);
-          }
-          if (stmt.update !== undefined) {
-            visitExpr(stmt.update.value);
-          }
-          for (const s of stmt.body.statements) {
-            visitStmt(s);
-          }
-          break;
-        case "ExpressionStatement":
-          visitExpr(stmt.expression);
-          break;
-        default:
-          assertNever(stmt, "statement");
-      }
-    };
-    for (const stmt of block.statements) {
-      visitStmt(stmt);
-    }
-    return names;
-  }
-
-  private checkTopLevelItem(item: TopLevelItem): TypedTopLevelItem {
-    if (item.kind === "FunctionDeclaration") {
-      return this.checkFunction(item);
-    }
-    return this.checkTopLevelStatement(item);
-  }
-
-  private checkTopLevelStatement(item: TopLevelStatement): TypedTopLevelStatement {
+  private checkTopLevelStatement(item: TopLevelStatement, index: number): TypedTopLevelStatement {
     this.currentFunction = undefined;
     this.currentFunctionReturnType = undefined;
     this.inTopLevel = true;
+    this.topLevelIndex = index;
     const statement = this.checkStatement(item.statement, CHOREOGRAPHY_CONTEXT, false);
     this.inTopLevel = false;
     return {
@@ -598,11 +666,11 @@ class TypeChecker {
    * which parameter wins a duplicate, or whether a reserved name is caught.
    */
   private buildParameterEnv(decl: FunctionDeclaration): {
-    readonly env: Map<string, LocatedType>;
+    readonly env: Map<string, Variable>;
     readonly params: TypedParameter[];
   } {
     const params: TypedParameter[] = [];
-    const env = new Map<string, LocatedType>();
+    const env = new Map<string, Variable>();
     for (const param of decl.params) {
       const type = this.resolveParameterType(decl, param);
       this.validateLocalFunctionLocatedType(
@@ -618,7 +686,7 @@ class TypeChecker {
           param.span,
         );
       } else {
-        env.set(param.name, type);
+        env.set(param.name, { type, constant: false });
       }
       params.push({ param, type });
     }
@@ -740,7 +808,9 @@ class TypeChecker {
         : { choreoType: this.inferredValueType(initializer, binding.span), initializer };
     const choreoType = resolved.choreoType;
     this.requireExpressionAvailable(choreoType.location, ctx, binding.span);
-    this.defineLocal(binding.name, choreoType, binding.span);
+    // A `for` header declares with `let` only (spec §for-statement).
+    const constant = binding.kind === "LetStatement" && binding.keyword === "const";
+    this.defineLocal(binding.name, choreoType, binding.span, constant);
     return resolved;
   }
 
@@ -839,7 +909,7 @@ class TypeChecker {
     // a `[]` source (spec §array-literal-typing).
     const source = withExpectedElementType(this.checkExpression(stmt.source, ctx), choreoType);
     const transferMode = this.validateTransfer(choreoType, source.choreoType, stmt.span);
-    this.defineLocal(stmt.name, choreoType, stmt.span);
+    this.defineLocal(stmt.name, choreoType, stmt.span, stmt.keyword === "const");
     // The tag is assigned after checking, by `assignCommTags` (spec §communication-tags).
     return { stmt, choreoType, source, transferMode };
   }
@@ -867,12 +937,14 @@ class TypeChecker {
     span: Span,
   ): { readonly target: TypedAssignmentTarget; readonly value: TypedExpression } {
     if (target.kind === "IdentifierAssignmentTarget") {
-      const targetType = this.lookupVariable(target.name, span);
+      const targetType = this.lookupStoreTarget(target.name, span);
       const stored = withExpectedElementType(value, targetType);
       this.validateAssignmentLike(targetType, stored.choreoType, span);
       return { target: { target, targetType }, value: stored };
     }
-    const arrayType = this.lookupVariable(target.name, span);
+    // An element target may be a `const` array: the array changes, not the
+    // variable (spec §const-statement).
+    const arrayType = this.lookupVariable(target.name, span).type;
     if (!arrayType.isArray) {
       this.error("index assignment target must be an array value", span);
     }
@@ -907,7 +979,7 @@ class TypeChecker {
     stmt: TransferStatement,
     ctx: ExecutionContext,
   ): TypedTransferStatement {
-    const targetType = this.lookupVariable(stmt.name, stmt.span);
+    const targetType = this.lookupStoreTarget(stmt.name, stmt.span);
     const source = withExpectedElementType(this.checkExpression(stmt.source, ctx), targetType);
     const transferMode = this.validateTransfer(targetType, source.choreoType, stmt.span);
     return { stmt, targetType, source, transferMode };
@@ -1372,7 +1444,7 @@ class TypeChecker {
     expr: IdentifierExpression,
     ctx: ExecutionContext,
   ): TypedIdentifierExpression {
-    const choreoType = this.lookupVariable(expr.name, expr.span);
+    const choreoType = this.lookupVariable(expr.name, expr.span).type;
     this.requireExpressionAvailable(choreoType.location, ctx, expr.span);
     return { expr, choreoType };
   }
@@ -1407,7 +1479,16 @@ class TypeChecker {
       this.reportNotAFunction(expr.callee, expr.span);
     }
     this.validateCallTarget(decl, expr.span);
+    // Resolving the callee may infer its return type, and so check its body,
+    // before the top level is done (see `topLevelCall`).
+    const atTopLevel = this.currentFunction === undefined;
+    if (atTopLevel) {
+      this.topLevelCall = expr;
+    }
     const symbol = this.functionSymbol(decl);
+    if (atTopLevel) {
+      this.topLevelCall = undefined;
+    }
     const params = symbol.params;
     if (expr.args.length !== params.length) {
       this.error(
@@ -2031,7 +2112,7 @@ class TypeChecker {
     return undefined;
   }
 
-  private defineLocal(name: string, type: LocatedType, span: Span): void {
+  private defineLocal(name: string, type: LocatedType, span: Span, constant: boolean): void {
     this.rejectNameConflict(name, "variable", span);
     const env = this.currentEnv();
     if (env === undefined) {
@@ -2041,13 +2122,37 @@ class TypeChecker {
       this.error(`variable '${name}' is already defined in this scope`, span,
         ["variable-scope"]);
     }
-    env.set(name, type);
+    env.set(name, { type, constant });
   }
 
-  private lookupVariable(name: string, span: Span): LocatedType {
-    const hit = this.findVariable(name);
+  /**
+   * The type of the variable an assignment or a transfer statement stores into
+   * (spec §assignment-statement, §transfer-statement), which must not be a `const`
+   * (spec §const-statement). Only the variable is constant: an element target
+   * looks its array up with {@link lookupVariable} instead.
+   */
+  private lookupStoreTarget(name: string, span: Span): LocatedType {
+    const variable = this.lookupVariable(name, span);
+    if (variable.constant) {
+      this.error(
+        `cannot assign to '${name}' because it is a constant`,
+        span,
+        ["const-statement", "assignment-to-a-constant"],
+      );
+    }
+    return variable.type;
+  }
+
+  private lookupVariable(name: string, span: Span): Variable {
+    const hit = this.findInScope(name);
     if (hit !== undefined) {
       return hit;
+    }
+    if (this.currentFunction !== undefined && this.topLevelConstants.has(name)) {
+      const constant = this.useTopLevelConstant(this.currentFunction, name, span);
+      if (constant !== undefined) {
+        return constant;
+      }
     }
     const holder = this.nameHolder(name);
     if (holder !== undefined) {
@@ -2057,8 +2162,9 @@ class TypeChecker {
         ["namespaces"],
       );
     }
-    // Visible nowhere here, but declared at top level: a function body cannot
-    // see the top-level scope (spec §top-level-let), which is worth saying outright.
+    // Visible nowhere here, but declared at top level: a function body sees the
+    // top-level constants and no other top-level variable (spec §top-level-let),
+    // which is worth saying outright.
     if (this.topLevelEnv.has(name)) {
       this.error(
         `'${name}' is a top-level variable and is not visible inside a function`,
@@ -2069,8 +2175,78 @@ class TypeChecker {
     this.error(`undefined variable '${name}'`, span);
   }
 
+  /**
+   * The top-level constant `name`, which the body of `fn` uses where nothing
+   * nearer has that name (spec §top-level-let). The use is recorded for
+   * §top-level-constant-initialization-order.
+   *
+   * Undefined when the top level holds a `let` of that name, declared before
+   * the constant: not visible here, and the constant is rejected where it is
+   * declared, as a second variable of its scope.
+   */
+  private useTopLevelConstant(
+    fn: FunctionDeclaration,
+    name: string,
+    span: Span,
+  ): Variable | undefined {
+    const variable = this.topLevelEnv.get(name);
+    if (variable === undefined) {
+      // Not declared yet, so the top level is still being checked. A body is
+      // checked then only to infer the return type of a function a top-level
+      // statement calls, which would run before the constant is initialized.
+      if (this.topLevelCall === undefined) {
+        throw new Error(
+          `internal error: '${fn.name}' uses the top-level constant '${name}' before the top level declared it ${specRef("top-level-constant-initialization-order")}`,
+        );
+      }
+      this.reportConstantUsedBeforeInitialization(
+        this.topLevelCall,
+        this.topLevelIndex,
+        this.inferring.map((decl) => decl.name),
+        name,
+      );
+    }
+    if (!variable.constant) {
+      return undefined;
+    }
+    // A local function's body holds values at its own location only
+    // (spec §local-function-strict-location-rule). Checked here, at the name,
+    // because not every use of the constant would catch it later: an element
+    // assignment into a `dyn` array agrees with any index and value.
+    if (fn.context.kind === "local") {
+      const location = variable.type.location;
+      if (!locationsEqual(location, contextAsLocation(fn.context))) {
+        this.error(
+          `top-level constant '${name}' at ${formatLocation(location)} is not usable in local function at ${fn.context.endpoint}`,
+          span,
+          [
+            "local-function-strict-location-rule",
+            location.kind === "dyn" ? "dyn-in-a-local-function" : "invalid-value-used-inside-local-function",
+          ],
+        );
+      }
+    }
+    let uses = this.constantUses.get(fn.name);
+    if (uses === undefined) {
+      uses = new Set();
+      this.constantUses.set(fn.name, uses);
+    }
+    uses.add(name);
+    return variable;
+  }
+
   /** Resolves a variable without reporting when there is none. */
-  private findVariable(name: string): LocatedType | undefined {
+  private findVariable(name: string): Variable | undefined {
+    const hit = this.findInScope(name);
+    if (hit !== undefined || this.currentFunction === undefined || !this.topLevelConstants.has(name)) {
+      return hit;
+    }
+    const variable = this.topLevelEnv.get(name);
+    return variable?.constant === true ? variable : undefined;
+  }
+
+  /** The variable or parameter `name` in the scopes the checker is in, innermost first. */
+  private findInScope(name: string): Variable | undefined {
     for (let i = this.envStack.length - 1; i >= 0; i--) {
       const hit = this.envStack[i]!.get(name);
       if (hit !== undefined) {
@@ -2083,7 +2259,7 @@ class TypeChecker {
     return undefined;
   }
 
-  private pushEnv(env: Map<string, LocatedType>): void {
+  private pushEnv(env: Map<string, Variable>): void {
     this.envStack.push(env);
   }
 
@@ -2091,7 +2267,7 @@ class TypeChecker {
     this.envStack.pop();
   }
 
-  private currentEnv(): Map<string, LocatedType> | undefined {
+  private currentEnv(): Map<string, Variable> | undefined {
     if (this.envStack.length > 0) {
       return this.envStack[this.envStack.length - 1];
     }

@@ -4,7 +4,7 @@ ChoreoBS v1 is a choreographic programming language with explicit and gradual lo
 
 Every value has a location. A location is written explicitly, taken by simple local type inference from an initializer or from the local function it is written in, or left to run time with the dynamic location `dyn` (spec [§3.5](#dyn)). A `dyn` location is checked when the program runs rather than when it is compiled; this is **gradual locating**. A program that writes no `dyn`, and omits no location outside its local functions, is checked entirely statically and compiles exactly as it would without gradual locating.
 
-v1 supports simple local type inference for initialized `let` declarations, `for` initializer `let` declarations, expression result types, function return types, and the locations left out inside a local function. General location inference, `any`, `undefined` and asynchronous execution are outside its scope.
+v1 supports simple local type inference for initialized `let` and `const` declarations, `for` initializer `let` declarations, expression result types, function return types, and the locations left out inside a local function. General location inference, `any`, `undefined` and asynchronous execution are outside its scope.
 
 ---
 
@@ -554,6 +554,7 @@ The following words are reserved:
 ```text
 function
 let
+const
 if
 else
 while
@@ -579,7 +580,6 @@ reported as an unsupported feature rather than as an undefined name:
 ```text
 break
 continue
-const
 any
 undefined
 async
@@ -678,7 +678,7 @@ The lexer recognizes the following tokens:
 `==` and `!=` are not supported in v1.
 
 `.` introduces the two array operations, `xs.length` and `xs.push(v)`
-(spec [§5.14](#expressions)). It is not general property access: those two names are the whole
+(spec [§5.15](#expressions)). It is not general property access: those two names are the whole
 set, and ChoreoBS has no objects to access fields of (spec [§17.2](#typescript-javascript-features)).
 
 A float literal's dot is consumed by the literal rule (spec [§4.5](#literals)), which takes
@@ -836,6 +836,7 @@ Block ::= "{" Statement* "}"
 
 ```ebnf
 Statement ::= LetStatement
+            | ConstStatement
             | AssignmentStatement
             | TransferStatement
             | IfStatement
@@ -881,7 +882,61 @@ let x: integer@alice;
 let y <- x;
 ```
 
-### 5.7 Assignment Statement <a id="assignment-statement"></a>
+### 5.7 Const Statement <a id="const-statement"></a>
+
+```ebnf
+ConstStatement ::= "const" Identifier TypeAnnotation? "=" Expression ";"
+                 | "const" Identifier ":" Type "<-" Expression ";"
+```
+
+A `const` declaration declares a variable that is never stored into again. In
+every other respect it is a `let` declaration: it must be initialized, its type
+annotation may be omitted under the same rules (spec [§7.20](#type-inference)), a transfer declaration
+with `<-` still requires one (spec [§7.20.3](#transfer-let-does-not-infer-destination-type)), and it is scoped (spec [§6.4](#variable-scope)) and
+projected (spec [§12.9](#let-projection)) as a `let` is. What this specification says of a `let`
+declaration it says of a `const` declaration too, unless it names `const`.
+
+One rule does: a `const` declared by a top-level statement is a top-level
+constant, which function bodies see as well (spec [§6.6](#top-level-let)), while a top-level `let`
+is seen at top level only. A function may not be called before a top-level
+constant it uses is initialized (spec [§6.7](#top-level-constant-initialization-order)).
+
+A `const` variable may not be the target of an assignment, in an assignment
+statement (spec [§5.8](#assignment-statement)) or in a `for` header (spec [§5.12](#for-statement)), nor the destination of a
+transfer statement (spec [§5.9](#transfer-statement)). Either is a compile-time error (spec [§16.56](#assignment-to-a-constant)).
+
+Only the binding is constant. An array held in a `const` variable is the same
+mutable array value as any other (spec [§7.1.1](#array-types)), so its elements may still be assigned
+and pushed to.
+
+There are no literal types: `const x = 1@alice;` declares `x : integer@alice`,
+as `let x = 1@alice;` does.
+
+A `for` header declares its variable with `let` only (spec [§5.12](#for-statement)).
+
+Allowed:
+
+```ts
+const x: integer@alice = 1@alice;
+const y = x + 1@alice;
+const z: integer@bob <- x;
+const xs: integer[]@alice = [1, 2]@alice;
+xs[0@alice] = 10@alice;
+xs.push(3@alice);
+```
+
+Disallowed:
+
+```ts
+const x: integer@alice = 1@alice;
+x = 2@alice;
+```
+
+```ts
+const x: integer@alice;
+```
+
+### 5.8 Assignment Statement <a id="assignment-statement"></a>
 
 ```ebnf
 AssignmentStatement ::= AssignmentTarget "=" Expression ";"
@@ -894,6 +949,9 @@ AssignmentTarget ::= Identifier
 
 The left-hand side must be either an identifier or a single-level array element target of the form `Identifier[Expression]`.
 
+An identifier target must not name a `const` variable (spec [§5.7](#const-statement)). An element target
+may: the array changes, not the variable that holds it.
+
 General lvalues such as `f()[i]`, `xs[i][j]`, and property assignments are not supported.
 
 ```ts
@@ -901,7 +959,7 @@ x = y + 1@alice;
 xs[0@alice] = 10@alice;
 ```
 
-### 5.8 Transfer Statement <a id="transfer-statement"></a>
+### 5.9 Transfer Statement <a id="transfer-statement"></a>
 
 ```ebnf
 TransferStatement ::= Identifier "<-" Expression ";"
@@ -911,7 +969,9 @@ TransferStatement ::= Identifier "<-" Expression ";"
 y <- x;
 ```
 
-### 5.9 If Statement <a id="if-statement"></a>
+The destination must not be a `const` variable (spec [§5.7](#const-statement)).
+
+### 5.10 If Statement <a id="if-statement"></a>
 
 ```ebnf
 IfStatement ::= "if" "(" Expression ")" Block ("else" Block)?
@@ -919,13 +979,13 @@ IfStatement ::= "if" "(" Expression ")" Block ("else" Block)?
 
 `if` is a statement, not an expression.
 
-### 5.10 While Statement <a id="while-statement"></a>
+### 5.11 While Statement <a id="while-statement"></a>
 
 ```ebnf
 WhileStatement ::= "while" "(" Expression ")" Block
 ```
 
-### 5.11 For Statement <a id="for-statement"></a>
+### 5.12 For Statement <a id="for-statement"></a>
 
 Only C-style `for` loops are supported in v1.
 
@@ -954,13 +1014,17 @@ LetStatementNoSemicolon ::=
   "let" Identifier TypeAnnotation? "=" Expression
 ```
 
+A `for` header declares its variable with `let` only; `const` is not allowed
+there (spec [§16.57](#const-in-a-for-header)). The update is where a header's variable changes, and it
+could not assign a `const` one (spec [§5.7](#const-statement)).
+
 ```ebnf
 AssignmentStatementNoSemicolon ::=
   AssignmentTarget "=" Expression
 ```
 
 An assignment in a `for` header takes the same targets an assignment statement
-does (spec [§5.7](#assignment-statement)), so an array element may be assigned there too:
+does (spec [§5.8](#assignment-statement)), so an array element may be assigned there too:
 
 ```ts
 let xs: integer[]@every = [1, 2, 3]@every;
@@ -991,7 +1055,7 @@ for (k in obj) {
 }
 ```
 
-### 5.12 Return Statement <a id="return-statement"></a>
+### 5.13 Return Statement <a id="return-statement"></a>
 
 ```ebnf
 ReturnStatement ::= "return" Expression? ";"
@@ -1003,13 +1067,13 @@ ReturnStatement ::= "return" Expression? ";"
 (spec [§6.5](#top-level-statements)) has nothing to return from, so a top-level `return` is an error even
 though that context behaves like a `void` function in every other respect.
 
-### 5.13 Expression Statement <a id="expression-statement"></a>
+### 5.14 Expression Statement <a id="expression-statement"></a>
 
 ```ebnf
 ExpressionStatement ::= Expression ";"
 ```
 
-### 5.14 Expressions <a id="expressions"></a>
+### 5.15 Expressions <a id="expressions"></a>
 
 ```ebnf
 Expression ::= LogicalOrExpression
@@ -1142,11 +1206,11 @@ ArgumentList ::= Expression ("," Expression)*
 ArrayLiteral ::= "[" ArgumentList? "]" LocationAnnotation?
 ```
 
-### 5.15 Located Literals <a id="located-literals"></a>
+### 5.16 Located Literals <a id="located-literals"></a>
 
 Literals may have location annotations. A literal without one is located at `dyn`
 (spec [§8.2](#omitted-locations)), unless it is a direct element of an annotated array literal
-(spec [§5.16](#array-literals)); in strict mode it is an error instead. Inside a local function it is
+(spec [§5.17](#array-literals)); in strict mode it is an error instead. Inside a local function it is
 located at the function's location (spec [§7.20.8](#local-function-location-inference)), in either mode.
 
 ```ebnf
@@ -1173,9 +1237,9 @@ null@alice
 3                 // 3@dyn
 ```
 
-### 5.16 Array Literals <a id="array-literals"></a>
+### 5.17 Array Literals <a id="array-literals"></a>
 
-Array literals are produced by the `ArrayLiteral` rule of [§5.14](#expressions).
+Array literals are produced by the `ArrayLiteral` rule of [§5.15](#expressions).
 This section gives their typing and elaboration rules.
 
 Examples:
@@ -1254,7 +1318,7 @@ literal (spec [§16.32](#array-literal-elements-across-locations)):
 
 ***
 
-### 5.17 Evaluation Order <a id="evaluation-order"></a>
+### 5.18 Evaluation Order <a id="evaluation-order"></a>
 
 Evaluation is eager and left to right.
 
@@ -1332,7 +1396,8 @@ reserves the runtime names in spec [§6.2](#function-names), applied to the prog
   its name for the whole program.
 * A **variable or parameter name** is block-scoped (spec [§6.4](#variable-scope)). It may shadow
   another variable or parameter, but it may not take a name an endpoint or a
-  function already holds.
+  function already holds. The scope of a top-level constant takes in every
+  function body as well (spec [§6.6](#top-level-let)).
 
 So the following are errors (spec [§16.53](#err-name-already-held)):
 
@@ -1406,7 +1471,7 @@ variable emitted into the same BlueScript scope shadows the runtime function
 just as a function of that name would replace it.
 
 `length` and `push` are **not** reserved. They name array operations only after
-a `.` (spec [§5.14](#expressions)), so nothing stops a program from also using them as
+a `.` (spec [§5.15](#expressions)), so nothing stops a program from also using them as
 ordinary names:
 
 ```ts
@@ -1456,7 +1521,7 @@ This is allowed.
 
 ### 6.4 Variable Scope <a id="variable-scope"></a>
 
-`let` variables are block-scoped.
+`let` and `const` variables are block-scoped.
 
 ```ts
 if (c) {
@@ -1476,9 +1541,13 @@ let x: integer@alice = 2@alice;
 ```
 
 A declaration in an inner block may shadow one from an outer block, and a `let`
-in a function body may shadow a parameter.
+or `const` in a function body may shadow a parameter. A parameter, or a `let`
+or `const` in a function body, may likewise shadow a top-level constant
+(spec [§6.6](#top-level-let)). Whether the shadowed
+variable is a `const` does not matter: the inner declaration is a new variable,
+and only its own keyword decides whether it may be assigned (spec [§5.7](#const-statement)).
 
-Shadowing reaches variables and parameters only. A `let` may not shadow a
+Shadowing reaches variables and parameters only. A `let` or `const` may not shadow a
 function name or an endpoint name: those are held for the whole program
 (spec [§6.1](#namespaces)).
 
@@ -1513,15 +1582,66 @@ function __top(): void {
 The implementation does not need to generate an actual function named `__top`.
 
 The analogy stops at `return`: there is no function to return from, so `return`
-is not allowed at top level (spec [§5.12](#return-statement)).
+is not allowed at top level (spec [§5.13](#return-statement)). It stops at top-level constants too:
+function bodies see the constants the top level declares (spec [§6.6](#top-level-let)), as no
+function could see the locals of a function `__top`.
 
-### 6.6 Top-Level Let <a id="top-level-let"></a>
+### 6.6 Top-Level Let and Const <a id="top-level-let"></a>
 
-Top-level `let` declarations are local variables of the implicit top-level context.
+Top-level statements declare the variables of the implicit top-level context
+(spec [§6.5](#top-level-statements)). A top-level `let` variable belongs to that context alone: it is
+not visible from functions.
 
-Therefore, top-level `let` variables are not visible from functions.
+A **top-level constant** is a variable that a top-level statement itself
+declares with `const`, by `const x … = e;` or by `const x: T <- e;`. It is visible
+in the body of every function as well, local and choreography alike. The
+top-level scope encloses each body, outside its parameters, so a parameter or a
+`let` or `const` in the body that has the same name shadows the constant
+(spec [§6.4](#variable-scope)). A `const` declared in a block of a top-level statement, such as
+the body of a top-level `if`, is not a top-level constant: it is scoped to its
+block.
 
-Disallowed:
+A function uses a top-level constant as any `const`: it may read it, and assign
+or push to the elements of an array it holds, but not store into it
+(spec [§5.7](#const-statement)). A local function at `P` may use only a constant located at `P`
+(spec [§8.4](#local-function-strict-location-rule)). No function may be called before a constant it uses is
+initialized (spec [§6.7](#top-level-constant-initialization-order)).
+
+Allowed:
+
+```ts
+const limit: integer@alice = 10@alice;
+const rounds: integer@every = 3@every;
+
+function clamp@alice(x: integer@alice): integer@alice {
+    if (x > limit) {
+        return limit;
+    }
+    return x;
+}
+
+function total(): integer@alice {
+    let sum: integer@alice = 0@alice;
+    for (let i: integer@every = 0@every; i < rounds; i = i + 1@every) {
+        sum = sum + clamp(20@alice);
+    }
+    return sum;
+}
+
+let result: integer@alice = total();
+```
+
+Allowed — the parameter shadows the constant:
+
+```ts
+const n: integer@alice = 1@alice;
+
+function f@alice(n: integer@alice): integer@alice {
+    return n;
+}
+```
+
+Disallowed — a top-level `let` is not visible from a function:
 
 ```ts
 let x: integer@alice = 1@alice;
@@ -1530,6 +1650,66 @@ function f@alice(): integer@alice {
     return x;
 }
 ```
+
+### 6.7 Initialization Order of Top-Level Constants <a id="top-level-constant-initialization-order"></a>
+
+Function declarations are hoisted (spec [§6.3](#function-declaration-hoisting)), but a top-level constant holds a
+value only once its declaration has run. A function could therefore be called
+before a constant it uses is initialized. The program text alone decides
+whether that can happen, and it is a compile-time error
+(spec [§16.58](#constant-used-before-initialization)):
+
+* A function **uses** a top-level constant when a name in its body refers to it
+  (spec [§6.6](#top-level-let)): to read it, to read or assign one of its elements, to push to it,
+  or to take its length.
+* A function **reaches** a top-level constant when it uses it, or when its body
+  calls a function that reaches it. Every call in the body counts, whether or
+  not it would run: these are the calls of the call graph of spec [§10.4](#recursion).
+* A top-level statement must not call a function that reaches a top-level
+  constant declared by that statement or by a later one. Every call in the
+  statement counts, in the blocks it holds too, and so does a call in the
+  initializer of the constant's own declaration.
+
+Only top-level statements are restricted. A function runs only when it is
+called, and every call that runs is made by a top-level statement or by a
+function that such a call ran, so the calls the rule allows never run a body
+before the constants it reaches. Where a function is declared does not matter.
+
+Disallowed — `f` would run before `limit` is initialized:
+
+```ts
+let y: integer@alice = f();
+const limit: integer@alice = 10@alice;
+
+function f@alice(): integer@alice {
+    return limit;
+}
+```
+
+Allowed — `f` is called after:
+
+```ts
+const limit: integer@alice = 10@alice;
+let y: integer@alice = f();
+
+function f@alice(): integer@alice {
+    return limit;
+}
+```
+
+The rule is conservative: a call is rejected even when the use it reaches is in
+a branch that would not run. TypeScript accepts such a program and throws a
+`ReferenceError` only if the use runs. BlueScript checks nothing of the kind:
+a global read before its initialization yields `0`, `0.0`, `false` or `null`,
+with no error (spec [§17.8](#unverified-bluescript-assumptions)). Rejecting the call is what keeps an endpoint from
+running on such a value.
+
+The rule also orders type checking. A function's return type may be inferred
+from a top-level constant it uses (spec [§7.20.4](#function-return-type-inference)), and that constant's type from
+its initializer, which may call other functions. A function a top-level
+statement calls reaches only constants declared before the statement, so the
+top level can be checked in source order, each return type inferred when a call
+first needs it, and no type depends on itself.
 
 ***
 
@@ -1592,7 +1772,8 @@ float[][]
 boolean[][]
 ```
 
-Arrays are mutable reference values.
+Arrays are mutable reference values. That includes an array held in a `const`
+variable: `const` fixes the variable, not the array (spec [§5.7](#const-statement)).
 
 Within the same location, array assignment, function argument passing, and function return preserve array identity. Therefore, two variables may refer to the same mutable array. The same holds across `dyn`: an inject or a cast never copies its payload (spec [§7.8](#coercion)), so an array that is made dynamically located, or static again, is the same array.
 
@@ -2006,7 +2187,7 @@ An operation is **dynamic** when a `dyn` location takes part in it:
   operand's own type changes nothing, and is dropped (spec [§7.15](#numeric-conversion));
 * an index access, element assignment, `.length` or push whose join is `dyn`;
 * a print of a `dyn` value (spec [§7.18](#print-typing));
-* a `dyn` literal or array literal (spec [§8.6](#dyn-literals), [§5.16](#array-literals));
+* a `dyn` literal or array literal (spec [§8.6](#dyn-literals), [§5.17](#array-literals));
 * an inject or a cast (spec [§7.8](#coercion));
 * a transfer with `dyn` on either side (spec [§11.5](#dynamic-transfer)).
 
@@ -2056,6 +2237,10 @@ L2 ~ L1
 ```
 
 with a coercion inserted on `b` when the locations differ (spec [§7.8](#coercion)).
+
+When `a = b` is an assignment statement or an assignment in a `for` header, `a`
+must also not be a `const` variable (spec [§5.7](#const-statement), [§16.56](#assignment-to-a-constant)). The initializer of a
+`const` declaration is checked by the rule above like that of a `let`.
 
 For mutable arrays, compatibility is checked by array invariance as defined in [Section 7.16](#array-typing). Therefore, `T1[]` and `T2[]` are compatible only when `T1` and `T2` are the same element type.
 
@@ -2128,6 +2313,9 @@ a <- b;
 
 evaluates `b` at its own location and copies the resulting value to the location
 of `a`, storing it in `a`.
+
+When `a <- b` is a transfer statement, `a` must not be a `const` variable
+(spec [§5.7](#const-statement), [§16.56](#assignment-to-a-constant)). A transfer declaration may declare one: `const a: T@L <- b;`.
 
 #### Base Type Rule <a id="base-type-rule"></a>
 
@@ -2494,7 +2682,7 @@ The operand locations must be consistent, and the result is a `boolean` at their
 join (spec [§7.7](#location-consistency-and-join)).
 
 They do **not** short-circuit: both operands are always evaluated, left first,
-like those of every other binary operator (spec [§5.17](#evaluation-order)). Beyond the rules
+like those of every other binary operator (spec [§5.18](#evaluation-order)). Beyond the rules
 above, an operand may be any well-typed expression, including one that calls a
 choreography function:
 
@@ -2554,7 +2742,7 @@ let bad = !xs;            // invalid
 ```
 
 Unary operators bind tighter than every binary operator and than `as`, and are
-right associative (spec [§5.14](#expressions)), so `-a * b` is `(-a) * b`, `-a as float` is
+right associative (spec [§5.15](#expressions)), so `-a * b` is `(-a) * b`, `-a as float` is
 `(-a) as float`, and `!!c` is `!(!c)`.
 
 ### 7.15 Numeric Conversion <a id="numeric-conversion"></a>
@@ -2600,7 +2788,7 @@ let bad = 1.5@alice + n as float;         // invalid: (1.5@alice + n) as float
 ```
 
 The parentheses in `y` are needed because `as` binds more loosely than `+`
-(spec [§5.14](#expressions)).
+(spec [§5.15](#expressions)).
 
 A conversion runs where its operand is. Combined with a transfer, the order of
 the two decides which endpoint converts:
@@ -2687,7 +2875,7 @@ The one expression that does take its element type from the type it is checked a
 
 #### Array Literal Typing <a id="array-literal-typing"></a>
 
-For an array literal `[e1, ..., en]@L`, the element locations and `L` must be pairwise consistent (spec [§7.7](#location-consistency-and-join)), and each element is coerced to the element type at `L` (spec [§7.8](#coercion)). Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types. An array literal without an annotation is at `dyn`, or at the function's location inside a local function (spec [§5.16](#array-literals)).
+For an array literal `[e1, ..., en]@L`, the element locations and `L` must be pairwise consistent (spec [§7.7](#location-consistency-and-join)), and each element is coerced to the element type at `L` (spec [§7.8](#coercion)). Unlocated literal elements are elaborated to `@L` before type checking. Only unlocated literal elements are elaborated to `@L`; other expressions keep their inferred located types. An array literal without an annotation is at `dyn`, or at the function's location inside a local function (spec [§5.17](#array-literals)).
 
 The inferred element type of a non-empty array literal is the base type shared by all of its elements. Elements of different base types are invalid; this includes mixing `integer` and `float`, which are unrelated (spec [§7.5](#subtyping)).
 
@@ -2829,7 +3017,7 @@ Only assignment targets of the form `Identifier[Expression]` are supported. Gene
 
 #### `.length` <a id="array-length"></a>
 
-`xs.length` is a compiler-known array operation (spec [§5.14](#expressions)).
+`xs.length` is a compiler-known array operation (spec [§5.15](#expressions)).
 
 ```text
 xs : T[]@L
@@ -2847,7 +3035,7 @@ In this rule, `T` must be `integer`, `float`, or `boolean`. In particular
 
 #### `.push` <a id="array-push"></a>
 
-`xs.push(v)` is a compiler-known expression (spec [§5.14](#expressions)).
+`xs.push(v)` is a compiler-known expression (spec [§5.15](#expressions)).
 
 ```text
 xs : T[]@L
@@ -3043,13 +3231,13 @@ The following are disallowed:
 * calls to choreography functions.
 
 `.length` and `.push` are array operations, and `print` is a compiler-known
-operation, not calls (spec [§5.14](#expressions)), so this rule does not reach them: they may be
+operation, not calls (spec [§5.15](#expressions)), so this rule does not reach them: they may be
 used in any context, local or choreography.
 
 ### 7.18 Print Typing <a id="print-typing"></a>
 
 `print(e)` writes the value of `e` to the output of the endpoints that hold it
-(spec [§5.14](#expressions)).
+(spec [§5.15](#expressions)).
 
 ```text
 e : T@L
@@ -3095,7 +3283,7 @@ endpoint projection where the print happens (spec [§12.17](#print-projection)),
 (spec [§7.16](#array-typing)). Like the location of any `void`, it is never written or shown
 (spec [§7.3](#void)).
 
-`print` is not a call (spec [§5.14](#expressions)). What a local context may call (spec [§7.17](#function-call-typing))
+`print` is not a call (spec [§5.15](#expressions)). What a local context may call (spec [§7.17](#function-call-typing))
 does not limit it, so it may be used in a local function as well as in a
 choreography context. In `function f@alice` every value is at `alice`
 (spec [§8.4](#local-function-strict-location-rule)), so a print there always prints at `alice`.
@@ -3315,6 +3503,19 @@ function f@L(params) {
 
 The compiler infers the function return type from `return` statements in the body.
 
+What a body returns may be a top-level constant it uses (spec [§6.6](#top-level-let)), so the type can
+depend on that constant's. Spec [§6.7](#top-level-constant-initialization-order) is what keeps this from going in a circle: the
+constants a function reaches are declared before any top-level statement that
+calls it.
+
+```ts
+const limit = 10@alice;
+
+function cap() {        // returns integer@alice, the type of `limit`
+    return limit;
+}
+```
+
 If all returns are bare `return;`, or if there are no return statements, the inferred return type is `void`, which carries no location (spec [§7.3](#void)).
 
 For `return expr;`, the return candidate is the type of `expr`.
@@ -3489,7 +3690,7 @@ in both modes.
 The other sources of a location come first: a written location, the
 initializer of a `let` (spec [§7.20.1](#let-type-inference)), the `return` statements of a function
 whose return type is omitted altogether (spec [§7.20.4](#function-return-type-inference)), and an annotated array
-literal for its elements (spec [§5.16](#array-literals)). In a function that type-checks, each
+literal for its elements (spec [§5.17](#array-literals)). In a function that type-checks, each
 of these is `P` as well, so the order changes no location; a value at another
 location is reported where it occurs (spec [§8.4](#local-function-strict-location-rule)).
 
@@ -3604,7 +3805,7 @@ function f@alice(a: integer@alice) {   // valid: returns integer@alice
 ```
 
 Nor does it affect the filling of unlocated literal elements of an array literal
-from that literal's **own** annotation ([§5.16](#array-literals)), which reads no context:
+from that literal's **own** annotation ([§5.17](#array-literals)), which reads no context:
 
 ```ts
 let xs: integer[]@alice = [1, 2, 3]@alice;   // valid
@@ -3615,12 +3816,12 @@ let xs: integer[]@alice = [1, 2, 3]@alice;   // valid
 Where a location is omitted and simple inference (spec [§7.20](#type-inference)) does not
 determine it, it is `dyn`:
 
-* a literal without a location annotation (spec [§5.15](#located-literals));
+* a literal without a location annotation (spec [§5.16](#located-literals));
 * a parameter type without a location, in a choreography function;
 * the destination of a transfer `let` written without a location
   (spec [§7.20.3](#transfer-let-does-not-infer-destination-type));
 * an array literal without an annotation, whose elements are not consulted
-  (spec [§5.16](#array-literals));
+  (spec [§5.17](#array-literals));
 * a return type whose location the `return` statements do not determine
   (spec [§7.20.4](#function-return-type-inference)).
 
@@ -3838,6 +4039,42 @@ function bad@bob(): void {
 }
 ```
 
+The same holds of a top-level constant the body uses (spec [§6.6](#top-level-let)): it is a value
+the body evaluates, so it must be at `bob`. A constant at `every`, at another
+endpoint or at `dyn` cannot be used there at all, not even to assign or push to
+the elements of an array it holds. A constant whose location is left out to
+`dyn`, such as `const n = 32;` outside strict mode (spec [§8.2](#omitted-locations)), is one of these.
+
+Disallowed — constants at `every`, at `alice` and at `dyn`:
+
+```cbs
+const k: integer@every = 1@every;
+const a: integer@alice = 1@alice;
+const xs: integer[]@dyn = [1, 2]@dyn;
+
+function bad@bob(): integer@bob {
+    return k;
+}
+
+function bad@bob(): integer@bob {
+    return a;
+}
+
+function bad@bob(): void {
+    xs[0@bob] = 3@bob;
+}
+```
+
+Allowed:
+
+```cbs
+const b: integer@bob = 1@bob;
+
+function ok@bob(): integer@bob {
+    return b + 1;
+}
+```
+
 This rule is intentionally stricter than ordinary location availability. In particular, neither `T@every` nor `T@dyn` is permitted in local function parameters, local function return types, or local function bodies.
 
 ### 8.5 `@every` Literals <a id="every-literals"></a>
@@ -3918,21 +4155,23 @@ function g@alice(c: boolean): void {
 ```
 
 These are written inside functions because `return` only appears in one
-(spec [§5.12](#return-statement)). The locations they leave out are `alice`, the function's own
+(spec [§5.13](#return-statement)). The locations they leave out are `alice`, the function's own
 (spec [§7.20.8](#local-function-location-inference)).
 
-### 9.2 Let Statements <a id="let-statements"></a>
+### 9.2 Let and Const Statements <a id="let-statements"></a>
 
-Only initialized `let` declarations are allowed.
+Only initialized `let` and `const` declarations are allowed.
 
 ```ts
 let x: integer@alice = 1@alice;
+const k: integer@alice = 2@alice;
 ```
 
 Transfer declarations are also allowed.
 
 ```ts
 let y: integer@bob <- x;
+const z: integer@bob <- x;
 ```
 
 ### 9.3 Assignment Statements <a id="assignment-statements"></a>
@@ -4058,6 +4297,7 @@ function f(...) {
 - Allows return type inference.
 - Recursion, direct or mutual, is not supported in v1 (spec [§10.4](#recursion)).
 - Its parameters and return type may be at `dyn`: written, or, outside strict mode, through an omission that nothing infers (spec [§8.2](#omitted-locations), [§8.3](#strict-mode)).
+- May use the top-level constants, at any location (spec [§6.6](#top-level-let)).
 
 A location on a function declaration names the one endpoint that runs the
 function, so it always declares a local function and must be an individual
@@ -4092,6 +4332,8 @@ function f@alice(...) {
 - Allows return type inference.
 - Recursion is allowed only when the recursive function writes its return type;
   the type's location may be left out (spec [§7.20.9](#inference-and-recursion)).
+- May use the top-level constants located at its own location, and no others
+  (spec [§6.6](#top-level-let), [§8.4](#local-function-strict-location-rule)).
 
 ### 10.2 Calling Local Functions from a Choreography Context <a id="calling-local-from-choreography"></a>
 
@@ -4625,7 +4867,7 @@ whatever its elements are:
   empty literal still takes its element type from the array type it is checked
   against (spec [§7.16](#array-typing)): that is its static type.
 * The elements are evaluated from `e1` to `en`, since arguments are evaluated
-  left to right (spec [§5.17](#evaluation-order)).
+  left to right (spec [§5.18](#evaluation-order)).
 * Each element costs a `__DynVal`, a location variable and a push, even in an
   array of literals. Building an all-literal array in one step is a possible
   later optimization (spec [§17.6](#future-work)).
@@ -4758,12 +5000,12 @@ calls of their own. With no arguments that leaves `nothing()`, which cleanup
 removes (spec [§13.15](#projected-ast-cleanup)).
 
 The binary row covers `&&` and `||` as well. They do not short-circuit
-(spec [§5.17](#evaluation-order)), so hoisting both operands into one `nothing(...)` runs
+(spec [§5.18](#evaluation-order)), so hoisting both operands into one `nothing(...)` runs
 exactly what the original runs.
 
 `.length` drops its receiver where `xs[i]` keeps its own, because the two are
 not the same kind of operand. The receiver of `.length` must be a variable
-(spec [§5.14](#expressions)), so reading it cannot call anything and there is nothing to
+(spec [§5.15](#expressions)), so reading it cannot call anything and there is nothing to
 preserve; that leaves `nothing()`, which cleanup removes (spec [§13.15](#projected-ast-cleanup)). The
 receiver of `[]` is an arbitrary expression — `f()[i]` is well-formed — and may
 hold a choreography call, so it is reproduced like any other operand.
@@ -5030,7 +5272,7 @@ else:
 ### 12.8 Operator and Conversion Projection <a id="binary-and-unary-operation-projection"></a>
 
 Every binary operator — `+ - * / %`, `< <= > >=`, `=== !==` and `&& ||` —
-always evaluates both operands (spec [§5.17](#evaluation-order)). Where the result resides at
+always evaluates both operands (spec [§5.18](#evaluation-order)). Where the result resides at
 `P`, the operator is preserved:
 
 ```ts
@@ -5363,6 +5605,31 @@ let valDyn2: __DynVal = __inject(null, __loc_alice);
 __cast(__dynUnbound(3), __loc_alice);
 ```
 
+A `const` declaration projects exactly as a `let` does, here and in a transfer
+(spec [§12.10](#transfer-projection)), and the binding it leaves keeps its keyword:
+
+```ts
+const x = 1@alice;
+const y: integer@bob <- x;
+```
+
+EPP at `alice`:
+
+```ts
+const x: integer = 1;
+sendInteger("bob", "__top_0", x);
+```
+
+EPP at `bob`:
+
+```ts
+const y: integer = receiveInteger("alice", "__top_0");
+```
+
+The output never stores into it again, since the source does not (spec [§5.7](#const-statement)). The
+bindings EPP introduces itself, such as the `__transfer_N` temporaries
+(spec [§12.10](#transfer-projection)), and the binding of a `for` header are always `let`.
+
 ### 12.10 Transfer Projection <a id="transfer-projection"></a>
 
 This section is about static transfers. A dynamic transfer is a `let` or an
@@ -5508,10 +5775,11 @@ let ys: any[] = __copyArray(xs);
 
 #### Transfer Declaration Versus Transfer Assignment <a id="transfer-decl-vs-assignment"></a>
 
-The rules above are those of a transfer **declaration**, `let y: T@L <- e;`,
-which introduces `y`. A transfer **assignment**, `y <- e;`, stores into a
-variable that already exists, so every rule above holds except that the
-destination side emits an assignment rather than a `let`. Nothing else differs:
+The rules above are those of a transfer **declaration**, `let y: T@L <- e;` or
+`const y: T@L <- e;`, which introduces `y`. A transfer **assignment**, `y <- e;`,
+stores into a variable that already exists and is not a `const` (spec [§5.7](#const-statement)), so
+every rule above holds except that the destination side emits an assignment
+rather than a declaration. Nothing else differs:
 the same tag is allocated, the same send, broadcast, receive and copy are
 chosen, and the sender still binds its own copy after a broadcast.
 
@@ -5602,7 +5870,7 @@ project_P(x = e;) = discard_P(e);
 
 For an array element assignment `xs[i] = v;`, the assignment is generated only
 where `xs` resides. Where it does not, the store goes and both remaining
-expressions are kept, in the order [§5.17](#evaluation-order) evaluates them — index first, then
+expressions are kept, in the order [§5.18](#evaluation-order) evaluates them — index first, then
 value:
 
 ```text
@@ -5635,7 +5903,7 @@ project_P(xs.push(v);) = nothing(discard_P(v));
 The receiver is dropped in both rules for the same reason, and in `xs.length`
 for that reason too (spec [§12.4](#expression-projection)). `xs` is a variable — the grammar admits
 nothing else as an assignment target or as the receiver of `.length` and
-`.push` (spec [§5.14](#expressions)) — so reading it cannot call anything, and there is no
+`.push` (spec [§5.15](#expressions)) — so reading it cannot call anything, and there is no
 evaluation to preserve. Reproducing it would leave a `null` argument that
 carries no computation and that cleanup cannot fold away once a sibling
 argument holds one (spec [§13.15.2](#expression-simplification)).
@@ -6314,6 +6582,45 @@ EPP at `bob`:
 let y: integer = receiveInteger("alice", "__top_0");
 ```
 
+An endpoint's program declares its functions first and then runs its top-level
+statements, in source order. A top-level declaration is therefore a global of
+the BlueScript program, and a top-level constant that a function uses
+(spec [§6.6](#top-level-let)) is declared below that function (spec [§17.8](#unverified-bluescript-assumptions)). A projected
+function reads the constant only where the constant has a value, and that is
+where its declaration is kept: both follow the constant's location
+(spec [§12.7](#identifier-projection), [§12.9](#let-projection)).
+
+Input:
+
+```ts
+const limit: integer@alice = 10@alice;
+
+function report(x: integer@alice): void {
+    let y: integer@bob <- x + limit;
+}
+
+report(1@alice);
+```
+
+EPP at `alice`:
+
+```ts
+function report(x: integer): void {
+  sendInteger("bob", "report_0", x + limit);
+}
+const limit: integer = 10;
+report(1);
+```
+
+EPP at `bob`:
+
+```ts
+function report(x: null): void {
+  let y: integer = receiveInteger("alice", "report_0");
+}
+report(null);
+```
+
 ***
 
 ## 13. BlueScript Code Generation <a id="bluescript-code-generation"></a>
@@ -6429,7 +6736,7 @@ e1 || e2  =>  __or(e1, e2)
 
 They cannot be emitted unchanged, as the binary arithmetic operators are, because
 BlueScript's `&&` and `||` short-circuit and ChoreoBS's do not
-(spec [§5.17](#evaluation-order)). A call evaluates both of its arguments, left to right, before
+(spec [§5.18](#evaluation-order)). A call evaluates both of its arguments, left to right, before
 the helper runs, which is exactly the evaluation ChoreoBS prescribes. The
 spelling is the same whatever the static operands are, including in a local
 function. With a `dyn` operand, the operation is the runtime call `__dynAnd` or
@@ -6521,7 +6828,7 @@ nothing(e1, ..., e10)  =>  __nothing2(__nothing5(__nothing5(e1, ..., e5), e6, e7
 ```
 
 * The arguments keep their order, and a call evaluates its arguments left to
-  right before the helper runs (spec [§5.17](#evaluation-order)). Each `ei` is therefore evaluated
+  right before the helper runs (spec [§5.18](#evaluation-order)). Each `ei` is therefore evaluated
   exactly once, in the order `nothing(...)` prescribes, and the whole call yields
   `null` (spec [§14.1](#nothing)).
 * The arguments are split here and nowhere else. The projected IR keeps one
@@ -7044,7 +7351,7 @@ export function __nothing5(a1: any, a2: any, a3: any, a4: any, a5: any): null {
 ```
 
 * A helper's body only returns `null`. The call has already evaluated its
-  arguments, left to right (spec [§5.17](#evaluation-order)), which is all the evaluation
+  arguments, left to right (spec [§5.18](#evaluation-order)), which is all the evaluation
   `nothing(...)` asks for, and the values are discarded.
 * Every parameter is `any`, so that one helper takes arguments of every type: a
   BlueScript function takes neither rest parameters nor type parameters. (The
@@ -7080,7 +7387,7 @@ export function __or(a: boolean, b: boolean): boolean {
 
 Unlike `nothing(...)`, they are ordinary calls. Their arguments are evaluated
 left to right, both before the helper runs, as for any call
-(spec [§5.17](#evaluation-order)); the helper itself only combines the two values, and has no
+(spec [§5.18](#evaluation-order)); the helper itself only combines the two values, and has no
 effect of its own. They produce a value that the program uses, so cleanup
 never touches them (spec [§13.15](#projected-ast-cleanup)).
 
@@ -7640,7 +7947,7 @@ export function __dynArrayLength(arr: __DynVal): __DynVal {
 ```
 
 * `__dynArraySet` takes the array, the index and the value in the order the
-  assignment evaluates them (spec [§5.17](#evaluation-order)).
+  assignment evaluates them (spec [§5.18](#evaluation-order)).
 * The result of `__dynArrayLength` shares the array's location variable, as the
   static `xs.length : integer@L` is at the array's location (spec [§7.16](#array-typing)).
 
@@ -8331,6 +8638,17 @@ function bad@bob(): void {
 }
 ```
 
+Nor may a local function use a top-level constant at `dyn` (spec [§6.6](#top-level-let)), however
+it was declared:
+
+```cbs
+const n = 32;    // `integer@dyn` outside strict mode
+
+function bad@bob(): integer@bob {
+    return n;
+}
+```
+
 A local function runs at one endpoint only, so its dynamic operations would not
 be performed alike at every endpoint (spec [§3.5](#dyn)).
 
@@ -8338,7 +8656,10 @@ be performed alike at every endpoint (spec [§3.5](#dyn)).
 
 ```ts
 let x: integer@alice;
+const y: integer@alice;
 ```
+
+A `const` must be initialized as a `let` must (spec [§5.7](#const-statement)).
 
 ### 16.6 Type Mismatch <a id="type-mismatch"></a>
 
@@ -8575,9 +8896,10 @@ x !== y;
 
 ```ts
 let y <- x;
+const z <- x;
 ```
 
-Transfer declarations require an explicit destination type. Its location may be
+Transfer declarations, with `let` or `const`, require an explicit destination type. Its location may be
 left out, making the destination `dyn` (spec [§7.20.3](#transfer-let-does-not-infer-destination-type)) — except in strict mode,
 where that is an error too — or, inside a local function, the function's
 location in either mode (spec [§7.20.8](#local-function-location-inference)). Its base type may not be left out.
@@ -8773,6 +9095,16 @@ function bad@bob(x: integer@bob): integer@bob {
 }
 ```
 
+The same applies to a top-level constant the body uses (spec [§6.6](#top-level-let)):
+
+```cbs
+const k: integer@every = 1@every;
+
+function bad@bob(): integer@bob {
+    return k;
+}
+```
+
 Allowed:
 
 ```cbs
@@ -8847,7 +9179,7 @@ let xs: integer[][]@alice = []@alice;
 ### 16.31 Array Literal Without Required Location <a id="array-literal-without-required-location"></a>
 
 In strict mode (spec [§8.3](#strict-mode)), an array literal must carry its own location annotation
-(spec [§5.16](#array-literals)), except in a local function, where it takes the function's location
+(spec [§5.17](#array-literals)), except in a local function, where it takes the function's location
 (spec [§7.20.8](#local-function-location-inference)). Otherwise an array literal without one is `dyn`. The error is the missing annotation on the literal itself, whether or not
 its elements carry one.
 
@@ -9115,7 +9447,7 @@ let y: void <- g();         // transfer destination
 
 A `return` value is a value position like any other, so a `void` computation is
 rejected there too — even inside a `void` function, where `return;` is the form
-to write (spec [§5.12](#return-statement), [§7.19](#return-typing)):
+to write (spec [§5.13](#return-statement), [§7.19](#return-typing)):
 
 ```ts
 function g@alice(): void { return; }
@@ -9296,7 +9628,7 @@ let c: boolean@alice = 1@alice && true@alice;
 
 These are **parse** errors, reported before type checking.
 
-The receiver of `.length` and `.push` must be a variable (spec [§5.14](#expressions)), so a
+The receiver of `.length` and `.push` must be a variable (spec [§5.15](#expressions)), so a
 receiver of any other shape is rejected:
 
 ```ts
@@ -9324,7 +9656,7 @@ error, because its result is `void` (spec [§7.16](#array-typing), [§16.43](#in
 
 ### 16.49 Missing `for` Condition <a id="missing-for-condition"></a>
 
-The condition of a `for` loop is required (spec [§5.11](#for-statement)).
+The condition of a `for` loop is required (spec [§5.12](#for-statement)).
 
 ```ts
 for (let i = 0@every; ; i = i + 1@every) {
@@ -9490,7 +9822,7 @@ let ys = xs as float;
 ```
 
 The following are **parse** errors. What follows `as` must be a bare `integer`
-or `float` (spec [§5.14](#expressions)): there is no conversion to any other base type, no
+or `float` (spec [§5.15](#expressions)): there is no conversion to any other base type, no
 conversion of arrays, and no location on the target, since the result stays
 where the operand is:
 
@@ -9510,7 +9842,7 @@ let x = 1@alice as float@bob;
 
 These are **parse** errors, reported before type checking.
 
-`print` takes exactly one argument (spec [§5.14](#expressions)):
+`print` takes exactly one argument (spec [§5.15](#expressions)):
 
 ```ts
 print();
@@ -9526,6 +9858,106 @@ print(2@alice);
 
 Using `print(e)` where a value is expected is not a syntax error but a type
 error, because its result is `void` (spec [§7.18](#print-typing), [§16.43](#invalid-use-of-void)).
+
+### 16.56 Assignment to a Constant <a id="assignment-to-a-constant"></a>
+
+A `const` variable is never stored into after its declaration (spec [§5.7](#const-statement)). Each of
+these is rejected:
+
+```ts
+const x: integer@alice = 1@alice;
+x = 2@alice;
+```
+
+```ts
+const y: integer@bob <- x;
+y <- x;
+```
+
+```ts
+const n: integer@every = 0@every;
+for (let i = 0@every; i < 10@every; n = i) {
+    i = i + 1@every;
+}
+```
+
+Allowed: the elements of a `const` array, which change the array and not the
+variable (spec [§7.1.1](#array-types)):
+
+```ts
+const xs: integer[]@alice = [1, 2]@alice;
+xs[0@alice] = 10@alice;
+xs.push(3@alice);
+```
+
+### 16.57 `const` in a `for` Header <a id="const-in-a-for-header"></a>
+
+This is a **parse** error. A `for` header declares its variable with `let` only
+(spec [§5.12](#for-statement)):
+
+```ts
+for (const i = 0@every; i < 10@every; i = i + 1@every) {
+}
+```
+
+### 16.58 Constant Used Before Initialization <a id="constant-used-before-initialization"></a>
+
+A top-level statement may not call a function that reaches a top-level constant
+declared by that statement or by a later one (spec [§6.7](#top-level-constant-initialization-order)). Each of these is
+rejected:
+
+```ts
+let y: integer@alice = f();             // `limit` is declared later
+const limit: integer@alice = 10@alice;
+
+function f@alice(): integer@alice {
+    return limit;
+}
+```
+
+```ts
+let y: integer@alice = f();             // through `g`
+const limit: integer@alice = 10@alice;
+
+function f@alice(): integer@alice {
+    return g();
+}
+
+function g@alice(): integer@alice {
+    return limit;
+}
+```
+
+```ts
+const limit: integer@alice = f();       // in the constant's own initializer
+
+function f@alice() {
+    return limit + 1@alice;
+}
+```
+
+```ts
+let ready: boolean@every = false@every;
+if (ready) {
+    let y: integer@alice = f();         // in a block, in a branch that does not run
+}
+const limit: integer@alice = 10@alice;
+
+function f@alice(): integer@alice {
+    return limit;
+}
+```
+
+Allowed — the call comes after the declaration:
+
+```ts
+const limit: integer@alice = 10@alice;
+let y: integer@alice = f();
+
+function f@alice(): integer@alice {
+    return limit;
+}
+```
 
 ## 17. Non-goals and Future Extensions <a id="non-goals-and-future-extensions"></a>
 
@@ -9545,11 +9977,10 @@ Gradual locating (spec [§3.5](#dyn)) is part of v1. Not part of it:
 
 ### 17.2 TypeScript / JavaScript Features <a id="typescript-javascript-features"></a>
 
-* `const`;
 * object literals;
 * arrays beyond the mutable one-dimensional `integer[]` / `float[]` / `boolean[]` support defined in this specification;
 * property access as lvalue — `xs[i] = v` is the only assignable form, and `.length` is read-only;
-* property access and method calls in general: `.length` and `.push` are a closed set of array operations (spec [§5.14](#expressions)), not a facility for user types;
+* property access and method calls in general: `.length` and `.push` are a closed set of array operations (spec [§5.15](#expressions)), not a facility for user types;
 * type assertions: `as` is only the numeric conversion between `integer` and `float` (spec [§7.15](#numeric-conversion));
 * classes;
 * interfaces;
@@ -9636,8 +10067,8 @@ The following optimizations are not required in v1:
 
 ### 17.8 Unverified BlueScript Assumptions <a id="unverified-bluescript-assumptions"></a>
 
-This section is not normative. The runtime file (spec [§14](#runtime-support-functions)) depends
-on BlueScript behaviour that has not yet been confirmed. Each point should be
+This section is not normative. The runtime file (spec [§14](#runtime-support-functions)) and the endpoint
+programs depend on BlueScript behaviour that has not yet been confirmed. Each point should be
 settled by running a small `.bs` program on BlueScript, and the runtime changed
 where it does not hold.
 
@@ -9658,3 +10089,18 @@ where it does not hold.
 6. **Importing `integer` constants** (spec [§14.6](#location-and-kind-codes)): a generated program imports
    the runtime's `export const` integer constants, read as plain C globals. It
    works on `host`; `esp32` is unconfirmed.
+7. **`const` bindings in endpoint programs** (spec [§12.9](#let-projection)): that BlueScript accepts a
+   `const` of every type an endpoint program declares — `integer`, `float`,
+   `boolean`, `string`, `any[]` and `__DynVal` — at top level, in a function and
+   in a loop body, and compiles it as it compiles a `let`. BlueScript's source
+   says so, but no generated program with a `const` has been run.
+8. **A function using a global declared below it** (spec [§12.18](#top-level-projection)): an endpoint
+   program declares its functions before its top-level statements, so a
+   function that uses a top-level constant reads a global the file declares
+   later. BlueScript's type checker makes two passes, the first recording every
+   global, and the C declarations of the globals come before the function
+   bodies. A global read before its initialization yields `0`, `0.0` or
+   `false`, or `null` for a pointer type, with no error, which is why
+   spec [§6.7](#top-level-constant-initialization-order) rejects such a read at compile time. Both work so on `host`
+   for `integer`, `float`, `boolean`, `string` and `any[]` globals; a `__DynVal`
+   global and `esp32` are unconfirmed.

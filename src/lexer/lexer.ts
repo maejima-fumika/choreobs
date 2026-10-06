@@ -179,7 +179,7 @@ class Lexer {
             "unsupported operator '!='; use '!=='",
             start,
             this.currentPosition(),
-            ["operators-and-punctuation"],
+            ["operators-and-punctuation", "unsupported-equality-operators"],
           );
           this.pushPunctuation(TokenKind.Bang, "!", start);
           return;
@@ -198,7 +198,7 @@ class Lexer {
             "unsupported operator '=='; use '==='",
             start,
             this.currentPosition(),
-            ["operators-and-punctuation"],
+            ["operators-and-punctuation", "unsupported-equality-operators"],
           );
           this.pushPunctuation(TokenKind.Assign, "=", start);
           return;

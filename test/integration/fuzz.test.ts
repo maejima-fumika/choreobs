@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compileSource } from "../../src/driver/index.js";
 import { generate } from "../../scripts/fuzz/generator.js";
-import { inspectOutputs, outputsKey } from "../../scripts/fuzz/inspect.js";
-import { stripLocalFunctionLocations } from "../../scripts/fuzz/strip.js";
+import { inspectOutputs } from "../../scripts/fuzz/inspect.js";
+import { metamorphicProblem } from "../../scripts/fuzz/metamorphic.js";
 
 /**
  * A small, fixed slice of the fuzz corpus (see `scripts/fuzz/run.ts`).
@@ -22,6 +22,8 @@ interface Configuration {
   readonly dyn?: boolean;
   /** Compile in strict mode, and generate no omissions for it (spec §strict-mode). */
   readonly strict?: boolean;
+  /** Generate top-level constants that function bodies use (spec §top-level-let). */
+  readonly constants?: boolean;
 }
 
 const CONFIGURATIONS: readonly Configuration[] = [
@@ -30,6 +32,8 @@ const CONFIGURATIONS: readonly Configuration[] = [
   { label: "five endpoints, deep nesting", endpoints: ["a", "b", "c", "d", "e"], seed: 200000, runs: 75, maxBlockDepth: 3 },
   { label: "dyn, three endpoints", endpoints: ["alice", "bob", "carol"], seed: 300000, runs: 150, dyn: true },
   { label: "dyn, strict mode", endpoints: ["alice", "bob"], seed: 400000, runs: 75, dyn: true, strict: true },
+  { label: "top-level constants", endpoints: ["alice", "bob", "carol"], seed: 500000, runs: 75, constants: true },
+  { label: "top-level constants, dyn", endpoints: ["alice", "bob", "carol"], seed: 600000, runs: 150, dyn: true, constants: true },
 ];
 
 describe("generated programs compile (fuzz corpus)", () => {
@@ -43,6 +47,7 @@ describe("generated programs compile (fuzz corpus)", () => {
           maxBlockDepth: config.maxBlockDepth,
           dyn: config.dyn,
           implicitDyn: config.strict !== true,
+          constants: config.constants,
         });
         const result = compileSource(program.source, "index.cbs", {
           endpoints: config.endpoints,
@@ -55,21 +60,15 @@ describe("generated programs compile (fuzz corpus)", () => {
         );
         // The checks `run.ts` makes of every output (scripts/fuzz/inspect.ts).
         assert.equal(inspectOutputs(result, config.endpoints), undefined, `seed ${seed}`);
-        // A local function's omitted locations are its own
-        // (spec §local-function-location-inference), so leaving out the written ones changes nothing.
-        const stripped = stripLocalFunctionLocations(program.source);
-        if (stripped !== program.source) {
-          const omitted = compileSource(stripped, "index.cbs", {
+        // Rewrites that must not change the output beyond what they rewrite
+        // (scripts/fuzz/metamorphic.ts).
+        const problem = metamorphicProblem(program.source, result, (source) =>
+          compileSource(source, "index.cbs", {
             endpoints: config.endpoints,
             implicitDyn: program.implicitDyn,
-          });
-          assert.equal(
-            omitted.success,
-            true,
-            `seed ${seed}, locations left out in local functions:\n${omitted.errors.map((e) => e.message).join("\n")}\n\n${stripped}`,
-          );
-          assert.equal(outputsKey(omitted), outputsKey(result), `seed ${seed}: leaving out local locations changed the output`);
-        }
+          }),
+        );
+        assert.equal(problem, undefined, `seed ${seed}: ${problem}\n\n${program.source}`);
       }
     });
   }

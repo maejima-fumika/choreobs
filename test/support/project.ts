@@ -1,8 +1,23 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import type { BscriptRunner } from "../../src/workspace/runner.js";
 import { CommandError } from "../../src/workspace/errors.js";
+
+/** The repository's root directory. */
+export const REPO_ROOT = join(import.meta.dirname, "..", "..");
+
+const PROGRAM_DIRS = ["examples", "benchmarks/micro", "benchmarks/macro"];
+
+/** The example and benchmark projects, as paths relative to {@link REPO_ROOT}, in a fixed order. */
+export function projectRoots(): string[] {
+  return PROGRAM_DIRS.flatMap((dir) =>
+    readdirSync(join(REPO_ROOT, dir))
+      .filter((name) => statSync(join(REPO_ROOT, dir, name)).isDirectory())
+      .sort()
+      .map((name) => join(dir, name)),
+  );
+}
 
 /** A temporary directory, removed once `run` is done. */
 export function withTempDir<T>(run: (dir: string) => T): T {

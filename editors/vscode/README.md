@@ -28,7 +28,7 @@ committed. Reload VS Code after installing.
 | `print`, `.push`, `.length` | `support.function.builtin.choreobs`, `support.function.array.choreobs`, `support.variable.property.array.choreobs` |
 
 Whatever the lexer or parser always rejects is scoped `invalid.illegal.*`: the
-keywords reserved but unsupported in v1 (`break`, `const`, `class`, …), `==`
+keywords reserved but unsupported in v1 (`break`, `continue`, `class`, …), `==`
 and `!=`, a lone `&` or `|`, an unknown string escape, and any character the
 lexer does not accept (spec §keywords, §operators-and-punctuation,
 §lexical-specification).

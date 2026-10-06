@@ -69,7 +69,7 @@ class BlueScriptEmitter {
     switch (stmt.kind) {
       case "LetStatement":
         this.line(
-          `let ${stmt.name}: ${emitType(stmt.type)} = ${this.emitExpr(stmt.initializer)};`,
+          `${stmt.keyword} ${stmt.name}: ${emitType(stmt.type)} = ${this.emitExpr(stmt.initializer)};`,
         );
         return;
       case "AssignmentStatement":

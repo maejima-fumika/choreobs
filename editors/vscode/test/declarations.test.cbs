@@ -36,4 +36,10 @@ function main(): void {
     let n: null@Sensor1 = null@Sensor1;
 //         ^^^^ constant.language.null.choreobs
 //             ^^^^^^^^ variable.other.constant.location.choreobs
+    const k: integer@alice = 1@alice;
+//  ^^^^^ storage.type.choreobs
+//           ^^^^^^^ support.type.primitive.choreobs
+    const r: integer@bob <- k;
+//  ^^^^^ storage.type.choreobs
+//                       ^^ keyword.control.transfer.choreobs
 }

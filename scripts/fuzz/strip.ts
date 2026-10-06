@@ -2,11 +2,10 @@
  * Leaves out every location written inside a local function.
  *
  * Inside `function f@P` a location left out is `P` (spec §local-function-location-inference),
- * so in a program that compiles, deleting the written ones must change nothing:
- * `run.ts`, `test/integration/fuzz.test.ts` and
- * `test/integration/local-omission.test.ts` compile both forms and compare the
- * outputs. The declaration's own `@P` stays, since without it the function
- * would be a choreography one (spec §function-kinds).
+ * so in a program that compiles, deleting the written ones must change nothing.
+ * It is one of the rewrites in `metamorphic.ts`, which compiles both forms and
+ * compares the outputs. The declaration's own `@P` stays, since without it the
+ * function would be a choreography one (spec §function-kinds).
  *
  * It works on tokens, so comments and strings are never touched.
  */

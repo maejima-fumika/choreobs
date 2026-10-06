@@ -13,6 +13,7 @@ import type {
 import type { FunctionDeclaration, Parameter } from "../ast/declarations.js";
 import type {
   Block,
+  DeclarationKeyword,
   Statement,
   LetStatement,
   LetTransferStatement,
@@ -305,8 +306,8 @@ class Parser {
   }
 
   private parseStatement(): Statement {
-    if (this.match(TokenKind.Let)) {
-      return this.parseLetStatement(true);
+    if (this.match(TokenKind.Let) || this.match(TokenKind.Const)) {
+      return this.parseLetStatement();
     }
     if (this.match(TokenKind.If)) {
       return this.parseIfStatement();
@@ -324,80 +325,75 @@ class Parser {
       return this.parseIdentifierLeadingStatement();
     }
     if (this.isUnsupportedStatementKeyword(this.current().kind)) {
+      const kind = this.current().kind;
       throw this.fail(
         `'${this.current().lexeme}' is not supported in ChoreoBS v1`,
+        kind === TokenKind.Break || kind === TokenKind.Continue
+          ? ["keywords", "err-break-and-continue"]
+          : ["keywords"],
       );
     }
     return this.parseExpressionStatement();
   }
 
-  private parseLetStatement(requireSemicolon: boolean): LetStatement | LetTransferStatement {
+  /**
+   * `let` or `const`, whichever was just consumed (spec §let-statement,
+   * §const-statement). The two differ only in the keyword the node records, so
+   * one parse serves both; the messages name the keyword that was written.
+   */
+  private parseLetStatement(): LetStatement | LetTransferStatement {
     const start = this.previous();
-    const nameTok = this.consumeIdentifierToken("expected variable name after 'let'");
+    const keyword: DeclarationKeyword = start.kind === TokenKind.Const ? "const" : "let";
+    // A `const` follows the `let` rules (spec §const-statement), so it cites
+    // them too, behind its own section.
+    const cite = (spec: SpecRefs): SpecRefs =>
+      keyword === "const" ? ["const-statement", ...spec] : spec;
+    const nameTok = this.consumeIdentifierToken(`expected variable name after '${keyword}'`);
 
     if (this.match(TokenKind.Transfer)) {
       throw this.fail(
-        "type annotation required for transfer let",
-        ["let-statement", "transfer-let-does-not-infer-destination-type"],
+        `type annotation required for transfer ${keyword}`,
+        cite([
+          "let-statement",
+          "transfer-let-does-not-infer-destination-type",
+          "transfer-let-without-type-annotation",
+        ]),
       );
     }
+
+    const type = this.match(TokenKind.Colon) ? this.parseType() : undefined;
 
     if (this.match(TokenKind.Assign)) {
       const initializer = this.parseExpression();
-      if (requireSemicolon) {
-        this.consume(TokenKind.Semicolon, "expected ';' after let statement");
-      }
-      const stmt: LetStatement = {
+      this.consume(TokenKind.Semicolon, `expected ';' after ${keyword} statement`);
+      return {
         kind: "LetStatement",
+        keyword,
         name: nameTok.name,
+        type,
         initializer,
-        span: spanFrom(start, requireSemicolon ? this.previous() : initializer),
+        span: spanFrom(start, this.previous()),
       };
-      return stmt;
     }
 
-    if (this.match(TokenKind.Colon)) {
-      const type = this.parseType();
-
-      if (this.match(TokenKind.Assign)) {
-        const initializer = this.parseExpression();
-        if (requireSemicolon) {
-          this.consume(TokenKind.Semicolon, "expected ';' after let statement");
-        }
-        const stmt: LetStatement = {
-          kind: "LetStatement",
-          name: nameTok.name,
-          type,
-          initializer,
-          span: spanFrom(start, requireSemicolon ? this.previous() : initializer),
-        };
-        return stmt;
-      }
-
-      if (this.match(TokenKind.Transfer)) {
-        const source = this.parseExpression();
-        if (requireSemicolon) {
-          this.consume(TokenKind.Semicolon, "expected ';' after let statement");
-        }
-        const stmt: LetTransferStatement = {
-          kind: "LetTransferStatement",
-          name: nameTok.name,
-          type,
-          source,
-          span: spanFrom(start, requireSemicolon ? this.previous() : source),
-        };
-        return stmt;
-      }
-
-      throw this.fail(
-        "expected '=' or '<-' after type in let statement; uninitialized let is not allowed",
-        ["let-statement"],
-      );
+    if (type !== undefined && this.match(TokenKind.Transfer)) {
+      const source = this.parseExpression();
+      this.consume(TokenKind.Semicolon, `expected ';' after ${keyword} statement`);
+      return {
+        kind: "LetTransferStatement",
+        keyword,
+        name: nameTok.name,
+        type,
+        source,
+        span: spanFrom(start, this.previous()),
+      };
     }
 
     throw this.fail(
-      "expected ':', '=', or '<-' after variable name in let; uninitialized let is not allowed",
-      ["let-statement"],
+      type === undefined
+        ? `expected ':', '=', or '<-' after variable name in ${keyword}; uninitialized ${keyword} is not allowed`
+        : `expected '=' or '<-' after type in ${keyword} statement; uninitialized ${keyword} is not allowed`,
+      cite(["let-statement", "uninitialized-let"]),
     );
   }
 
@@ -504,6 +500,12 @@ class Parser {
     // an implicit `true`, and a literal takes no location from its context
     // (spec §explicit-location-annotations): it would be `true@dyn`, checked at run time on every
     // iteration. `while (true@every)` says the same thing explicitly.
+    if (this.check(TokenKind.Semicolon)) {
+      throw this.fail(
+        "expected expression for the condition of 'for'; the condition is required",
+        ["for-statement", "missing-for-condition"],
+      );
+    }
     const condition = this.parseExpression();
     this.consume(TokenKind.Semicolon, "expected ';' after for condition");
     let update: ForAssignmentInit | undefined;
@@ -524,6 +526,14 @@ class Parser {
 
   /** spec §for-statement — for-init: let-with-`=` or assignment only */
   private parseForInit(): ForInit {
+    if (this.check(TokenKind.Const)) {
+      // The update is where a header's variable changes, and it could not
+      // assign a `const` one (spec §const-statement).
+      throw this.fail(
+        "'const' is not allowed in a for initializer; use 'let'",
+        ["for-statement", "const-in-a-for-header"],
+      );
+    }
     if (this.match(TokenKind.Let)) {
       const start = this.previous();
       const nameTok = this.consumeIdentifierToken("expected variable name after 'let'");
@@ -783,13 +793,13 @@ class Parser {
     ) {
       throw this.fail(
         `unknown array operation '.${member.lexeme}': v1 supports '.length' and '.push'`,
-        ["expressions", "array-typing"],
+        ["expressions", "array-typing", "invalid-array-operation-syntax"],
       );
     }
     if (target.kind !== "IdentifierExpression") {
       throw this.fail(
         `the receiver of '.${member.lexeme}' must be a variable`,
-        ["expressions"],
+        ["expressions", "invalid-array-operation-syntax"],
       );
     }
     this.advance();
@@ -1059,7 +1069,6 @@ class Parser {
     return (
       kind === TokenKind.Break ||
       kind === TokenKind.Continue ||
-      kind === TokenKind.Const ||
       kind === TokenKind.Any ||
       kind === TokenKind.Undefined ||
       kind === TokenKind.Async ||

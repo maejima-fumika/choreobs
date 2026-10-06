@@ -3,7 +3,7 @@
  * generated and compiled it for that seed:
  *
  *   npx tsx scripts/fuzz/dump.ts SEED [endpoints]
- *     [--endpoints a,b,c] [--vary] [--no-dyn] [--depth N] [--maxfn N] [--maxstmt N]
+ *     [--endpoints a,b,c] [--vary] [--no-dyn] [--no-constants] [--depth N] [--maxfn N] [--maxstmt N]
  *
  * Give it the flags the `run.ts` run had. The endpoints may also be given as
  * the second argument, `alice,bob`.

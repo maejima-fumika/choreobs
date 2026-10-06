@@ -207,9 +207,11 @@ class DynLowerer {
       return { ...stmt, source: this.expr(stmt.source) };
     }
     // `let a: T@L <- e;` becomes `let a: T@L = [__cast(]__dynTransfer(...)[)];`
-    // (spec §dynamic-transfer), and projects as the `let` it now is.
+    // (spec §dynamic-transfer), and projects as the `let` it now is. A `const`
+    // stays a `const` (spec §const-statement).
     const let_: LetStatement = {
       kind: "LetStatement",
+      keyword: stmt.stmt.keyword,
       name: stmt.stmt.name,
       type: stmt.stmt.type,
       initializer: stmt.stmt.source,

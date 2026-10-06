@@ -7,17 +7,19 @@
  *
  * Programs use `@dyn` unless `--no-dyn` is given, and every other seed is
  * written for strict mode and compiled with `"implicitDyn": false`
- * (spec §strict-mode); `dump.ts` takes the same flags and reproduces a seed.
+ * (spec §strict-mode). Every third seed has top-level constants that its
+ * functions use (spec §top-level-let), unless `--no-constants` is given.
+ * `dump.ts` takes the same flags and reproduces a seed.
  *
  *   npx tsx scripts/fuzz/run.ts [--runs N] [--seed S] [--endpoints a,b,c]
- *     [--vary] [--no-dyn] [--depth N] [--maxfn N] [--maxstmt N] [--out DIR] [-v]
+ *     [--vary] [--no-dyn] [--no-constants] [--depth N] [--maxfn N] [--maxstmt N] [--out DIR] [-v]
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { compileSource } from "../../src/driver/index.js";
 import { assertUsableEndpoints, generate } from "./generator.js";
 import { describeMode, fuzzGenOptions, parseFuzzArgs } from "./options.js";
 import { inspectOutputs, outputsKey } from "./inspect.js";
-import { stripLocalFunctionLocations } from "./strip.js";
+import { metamorphicProblem } from "./metamorphic.js";
 
 type Verdict = "ok" | "crash" | "commConsistency" | "rejected" | "badOutput";
 
@@ -164,23 +166,14 @@ function run(): void {
       }
     }
 
-    // Metamorphic: a location left out inside a local function is the
-    // function's own (spec §local-function-location-inference), so leaving out every
-    // location written there changes nothing.
-    const stripped = stripLocalFunctionLocations(program.source);
-    if (stripped !== program.source) {
-      const omitted = compileSource(stripped, "index.cbs", config);
-      if (!omitted.success) {
-        record(
-          "badOutput",
-          `leaving out the locations inside local functions changed acceptance: ${omitted.errors[0]?.message ?? "(no message)"}`,
-        );
-        continue;
-      }
-      if (outputsKey(omitted) !== before) {
-        record("badOutput", "leaving out the locations inside local functions changed the output");
-        continue;
-      }
+    // Metamorphic: rewrites of the source that must not change its output
+    // beyond what they rewrite (metamorphic.ts).
+    const rewriteProblem = metamorphicProblem(program.source, result, (source) =>
+      compileSource(source, "index.cbs", config),
+    );
+    if (rewriteProblem !== undefined) {
+      record("badOutput", rewriteProblem);
+      continue;
     }
 
     if (result.outputs.some((o) => /send|receive|broadcast|__dynTransfer/.test(o.source))) {

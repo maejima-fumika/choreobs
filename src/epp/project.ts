@@ -201,6 +201,7 @@ class Projector {
     }
     return {
       kind: "LetStatement",
+      keyword: stmt.stmt.keyword,
       name: stmt.stmt.name,
       type: this.projectType(stmt.choreoType),
       initializer: this.projectExpression(stmt.initializer),
@@ -236,6 +237,7 @@ class Projector {
     const parts = this.transferParts(stmt, stmt.choreoType);
     return this.projectTransfer(parts, (value) => ({
       kind: "LetStatement",
+      keyword: stmt.stmt.keyword,
       name: parts.name,
       type: this.projectType(parts.type),
       initializer: value,
@@ -994,6 +996,7 @@ class Projector {
       setup: [
         {
           kind: "LetStatement",
+          keyword: "let",
           name,
           type: this.projectType(type),
           initializer: source,

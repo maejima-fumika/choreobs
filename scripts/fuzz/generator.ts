@@ -28,6 +28,8 @@ interface Binding {
   readonly loc: Loc;
   /** Block nesting level the binding was declared at, for shadowing (spec §variable-scope). */
   readonly depth: number;
+  /** Declared with `const`, so never stored into (spec §const-statement). */
+  readonly constant?: true;
 }
 
 interface FnSig {
@@ -37,6 +39,13 @@ interface FnSig {
   readonly params: readonly Binding[];
   /** `undefined` means the function returns `void` (spec §void). */
   readonly ret?: { readonly ty: Ty; readonly loc: Loc };
+  /**
+   * The top-level constants it may reach (spec §top-level-constant-initialization-order),
+   * read off its text: every one named in its body, and every one its callees
+   * may reach. More than it does when a body declaration shadows a constant,
+   * which only keeps a call back longer than it need be.
+   */
+  readonly uses: ReadonlySet<string>;
 }
 
 /** Choreography context, or a local function body at one endpoint. */
@@ -64,6 +73,14 @@ export interface GenOptions {
    * compiled with `"implicitDyn": false`. Defaults to `true`.
    */
   readonly implicitDyn?: boolean;
+  /**
+   * Generate top-level constants that function bodies use (spec §top-level-let),
+   * declared among the top-level statements, with each top-level call made
+   * only once the constants its callee reaches are declared
+   * (spec §top-level-constant-initialization-order). Off by default; when off,
+   * the generator draws exactly the random numbers it always did.
+   */
+  readonly constants?: boolean;
 }
 
 export interface GeneratedProgram {
@@ -121,9 +138,9 @@ export function generate(options: GenOptions): GeneratedProgram {
 /**
  * Every prefix the generator mints names with: variables (`declareName`,
  * `genFor`), parameters, and the violation temporaries. Function names use
- * `f<n>` from their own counter.
+ * `f<n>` and top-level constants `g<n>`, each from a counter of its own.
  */
-const GENERATED_NAME = /^(?:v|t|i|p|bad|f)\d+$/;
+const GENERATED_NAME = /^(?:v|t|i|p|bad|f|g)\d+$/;
 
 /** Identifiers the violation cases emit verbatim. */
 const GENERATED_LITERAL_NAMES = ["sendInteger", "nosuchendpoint"];
@@ -152,7 +169,7 @@ export function assertUsableEndpoints(endpoints: readonly string[]): void {
     if (GENERATED_NAME.test(name) || GENERATED_LITERAL_NAMES.includes(name)) {
       fail(
         `endpoint '${name}' collides with the names the generator mints; ` +
-          `pick one that is not <v|t|i|p|bad|f><digits> or ` +
+          `pick one that is not <v|t|i|p|bad|f|g><digits> or ` +
           `${GENERATED_LITERAL_NAMES.join("/")} ${specRef("namespaces")}`,
       );
     }
@@ -179,6 +196,12 @@ class Generator {
   private readonly dyn: boolean;
   /** Whether omitted locations are generated for `dyn` (see {@link GenOptions.implicitDyn}). */
   private readonly implicit: boolean;
+  /** Whether top-level constants are generated (see {@link GenOptions.constants}). */
+  private readonly constants: boolean;
+  /** The top-level constants, planned before the functions that use them. */
+  private readonly plannedConstants: Binding[] = [];
+  /** The planned constants the top level has declared so far. */
+  private readonly declaredConstants = new Set<string>();
   /**
    * Nonzero while generating an expression whose location is *observed*
    * rather than checked with `~`: an inferred `let`, or the return of a
@@ -195,6 +218,7 @@ class Generator {
     this.maxBlockDepth = options.maxBlockDepth ?? 2;
     this.dyn = options.dyn === true;
     this.implicit = this.dyn && options.implicitDyn !== false;
+    this.constants = options.constants === true;
   }
 
   run(): GeneratedProgram {
@@ -210,13 +234,22 @@ class Generator {
       Math.min(minFunctions, maxFunctions),
       maxFunctions,
     );
+    if (this.constants) {
+      this.planConstants();
+    }
     for (let i = 0; i < functionCount; i += 1) {
       this.genFunction();
     }
     const statementCount = this.int(1, this.options.maxTopStatements ?? 8);
     const scope: Binding[] = [];
     for (let i = 0; i < statementCount; i += 1) {
+      if (this.constants && this.chance(0.6)) {
+        this.declareNextConstant(scope);
+      }
       this.genStatement(scope, { kind: "choreography" }, 0, "");
+    }
+    while (this.declaredConstants.size < this.plannedConstants.length) {
+      this.declareNextConstant(scope);
     }
     return {
       seed: this.options.seed,
@@ -519,6 +552,7 @@ class Generator {
     const callable = this.fns.filter(
       (f) =>
         this.callableFrom(f, ctx) &&
+        this.initializedFor(f) &&
         f.ret !== undefined &&
         sameTy(f.ret.ty, ty) &&
         f.ret.loc === loc,
@@ -569,6 +603,19 @@ class Generator {
     return fn.at === ctx.endpoint;
   }
 
+  /**
+   * Whether `fn` may be called here: anywhere in a function body, and at top
+   * level once every constant it may reach is declared
+   * (spec §top-level-constant-initialization-order).
+   */
+  private initializedFor(fn: FnSig): boolean {
+    return this.inFunctionBody() || [...fn.uses].every((name) => this.declaredConstants.has(name));
+  }
+
+  private inFunctionBody(): boolean {
+    return this.enclosing.includes("choreography-fn") || this.enclosing.includes("local-fn");
+  }
+
   private genCall(
     fn: FnSig,
     scope: readonly Binding[],
@@ -576,6 +623,9 @@ class Generator {
     depth: number,
   ): string {
     const args = fn.params.map((p) => this.genPlaced(p.ty, p.loc, scope, ctx, depth));
+    if (fn.uses.size > 0 && !this.inFunctionBody()) {
+      this.features.add("constant:reached from top level");
+    }
     return `${fn.name}(${args.join(", ")})`;
   }
 
@@ -714,7 +764,7 @@ class Generator {
     indent: string,
     depth: number,
   ): void {
-    const target = this.pickBinding(scope, () => true);
+    const target = this.pickBinding(scope, (b) => b.constant !== true);
     if (target === undefined) {
       return this.genLetAnnotated(scope, ctx, indent, depth);
     }
@@ -734,7 +784,7 @@ class Generator {
     indent: string,
     depth: number,
   ): void {
-    const target = this.pickBinding(scope, () => true);
+    const target = this.pickBinding(scope, (b) => b.constant !== true);
     if (target === undefined) {
       return this.genLetAnnotated(scope, ctx, indent, depth);
     }
@@ -810,7 +860,7 @@ class Generator {
     indent: string,
     depth: number,
   ): void {
-    const callable = this.fns.filter((f) => this.callableFrom(f, ctx));
+    const callable = this.fns.filter((f) => this.callableFrom(f, ctx) && this.initializedFor(f));
     if (callable.length === 0) {
       return this.genLetAnnotated(scope, ctx, indent, depth);
     }
@@ -959,7 +1009,8 @@ class Generator {
     const name = `f${this.fnCounter}`;
 
     // Body names restart per function so they repeat across functions; a
-    // function body is its own scope (spec §variable-scope, §top-level-let).
+    // function body is a scope of its own, which sees no top-level variable
+    // but the constants (spec §variable-scope, §top-level-let).
     const savedCounter = this.counter;
     this.counter = 0;
 
@@ -1011,9 +1062,10 @@ class Generator {
       `(${params.map((p, i) => `${p.name}: ${paramTypes[i]}`).join(", ")})` +
       `${annotation} {`;
 
+    const firstLine = this.lines.length;
     this.emit("", header);
     this.within(at === undefined ? "choreography-fn" : "local-fn", () => {
-      const scope: Binding[] = [...params];
+      const scope: Binding[] = [...this.constantsVisibleIn(ctx), ...params];
       const count = this.int(0, 3);
       for (let i = 0; i < count; i += 1) {
         this.genStatement(scope, ctx, 1, "    ");
@@ -1048,7 +1100,75 @@ class Generator {
     // Registered only after its body is generated, so no function can call
     // itself or a later one: recursion is banned for choreography functions
     // and needs an explicit return type otherwise (spec §recursion, §inference-and-recursion).
-    this.fns.push({ name, at, params, ret });
+    this.fns.push({ name, at, params, ret, uses: this.usesIn(this.lines.slice(firstLine)) });
+  }
+
+  // --- top-level constants ----------------------------------------------
+
+  /**
+   * Plans the top-level constants before any function, so that function
+   * bodies can use them (spec §top-level-let). Each is declared later, among
+   * the top-level statements (see `declareNextConstant`).
+   */
+  private planConstants(): void {
+    const count = this.int(1, 3);
+    for (let i = 1; i <= count; i += 1) {
+      this.plannedConstants.push({
+        name: `g${i}`,
+        ty: this.someType(),
+        loc: this.someLocation({ kind: "choreography" }),
+        depth: 0,
+        constant: true,
+      });
+    }
+  }
+
+  /**
+   * The planned constants a body in `ctx` may use: all of them in a
+   * choreography function, and those at its own endpoint in a local one
+   * (spec §local-function-strict-location-rule). A body declaration may shadow them.
+   */
+  private constantsVisibleIn(ctx: Ctx): Binding[] {
+    return this.plannedConstants.filter(
+      (c) => ctx.kind === "choreography" || c.loc === ctx.endpoint,
+    );
+  }
+
+  /**
+   * Declares the next planned constant, its type written out. Its initializer
+   * is generated at top level, so it calls only functions whose constants are
+   * already declared, which excludes this one (see `initializedFor`).
+   */
+  private declareNextConstant(scope: Binding[]): void {
+    const constant = this.plannedConstants[this.declaredConstants.size];
+    if (constant === undefined) {
+      return;
+    }
+    const init = this.genPlaced(constant.ty, constant.loc, scope, { kind: "choreography" }, 1);
+    this.emit("", `const ${constant.name}: ${this.formatType(constant.ty, constant.loc)} = ${init};`);
+    this.declaredConstants.add(constant.name);
+    scope.push(constant);
+  }
+
+  /** The constants a function whose text is `lines` may reach (see {@link FnSig.uses}). */
+  private usesIn(lines: readonly string[]): ReadonlySet<string> {
+    const uses = new Set<string>();
+    if (this.plannedConstants.length === 0) {
+      return uses;
+    }
+    const text = lines.join("\n");
+    for (const constant of this.plannedConstants) {
+      if (new RegExp(`\\b${constant.name}\\b`).test(text)) {
+        uses.add(constant.name);
+        this.features.add("constant:used in a function");
+      }
+    }
+    for (const [, callee] of text.matchAll(/\b(f\d+)\(/g)) {
+      for (const name of this.fns.find((f) => f.name === callee)?.uses ?? []) {
+        uses.add(name);
+      }
+    }
+    return uses;
   }
 
   // --- deliberate violations -------------------------------------------
@@ -1405,6 +1525,51 @@ class Generator {
       case "dynArrayLiteralMixedConcrete":
         lines.push(`let ${n} = [1@${p}, 2@${q}]@dyn;`);
         break;
+      // A `const` is never stored into again (spec §const-statement); either
+      // store would be fine into a `let`.
+      case "assignToConst":
+        lines.push(`const ${n}: integer@${p} = 1@${p};`);
+        lines.push(`${n} = 2@${p};`);
+        break;
+      case "transferToConst":
+        lines.push(`const ${n}: integer@${p} = 1@${p};`);
+        lines.push(`${n} <- 2@${choreography ? q : p};`);
+        break;
+      // No top-level statement calls a function that reaches a constant
+      // declared by it or later (spec §top-level-constant-initialization-order).
+      // The return type is written, so only the check after the bodies sees it.
+      case "constantUsedBeforeInitialization":
+        lines.push(
+          `function ${n}f@${p}(): integer@${p} {`,
+          `    return ${n};`,
+          `}`,
+          `let ${n}v: integer@${p} = ${n}f();`,
+          `const ${n}: integer@${p} = 1@${p};`,
+        );
+        break;
+      // Through a second function, in the constant's own initializer. The return
+      // types are inferred, which is where this one is found.
+      case "constantInitializerUsesItself":
+        lines.push(
+          `function ${n}g@${p}() {`,
+          `    return ${n} + 1@${p};`,
+          `}`,
+          `function ${n}f@${p}() {`,
+          `    return ${n}g();`,
+          `}`,
+          `const ${n}: integer@${p} = ${n}f();`,
+        );
+        break;
+      // A local function uses only constants at its own location
+      // (spec §local-function-strict-location-rule).
+      case "localFunctionUsesConstantElsewhere":
+        lines.push(
+          `const ${n}: integer@${q} = 1@${q};`,
+          `function ${n}f@${p}(): integer@${p} {`,
+          `    return ${n};`,
+          `}`,
+        );
+        break;
       // Strict mode: an omission that would be `dyn` is an error (spec §strict-mode).
       case "transferLetOmittedDestinationStrict":
         lines.push(`let ${n}: integer <- 1@${p};`);
@@ -1559,6 +1724,11 @@ export const VIOLATIONS: readonly ViolationInfo[] = [
   { id: "dynArrayInvariance", where: "choreography", spec: "array-type-invariance", expect: ["cannot assign integer[]"] },
   { id: "dynIndexAssignMixedConcrete", where: "choreography", spec: "element-assignment-across-locations", expect: [] },
   { id: "dynArrayLiteralMixedConcrete", where: "choreography", spec: "array-literal-elements-across-locations", expect: [] },
+  { id: "assignToConst", spec: "assignment-to-a-constant", expect: ["constant"] },
+  { id: "transferToConst", spec: "assignment-to-a-constant", expect: ["constant"] },
+  { id: "constantUsedBeforeInitialization", where: "topLevel", spec: "constant-used-before-initialization", expect: ["cannot be called here"] },
+  { id: "constantInitializerUsesItself", where: "topLevel", spec: "constant-used-before-initialization", expect: ["cannot be called here"] },
+  { id: "localFunctionUsesConstantElsewhere", where: "topLevel", spec: "invalid-value-used-inside-local-function", expect: ["not usable in local function"] },
   { id: "transferLetOmittedDestinationStrict", where: "choreography", spec: "transfer-let-does-not-infer-destination-type", expect: [], strict: true },
   { id: "omittedParameterLocationStrict", where: "topLevel", spec: "location-annotation-omission", expect: ["location annotation required"], strict: true },
   { id: "incompatibleInferredReturnLocationsStrict", where: "topLevel", spec: "incompatible-inferred-return-locations", expect: [], strict: true },

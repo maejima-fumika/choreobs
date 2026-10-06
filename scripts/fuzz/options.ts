@@ -13,6 +13,8 @@ export interface FuzzArgs {
   readonly vary: boolean;
   /** Leave `@dyn` out of the generated programs (spec §dyn). */
   readonly noDyn: boolean;
+  /** Leave top-level constants out of the generated programs (spec §top-level-let). */
+  readonly noConstants: boolean;
 }
 
 /** The flags `run.ts` and `dump.ts` both take. */
@@ -31,13 +33,15 @@ export function parseFuzzArgs(argv: readonly string[]): FuzzArgs & {
     maxTopStatements: Number(get("--maxstmt", "8")),
     vary: argv.includes("--vary"),
     noDyn: argv.includes("--no-dyn"),
+    noConstants: argv.includes("--no-constants"),
   };
 }
 
 /**
  * The generator options for `seed`. Every other seed is written for strict
  * mode, with all its `dyn` spelled out (spec §strict-mode); the program records
- * which, and is compiled that way (see `GeneratedProgram.implicitDyn`).
+ * which, and is compiled that way (see `GeneratedProgram.implicitDyn`). Every
+ * third seed has top-level constants that its functions use (spec §top-level-let).
  */
 export function fuzzGenOptions(seed: number, args: FuzzArgs): GenOptions {
   const endpoints = args.vary
@@ -52,10 +56,15 @@ export function fuzzGenOptions(seed: number, args: FuzzArgs): GenOptions {
     maxTopStatements: args.maxTopStatements,
     dyn: !args.noDyn,
     implicitDyn: !strict,
+    constants: !args.noConstants && seed % 3 === 1,
   };
 }
 
 /** How a program's mode is written in a finding's header. */
-export function describeMode(program: { readonly implicitDyn: boolean }, args: FuzzArgs): string {
-  return `${args.noDyn ? "no dyn" : "dyn"}, implicitDyn: ${program.implicitDyn}`;
+export function describeMode(
+  program: { readonly seed: number; readonly implicitDyn: boolean },
+  args: FuzzArgs,
+): string {
+  const constants = fuzzGenOptions(program.seed, args).constants === true;
+  return `${args.noDyn ? "no dyn" : "dyn"}, implicitDyn: ${program.implicitDyn}${constants ? ", top-level constants" : ""}`;
 }

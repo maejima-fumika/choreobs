@@ -3,6 +3,16 @@ import { describe, it } from "node:test";
 import { CHOREOGRAPHY_CONTEXT } from "../../src/ast/context.js";
 import { parse } from "../../src/parser/index.js";
 import type { Expression } from "../../src/ast/expressions.js";
+import type { SpecId } from "../../src/spec/ref.js";
+
+/** The one statement `source` consists of, which must parse. */
+function onlyStatement(source: string) {
+  const { program, errors } = parse(source);
+  assert.equal(errors.length, 0, JSON.stringify(errors));
+  const item = program?.items[0];
+  assert.ok(item?.kind === "TopLevelStatement");
+  return item.statement;
+}
 
 describe("ChoreoBS parser", () => {
   describe("parsing stops at the first syntax error", () => {
@@ -173,14 +183,6 @@ let y: integer@bob <- x;`;
   });
 
   describe("print syntax (spec §expressions, §invalid-print-call)", () => {
-    function onlyStatement(source: string) {
-      const { program, errors } = parse(source);
-      assert.equal(errors.length, 0, JSON.stringify(errors));
-      const item = program?.items[0];
-      assert.ok(item?.kind === "TopLevelStatement");
-      return item.statement;
-    }
-
     it("parses `print(e);` as a PrintExpression statement", () => {
       const stmt = onlyStatement(`print(1@alice + 2@alice);`);
       assert.ok(stmt.kind === "ExpressionStatement");
@@ -210,6 +212,78 @@ let y: integer@bob <- x;`;
         assert.ok(errors[0]!.message.includes("'print' takes exactly one argument"));
         assert.ok(errors[0]!.spec.includes("invalid-print-call"));
       }
+    });
+  });
+
+  describe("const declarations (spec §const-statement)", () => {
+    function parseFailure(source: string) {
+      const { program, errors } = parse(source);
+      assert.equal(program, null);
+      assert.equal(errors.length, 1, JSON.stringify(errors));
+      return errors[0]!;
+    }
+
+    it("parses the three forms a `let` takes, recording the keyword", () => {
+      const annotated = onlyStatement(`const x: integer@alice = 1@alice;`);
+      assert.ok(annotated.kind === "LetStatement");
+      assert.equal(annotated.keyword, "const");
+      assert.equal(annotated.name, "x");
+      assert.ok(annotated.type !== undefined);
+
+      const inferred = onlyStatement(`const y = 1@alice;`);
+      assert.ok(inferred.kind === "LetStatement");
+      assert.equal(inferred.keyword, "const");
+      assert.equal(inferred.type, undefined);
+
+      const transfer = onlyStatement(`const z: integer@bob <- x;`);
+      assert.ok(transfer.kind === "LetTransferStatement");
+      assert.equal(transfer.keyword, "const");
+    });
+
+    it("records `let` for a `let`", () => {
+      const plain = onlyStatement(`let x = 1@alice;`);
+      assert.ok(plain.kind === "LetStatement");
+      assert.equal(plain.keyword, "let");
+      const transfer = onlyStatement(`let z: integer@bob <- x;`);
+      assert.ok(transfer.kind === "LetTransferStatement");
+      assert.equal(transfer.keyword, "let");
+    });
+
+    it("starts the span at the keyword", () => {
+      const stmt = onlyStatement(`const x = 1@alice;`);
+      assert.equal(stmt.span.start, 0);
+    });
+
+    it("is no longer reported as unsupported", () => {
+      const { errors } = parse(`const;`);
+      assert.ok(!errors.some((e) => e.message.includes("is not supported")), JSON.stringify(errors));
+    });
+
+    it("requires an initializer, as `let` does (spec §uninitialized-let)", () => {
+      const error = parseFailure(`const x: integer@alice;`);
+      assert.ok(error.message.includes("uninitialized const is not allowed"), error.message);
+      assert.ok(error.spec.includes("const-statement"));
+      assert.ok(error.spec.includes("let-statement"));
+      assert.ok(error.spec.includes("uninitialized-let"));
+    });
+
+    it("requires a type on a transfer declaration (spec §transfer-let-without-type-annotation)", () => {
+      const error = parseFailure(`const y <- x;`);
+      assert.ok(error.message.includes("type annotation required for transfer const"), error.message);
+      assert.ok(error.spec.includes("transfer-let-does-not-infer-destination-type"));
+      assert.ok(error.spec.includes("transfer-let-without-type-annotation"));
+    });
+
+    it("keeps the `let` messages as they were", () => {
+      const error = parseFailure(`let y <- x;`);
+      assert.equal(error.message, "type annotation required for transfer let");
+      assert.ok(!error.spec.includes("const-statement"));
+    });
+
+    it("rejects `const` in a for header (spec §const-in-a-for-header)", () => {
+      const error = parseFailure(`for (const i = 0@every; i < 10@every; i = i + 1@every) { }`);
+      assert.ok(error.message.includes("use 'let'"), error.message);
+      assert.ok(error.spec.includes("const-in-a-for-header"));
     });
   });
 
@@ -285,9 +359,44 @@ let y: integer@bob <- x;`;
     const { errors } = parse(`for (let i = 0@every; ; i = i + 1@every) {\n}`);
     assert.ok(errors.length > 0);
     assert.ok(
-      errors.some((e) => e.message.includes("expected expression")),
+      errors.some((e) => e.message.includes("expected expression") && e.message.includes("condition")),
       JSON.stringify(errors),
     );
+  });
+
+  // A diagnostic cites the rule and then its entry in the error catalogue of
+  // chapter 16, where one exists (src/spec/ref.ts). These are the syntax errors
+  // with an entry of their own.
+  describe("syntax errors cite their entry in chapter 16", () => {
+    const cases: readonly (readonly [source: string, entry: SpecId])[] = [
+      [`let x: integer@alice;`, "uninitialized-let"],
+      [`let x;`, "uninitialized-let"],
+      [`const x: integer@alice;`, "uninitialized-let"],
+      [`let y <- x;`, "transfer-let-without-type-annotation"],
+      [`while (true@every) { break; }`, "err-break-and-continue"],
+      [`while (true@every) { continue; }`, "err-break-and-continue"],
+      [`x == y;`, "unsupported-equality-operators"],
+      [`x != y;`, "unsupported-equality-operators"],
+      [`let n: integer@alice = xs.pop;`, "invalid-array-operation-syntax"],
+      [`(xs).push(1@alice);`, "invalid-array-operation-syntax"],
+      [`for (let i = 0@every; ; i = i + 1@every) {\n}`, "missing-for-condition"],
+      [`let xs: integer[][]@alice = [];`, "nested-array"],
+      [`print();`, "invalid-print-call"],
+      [`for (const i = 0@every; i < 1@every; ) {\n}`, "const-in-a-for-header"],
+    ];
+    for (const [source, entry] of cases) {
+      it(`${source} (spec §${entry})`, () => {
+        const { program, errors } = parse(source);
+        assert.equal(program, null);
+        assert.ok(errors.some((e) => e.spec.includes(entry)), JSON.stringify(errors));
+      });
+    }
+
+    it("cites only §keywords for a reserved word other than break and continue", () => {
+      const { errors } = parse(`class k;`);
+      assert.ok(errors.some((e) => e.spec.includes("keywords")), JSON.stringify(errors));
+      assert.ok(!errors.some((e) => e.spec.includes("err-break-and-continue")), JSON.stringify(errors));
+    });
   });
 
   it("parses array element targets in for clauses (spec §for-statement)", () => {

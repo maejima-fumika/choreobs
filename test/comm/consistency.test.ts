@@ -53,6 +53,7 @@ function send(destinationEndpoint: string, tag: string, comm: CommKind = "intege
 function receiveLet(sourceEndpoint: string, tag: string, name = "y") {
   return {
     kind: "LetStatement" as const,
+    keyword: "let" as const,
     name,
     type: { kind: "PresentType" as const, base: "integer" as const },
     initializer: receive("integer", sourceEndpoint, tag),
@@ -135,6 +136,7 @@ let y: integer@bob <- x;
       program([
         {
           kind: "LetStatement",
+          keyword: "let",
           name: "y",
           type: { kind: "PresentType", base: "integer" },
           initializer: receive("integer", "alice", "top_0"),
@@ -187,6 +189,7 @@ let y: integer@bob <- x;
       program([
         {
           kind: "LetStatement",
+          keyword: "let",
           name: "y",
           type: { kind: "PresentType", base: "integer" },
           initializer: receive("integer", "alice", "top_0"),
@@ -296,6 +299,7 @@ if (ok) {
       program([
         {
           kind: "LetStatement",
+          keyword: "let",
           name: "y",
           type: { kind: "PresentType", base: "integer" },
           initializer: {
@@ -344,6 +348,7 @@ describe("communication consistency — broadcast sender binding", () => {
       program([
         {
           kind: "LetStatement",
+          keyword: "let",
           name: "unrelated",
           type: { kind: "PresentType", base: "integer" },
           initializer: { kind: "IntegerLiteralExpression", value: 1, span },

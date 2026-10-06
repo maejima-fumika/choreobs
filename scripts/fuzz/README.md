@@ -16,6 +16,7 @@ npm run fuzz -- --runs 5000 --seed 1 --endpoints alice,bob,carol
 | `--maxfn N` / `--maxstmt N` | function and top-level statement budget | 3 / 8 |
 | `--vary` | draw a random endpoint subset per seed | off |
 | `--no-dyn` | generate no `@dyn` (spec §dyn) | off |
+| `--no-constants` | generate no top-level constants (spec §top-level-let) | off |
 | `--out DIR` | where failing programs are written | `scratchpad/fuzz-findings` |
 | `-v` | also print the first generated program | off |
 
@@ -26,8 +27,16 @@ all of its `dyn` spelled out — and compiled with `"implicitDyn": false`; the
 odd ones may also leave locations out and have them be `dyn`
 (spec §omitted-locations, §strict-mode).
 
+Every third seed (`seed % 3 === 1`) also has top-level constants, unless
+`--no-constants` is given. They are planned before the functions, so that
+function bodies use them (spec §top-level-let), and declared among the
+top-level statements. A top-level statement calls a function only once every
+constant the function may reach is declared
+(spec §top-level-constant-initialization-order); what a function may reach is
+read off its text, which errs on the side of calling it later.
+
 Reproduce one program with `npx tsx scripts/fuzz/dump.ts SEED [endpoints]`,
-giving it the flags the run had (`--no-dyn`, `--vary`, `--depth`, …). It
+giving it the flags the run had (`--no-dyn`, `--no-constants`, `--vary`, `--depth`, …). It
 generates and compiles exactly as `run.ts` did for that seed, and prints the
 source, its mode, the verdict, and the projection for each endpoint. Finding
 files record the endpoints and the mode too.
@@ -39,8 +48,9 @@ specification calls well typed: locations are consistent (`~`, spec
 §location-consistency-and-join) — equal, or with `dyn` on one side — and never
 subsumed, binary operands share a location, conditions sit at the context's
 location, transfers keep their base type with arrays invariant, local function
-bodies mention nothing but their own endpoint and no `dyn`, and no function is
-recursive.
+bodies mention nothing but their own endpoint and no `dyn`, no function is
+recursive, and no top-level statement calls a function before a constant it
+uses is declared.
 
 So the driver treats every outcome other than success as something to look at:
 
@@ -56,9 +66,14 @@ So the driver treats every outcome other than success as something to look at:
   from it or lack it when one does (spec §runtime-files),
   compilation is not deterministic, the output depends on the order endpoints
   are declared in, a program written for strict mode compiles differently
-  without it (spec §strict-mode), or leaving out every location written inside
-  its local functions changes its acceptance or its output
-  (spec §local-function-location-inference; the rewrite is [`strip.ts`](strip.ts)).
+  without it (spec §strict-mode), or a rewrite of its source changes its
+  acceptance or more of its output than the rewrite accounts for. The rewrites
+  are listed in [`metamorphic.ts`](metamorphic.ts): leaving out every location
+  written inside its local functions (spec §local-function-location-inference; [`strip.ts`](strip.ts)),
+  and declaring every variable that is never stored into with `const`, which
+  may change only the keyword of its bindings (spec §const-statement; [`constify.ts`](constify.ts)).
+  `test/integration/metamorphic.test.ts` applies them to every example and
+  benchmark as well.
 
 These output checks live in [`inspect.ts`](inspect.ts), which the fixed corpus in
 `test/integration/fuzz.test.ts` uses too.

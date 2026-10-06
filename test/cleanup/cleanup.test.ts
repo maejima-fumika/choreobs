@@ -158,6 +158,7 @@ describe("Projected AST cleanup (spec §projected-ast-cleanup)", () => {
         { kind: "ReturnStatement", value: nullLit(), span },
         {
           kind: "LetStatement",
+          keyword: "let",
           name: "x",
           type: { kind: "AbsentType" },
           initializer: nullLit(),
@@ -209,6 +210,7 @@ describe("Projected AST cleanup (spec §projected-ast-cleanup)", () => {
       };
       const letRecv: LetStatement = {
         kind: "LetStatement",
+        keyword: "let",
         name: "y",
         type: { kind: "PresentType", base: "integer" },
         initializer: {

@@ -1,6 +1,6 @@
 // SYNTAX TEST "source.choreobs" "what the lexer and parser always reject"
 
-const k = 1;
+class k = 1;
 // <----- invalid.illegal.unsupported-keyword.choreobs
 while (true) { break; continue; }
 //             ^^^^^ invalid.illegal.unsupported-keyword.choreobs
