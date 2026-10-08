@@ -10,6 +10,7 @@
  * It works on tokens, so comments and strings are never touched.
  */
 import { tokenize, TokenKind } from "../../src/lexer/index.js";
+import { localFunctionRanges } from "../shared/local-functions.js";
 
 /** `source` with the locations inside its local functions cut out; `source` itself if it has none. */
 export function stripLocalFunctionLocations(source: string): string {
@@ -18,31 +19,11 @@ export function stripLocalFunctionLocations(source: string): string {
     throw new Error(`cannot strip locations from a source that does not lex: ${errors[0]!.message}`);
   }
   const cuts: [start: number, end: number][] = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const isLocalDeclaration =
-      tokens[i]!.kind === TokenKind.Function &&
-      tokens[i + 1]?.kind === TokenKind.Identifier &&
-      tokens[i + 2]?.kind === TokenKind.At;
-    if (!isLocalDeclaration) {
-      i += 1;
-      continue;
-    }
-    // Past `function f @ P`. Neither the parameters nor the return type hold a
-    // brace, so the function ends with the brace that closes its body.
-    i += 4;
-    let depth = 0;
-    for (; i < tokens.length; i += 1) {
+  for (const [start, end] of localFunctionRanges(tokens)) {
+    // Past `function f @ P`, whose `@P` stays.
+    for (let i = start + 4; i < end; i += 1) {
       const token = tokens[i]!;
-      if (token.kind === TokenKind.LBrace) {
-        depth += 1;
-      } else if (token.kind === TokenKind.RBrace) {
-        depth -= 1;
-        if (depth === 0) {
-          i += 1;
-          break;
-        }
-      } else if (token.kind === TokenKind.At) {
+      if (token.kind === TokenKind.At) {
         const location = tokens[i + 1]!;
         cuts.push([token.span.start.offset, location.span.end.offset]);
         i += 1;

@@ -334,8 +334,8 @@ the paths, and then runs every endpoint's program together:
 endpoint in `endpoints`.
 
 * With `--stats`, it runs `bscript workspace run --stats <endpoint>…`
-  instead, which prints the execution time and the memory statistics of each
-  endpoint when it finishes.
+  instead, which prints the execution time, the CPU time and the memory
+  statistics of each endpoint when it finishes.
 * With `--profile`, what it writes and runs is a profiling build
   (spec [§13.17](#profiling-build)): each endpoint prints a report when its program ends. The
   two options may be given together, in either order.

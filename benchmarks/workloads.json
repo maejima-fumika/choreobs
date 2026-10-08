@@ -1,0 +1,10 @@
+{
+  "macro/a-smallbank-2pc": { "TXNS": 1100 },
+  "macro/b-sensor-fusion": { "TICKS": 800 },
+  "macro/c-replicated-kvs": { "OPS": 1200 },
+  "macro/d-kmeans": { "RESTARTS": 128 },
+  "macro/e-sample-sort": { "ROUNDS": 150 },
+  "macro/f-jacobi": { "MAX_STEPS": 1300 },
+  "macro/g-secure-aggregation": { "ROUNDS": 1000 },
+  "macro/h-job-dispatcher": { "JOBS": 2400 }
+}

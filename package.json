@@ -12,7 +12,9 @@
     "spec:check": "tsx scripts/spec/check.ts",
     "spec:fmt": "tsx scripts/spec/fmt.ts && npm run spec:sections",
     "fuzz": "tsx scripts/fuzz/run.ts",
-    "fuzz:violate": "tsx scripts/fuzz/violate.ts"
+    "fuzz:violate": "tsx scripts/fuzz/violate.ts",
+    "bench": "tsx scripts/bench/run.ts",
+    "bench:summarize": "tsx scripts/bench/summarize.ts"
   },
   "bin": {
     "choreobs": "./dist/cli/main.js"

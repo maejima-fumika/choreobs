@@ -7,4 +7,6 @@ tsconfig.tsbuildinfo
 /examples/*/workspace/
 /benchmarks/**/*.bs
 /benchmarks/**/workspace/
+/benchmarks/results/
+/benchmarks/.work/
 /scratchpad

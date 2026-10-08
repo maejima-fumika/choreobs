@@ -35,6 +35,10 @@ endpoints.
 `test/integration/benchmarks.test.ts` compiles every benchmark as part of
 `npm test`, and checks that each is in strict mode.
 
+The measuring scripts (see [Measuring](#measuring)) keep their copies of the
+benchmarks in `benchmarks/.work/` and write their results to
+`benchmarks/results/`. Neither is committed.
+
 ## Running a benchmark
 
 The BlueScript workspace is not committed. Make it from the benchmark's
@@ -54,8 +58,9 @@ choreobs run
 `choreobs` comes from `npm run build && npm link` at the root of the
 repository. Things to keep in mind:
 
-* `bscript` exits with status 0 even when an endpoint stops with a runtime
-  error. Check the output for `runtime error` and `memory exhausted`.
+* `bscript workspace run` exits with status 1 when an endpoint stops with a
+  runtime error or runs out of memory. The output says which: look for
+  `runtime error` and `memory exhausted`.
 * Starting the endpoints takes about a second, which dominates at the default
   sizes. The default sizes are kept small so that every benchmark finishes in a
   few seconds and the self-checks can be run often. Each benchmark has a
@@ -66,6 +71,191 @@ repository. Things to keep in mind:
   payload at every endpoint, so a configuration with many `dyn` arrays needs
   more heap than the baseline. Raising an array-heavy benchmark's sizes (u3,
   D, E, F, G) can exhaust the heap at high precision before it does at 0%.
+
+## Measuring
+
+`scripts/bench/` measures the benchmarks across location precision. It makes
+each configuration, compiles and runs it with `bscript workspace run --stats`,
+checks what it prints against the baseline, and records the run. A second
+script turns the records into CSV files for the tables and figures.
+
+You need `bscript` on `PATH`, with a `workspace run` that takes `--stats`. The
+CPU times need a `bscript` whose `STATS` lines carry `cpu_user_ms` and
+`cpu_sys_ms`; with an older one they are left empty.
+Nothing else needs building: the scripts run from source with `tsx`.
+
+```bash
+# A quick look: one benchmark, 0%, 50% and 100%, two repetitions.
+npm run bench -- a-smallbank-2pc --seeds 2 --fractions 0,0.5,1 --reps 2 --out benchmarks/results/try
+npm run bench:summarize -- benchmarks/results/try
+
+# The full sweep of the macro benchmarks, at the sizes chosen for timing.
+npm run bench -- macro --workloads benchmarks/workloads.json
+```
+
+### Options of `npm run bench`
+
+Benchmarks are named by directory (`benchmarks/macro/a-smallbank-2pc`), by name
+(`a-smallbank-2pc`), or as a group: `micro`, `macro` or `all`.
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--seeds N` | seeds 1 to N, each a random order of the dyn-able locations | 5 |
+| `--seed-list a,b` | these seeds instead | |
+| `--steps N` | fractions 0, 1/N, …, 1 of the locations made `dyn` | 10 |
+| `--fractions a,b` | these fractions instead; 0 is always measured | |
+| `--reps N` | timing runs of each configuration | 5 |
+| `--profile-reps N` | profile runs of each configuration | 1 |
+| `--mode M` | `time`, `profile` or `both` | `both` |
+| `--workloads FILE` | workload constants by benchmark, as in `benchmarks/workloads.json` | |
+| `--set [b:]NAME=V` | a workload constant, for every benchmark that has it or for benchmark `b`; repeatable, and it overrides `--workloads` | |
+| `--out DIR` | where the results go | `benchmarks/results/<UTC time>` |
+| `--timeout S` | seconds before a run is killed | 120 |
+| `--warmup N` | unrecorded baseline runs before a benchmark's first run | 1 |
+| `--config FILE` | a `choreobs.json` to use instead of the benchmark's, e.g. one that puts the endpoints on `esp32` boards; one benchmark only | |
+| `--dry-run` | list the runs, run nothing | |
+
+Each run is appended to `runs.jsonl` as soon as it ends. The same command run
+again skips every run already there, so an interrupted sweep resumes where it
+stopped, and a sweep can be extended with more seeds or repetitions.
+
+### Sizes for timing
+
+The default sizes keep every benchmark quick. For timing,
+`benchmarks/workloads.json` raises each macro benchmark so that its baseline
+runs for about 170 ms. At the default sizes the baselines ran for 12–107 ms,
+and a single run of the shorter ones varied by 4–8% (by how far the timing run
+and the profile run of the same configuration disagreed). Each benchmark is
+raised through the constant that repeats the work, so the data, and with it
+the heap a run needs, stays as it is, and every value stays below 2^29:
+
+| Benchmark | Constant | Default | For timing | Baseline then |
+|---|---|---|---|---|
+| a-smallbank-2pc | `TXNS` | 300 | 1100 | about 170 ms |
+| b-sensor-fusion | `TICKS` | 400 | 800 | about 175 ms |
+| c-replicated-kvs | `OPS` | 400 | 1200 | about 170 ms |
+| d-kmeans | `RESTARTS` | 4 | 128 | about 165 ms |
+| e-sample-sort | `ROUNDS` | 5 | 150 | about 155 ms |
+| f-jacobi | `MAX_STEPS` | 400 | 1300 | about 165 ms |
+| g-secure-aggregation | `ROUNDS` | 30 | 1000 | about 165 ms |
+| h-job-dispatcher | `JOBS` | 200 | 2400 | about 180 ms |
+
+Each value was chosen from the baseline's time at two sizes, taken as a fixed
+part plus a part per repetition. At these sizes five runs of one
+configuration spread by less than 3% (the interquartile range over the
+median), 3.8% at most, and every configuration tried at 0%, 50% and 100% ran
+correctly. f-jacobi stops at `MAX_STEPS` at both sizes, before its residual
+reaches the bound that ends it earlier, so its steps grow with the constant.
+
+The size changes the result, not only its noise: at a small size, the start
+and the initialization, which `dyn` changes little, weigh more. The slowdown
+at 100% rose from 1.42 to 1.61 for d-kmeans, from 1.49 to 1.62 for
+g-secure-aggregation and from 1.26 to 1.40 for h-job-dispatcher, and moved
+by 0.06 or less for the others. Report the sizes with the results.
+
+### How it measures
+
+* **Configurations.** A benchmark's dyn-able locations (see
+  [Conventions](#conventions)) are found in its tokens: every location written
+  outside a local function, apart from the `@P` of an `import@P`. A seed fixes
+  a random order of them, and the fraction `p` makes the first `round(p · n)`
+  of them `dyn`. The configurations of one seed are therefore nested: a larger
+  `p` only adds locations to a smaller one. 0% and 100% are the same program
+  for every seed, and are measured once, with no seed. The rewriting works on
+  tokens, so comments are never touched, and `--set` changes only the integer
+  literal of a Workload constant.
+* **Timing runs and profile runs.** A timing run is the ordinary build. Its
+  time is `exec_ms` from bscript's `STATS` line, taken on the board: it leaves
+  out starting, compiling and loading the programs, and includes waiting for
+  messages and printing. A run takes as long as its slowest endpoint. A
+  profile run is a profiling build (`choreobs run --profile`, spec
+  §profiling-build), which counts what each endpoint does and prints a report
+  at the end. Its wrappers and counters cost time, so its times are not used
+  as results; `profile_overhead` in `configs.csv` says by how much they differ.
+  The counts do not depend on timing, so one profile run of each configuration
+  is enough.
+* **Order.** Each repetition runs the baseline first and then every other
+  configuration in a shuffled order, so that a drift of the machine's speed
+  spreads over all configurations instead of falling on some. Every run
+  records when it started.
+* **Correctness.** Each run is compared with what the baseline printed, as
+  described in [Conventions](#conventions): only the endpoints that print in
+  the baseline, integers and booleans exactly, floats within a relative 1e-3.
+  A value whose `dyn` location is never bound is printed at every endpoint, so
+  an endpoint may print lines another endpoint printed in the baseline; they
+  are accepted and counted in `extra_lines`.
+* **Failures.** A run is `ok`, `incorrect`, `failed` (an endpoint did not
+  finish, or its report is missing), `runtime_error`, `memory_exhausted`,
+  `timeout` or `compile_error`. Whatever bscript printed for a run that is not
+  `ok` is kept in `failures/`.
+
+### Output
+
+`npm run bench` writes to its `--out` directory:
+
+| File | Contents |
+|---|---|
+| `runs.jsonl` | one JSON object per run (`scripts/bench/records.ts`): the configuration, its status, and for each endpoint its `STATS` fields, what it printed and, for a profile run, its counters |
+| `meta.json` | one entry per session: the arguments, the git commit and whether the tree was clean, the versions of `bscript` and Node, the machine |
+| `locations/<bench>.json` | the dyn-able locations with their lines and columns, the workload constants, and each seed's order |
+| `failures/*.log` | bscript's output for each run that did not end `ok` |
+
+`npm run bench:summarize -- <dir…> [--out DIR]` reads `runs.jsonl` from each
+directory and writes three CSV files:
+
+| File | One row per | Main columns |
+|---|---|---|
+| `runs.csv` | run and endpoint | the record, flattened, with every counter |
+| `configs.csv` | configuration (benchmark, boards, workload, seed, `k`) | `exec_ms_median`, quartiles, `baseline_ms`, `slowdown` (median time over the baseline's), `cpu_ms_max_endpoint_median`, `cpu_ms_sum_median`, `busy_share_median`, `gc_ms_median`, `alloc_objects_median`, `requests` (communication calls of all endpoints), `ops_total`, `ops_replicated`, each counter summed over the endpoints, `invariants_ok`, `profile_overhead` |
+| `summary.csv` | benchmark and fraction | `slowdown_median`, quartiles, minimum and maximum over the configurations, `share_within_1_1x` and `share_within_2x`, and the median of each counter (`med_…`) |
+
+Only valid runs count towards a time: those that ended `ok`.
+
+### CPU time
+
+Every timing run also records the CPU time of each endpoint, taken by bscript
+over the same window as `exec_ms`: `cpu_user_ms` for its own work, the dynamic
+runtime and the garbage collector included, and `cpu_sys_ms` for passing its
+messages and output through the pipes to bscript. Waiting for a message uses
+none, so `exec_ms` minus both is about the time the endpoint waited.
+`busy_share_median` in `configs.csv` is the CPU time of the slowest endpoint
+over its `exec_ms`. On the host at the default sizes, the smallbank baseline's
+endpoints are busy for about 11–17% of their 69 ms.
+
+### Counters
+
+A profiling build counts, at each endpoint (spec §profiling-build):
+
+| Counters | Mechanism |
+|---|---|
+| `send_n`, `send_ms`, `receive_n`, `receive_ms`, `broadcast_n`, `broadcast_ms` | calls of the communication API and the time spent in them, waiting for a message included; static and dynamic transfers alike |
+| `dynval_new` | K1 boxing |
+| `locvar_new`, `find`, `unify`, `bind`, `root_steps` | K2 location variables |
+| `holds`, `is_here`, `is_every`, `kind_dispatch` | K3 dispatch |
+| `unbound`, `inject`, `cast` | K4 inject and cast |
+| `transfer`, `transfer_broadcast`, `transfer_send`, `transfer_none`, `transfer_copy`, `transfer_receive`, `copy_array` | K5 communication |
+| `op_arith`, `op_array`, `op_print`, `op_here`, `op_every`, `op_unbound`, `op_skip` | K6 redundant execution: each dynamic operation, by kind and by where its operands were unified to. `op_every + op_unbound` are computed by every endpoint, `op_skip` by none here |
+
+`invariants_ok` checks that these agree: the operations by kind and by
+location add up to the same total, the three results of a transfer add up to
+`transfer`, and over all endpoints the receives equal the sends plus each
+broadcast once per other endpoint.
+
+### Caveats
+
+* The heap is 32 KB on the host too. A larger workload, or a configuration
+  with many unbound `dyn` arrays, can end in `memory_exhausted`.
+* `STATS` lines are printed only when bscript's output is not a terminal. The
+  script reads it through a pipe.
+* A run that times out is killed with its whole process group, endpoints
+  included.
+* Every endpoint runs as a process of its own. Keep the number of endpoints
+  below the number of cores (u5-fanout-k8 runs nine).
+* With `--config` putting endpoints on `esp32`, `STATS` gives `exec_ms` alone,
+  and the profiling build relies on BlueScript behaviour not yet confirmed
+  there (spec §unverified-bluescript-assumptions).
+* For a single run by hand, `choreobs run --stats --profile` prints the same
+  report.
 
 ## Conventions
 
@@ -497,8 +687,9 @@ Details:
 
 ## Not provided yet
 
-* A timer. ChoreoBS has no clock, so time is measured outside the processes.
-  This includes the startup of about a second.
-* A generator of precision configurations: enumerate the dyn-able locations,
-  and rewrite a chosen fraction of them to `@dyn`.
-* Sizes calibrated for timing runs.
+* Sizes for timing for the micro benchmarks (see
+  [Sizes for timing](#sizes-for-timing) for the macro ones).
+* A way to vary the cost of one message on the host, to see how the results
+  depend on it. The host delivers every message through bscript, at about
+  40 µs a call, and a broadcast costs one call however many endpoints
+  receive it.
