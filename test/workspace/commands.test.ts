@@ -266,6 +266,19 @@ describe("choreobs run (spec §commands)", () => {
     });
   });
 
+  it("passes --stats to bscript only when asked", () => {
+    withTempDir((root) => {
+      scaffold(root, [{ name: "alice", board: "host" }, { name: "bob", board: "host" }], TRANSFER);
+      const bscript = new FakeBscript();
+      runProject(root, bscript, undefined, { stats: true });
+      runProject(root, bscript, undefined, { stats: false });
+      assert.deepEqual(bscript.commands(root), [
+        "workspace$ bscript workspace run --stats alice bob",
+        "workspace$ bscript workspace run alice bob",
+      ]);
+    });
+  });
+
   it("leaves out a registered project that is no endpoint's", () => {
     withTempDir((root) => {
       const setup = scaffold(root, [{ name: "alice", board: "host" }, { name: "bob", board: "host" }], TRANSFER);

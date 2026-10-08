@@ -16,7 +16,7 @@ const USAGE = `Usage:
   choreobs create <name>
   choreobs add-endpoint <name> [-b|--board <${BOARD_NAMES.join("|")}>] [-d|--device-name <device-name>]
   choreobs compile
-  choreobs run`;
+  choreobs run [--stats]`;
 
 function usage(): void {
   console.error(USAGE);
@@ -158,12 +158,24 @@ function runCompile(args: readonly string[]): number {
 }
 
 function runRun(args: readonly string[]): number {
-  const root = projectRoot("run", args);
+  let stats = false;
+  const rest: string[] = [];
+  for (const arg of args) {
+    if (arg === "--stats") {
+      stats = true;
+    } else if (arg.startsWith("-")) {
+      console.error(`error: unknown option '${arg}'`);
+      return 1;
+    } else {
+      rest.push(arg);
+    }
+  }
+  const root = projectRoot("run", rest);
   if (typeof root === "number") {
     return root;
   }
   try {
-    const result = runProject(root, systemBscript, reportWrite);
+    const result = runProject(root, systemBscript, reportWrite, { stats });
     return result.errors.length === 0 ? 0 : 1;
   } catch (e) {
     return report(e);

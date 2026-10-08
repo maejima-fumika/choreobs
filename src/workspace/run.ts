@@ -4,11 +4,20 @@ import { CommandError } from "./errors.js";
 import { workspaceDir } from "./layout.js";
 import { requireBscript, type BscriptRunner } from "./runner.js";
 
+/** The options of `choreobs run`. */
+export interface RunOptions {
+  /** Passes `--stats` to `bscript workspace run`. */
+  stats?: boolean;
+}
+
 /**
  * `choreobs run` (spec §commands): writes the project as `choreobs compile`
  * does, then runs every endpoint's program together with
  * `bscript workspace run`, naming the endpoints so that a registered project
  * that is no endpoint's stays out.
+ *
+ * With `stats`, `bscript` is given `--stats`, and prints the execution time
+ * and the memory statistics of each endpoint when it finishes.
  *
  * `written` sees the result of writing before anything runs, so that its
  * warnings come first. When writing fails nothing is run, and the result is
@@ -20,6 +29,7 @@ export function runProject(
   projectRoot: string,
   runner: BscriptRunner,
   written: (result: WriteResult) => void = () => {},
+  options: RunOptions = {},
 ): WriteResult {
   const root = resolve(projectRoot);
   requireBscript(runner);
@@ -35,6 +45,6 @@ export function runProject(
       ["commands"],
     );
   }
-  runner.run(["workspace", "run", ...endpoints], workspaceDir(root));
+  runner.run(["workspace", "run", ...(options.stats ? ["--stats"] : []), ...endpoints], workspaceDir(root));
   return result;
 }

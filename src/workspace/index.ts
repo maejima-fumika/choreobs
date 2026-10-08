@@ -8,4 +8,4 @@ export {
   type BoardPrompt,
 } from "./add-endpoint.js";
 export { writeProject, type WriteResult } from "./compile.js";
-export { runProject } from "./run.js";
+export { runProject, type RunOptions } from "./run.js";

@@ -320,12 +320,16 @@ Compiles the project's `src/index.cbs` and writes the output into the
 workspace (spec [§2.3](#output-files)), printing the path of each file it writes, the copies of
 the BlueScript source files included (spec [§2.5](#bluescript-source-files)). It never runs `bscript`.
 
-#### `choreobs run` <a id="choreobs-run"></a>
+#### `choreobs run [--stats]` <a id="choreobs-run-stats"></a>
 
 Compiles and writes the project as `choreobs compile` does, without printing
 the paths, and then runs every endpoint's program together:
 `bscript workspace run <endpoint>…` in `workspace/`, with the name of every
 endpoint in `endpoints`.
+
+* With `--stats`, it runs `bscript workspace run --stats <endpoint>…`
+  instead, which prints the execution time and the memory statistics of each
+  endpoint when it finishes.
 
 * Naming the endpoints keeps a project registered in the workspace that is no
   endpoint's from running (spec [§2.3](#output-files)).
