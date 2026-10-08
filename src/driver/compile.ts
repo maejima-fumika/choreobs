@@ -9,6 +9,7 @@ import { emit } from "../emit/index.js";
 import { lowerProgram } from "../lower/index.js";
 import { importsDynRuntime, runtimeImports } from "../runtime/imports.js";
 import { runtimeSource } from "../runtime/source.js";
+import type { BuildOptions } from "../runtime/profile.js";
 import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
 import {
   assignCommTags,
@@ -107,11 +108,14 @@ export interface ProjectCompileResult extends CompileResult {
   readonly files?: SourceFiles;
 }
 
+/** How to build the output: an ordinary build unless asked (spec §profiling-build). */
+export type CompileOptions = BuildOptions;
+
 /**
  * Compiles the project at `root`: its `choreobs.json` and its `src/index.cbs`
  * (spec §input-files). Nothing is written; see `writeProject`.
  */
-export function compileProject(root: string): ProjectCompileResult {
+export function compileProject(root: string, options: CompileOptions = {}): ProjectCompileResult {
   const path = sourcePath(root);
   let config: ProjectConfig;
   try {
@@ -137,7 +141,7 @@ export function compileProject(root: string): ProjectCompileResult {
     return { ...failed([{ message, spec: ["input-files", "bluescript-source-files"] }]), config, source, sourcePath: path };
   }
   return {
-    ...compileSource(source, path, compilerConfig(config), files),
+    ...compileSource(source, path, compilerConfig(config), files, options),
     config,
     source,
     sourcePath: path,
@@ -155,6 +159,7 @@ export function compileSource(
   cbsPath: string,
   config: ChoreoBSConfig,
   files: SourceFiles = NO_SOURCE_FILES,
+  options: CompileOptions = {},
 ): CompileResult {
   // `compileSource` is the single funnel for every compilation path, and it
   // takes a `ChoreoBSConfig` that need not have come from `loadConfig`
@@ -210,10 +215,12 @@ export function compileSource(
   const finalized = finalizeAbsentAll(projected);
   const cleaned = cleanupAll(finalized);
 
-  const imports = cleaned.map(runtimeImports);
+  // A profiling build changes only the text from here on: the programs are
+  // the same ones (spec §profiling-build).
+  const imports = cleaned.map((program) => runtimeImports(program, options));
   const outputs: CompileOutput[] = cleaned.map((program, i) => ({
     endpoint: program.endpoint,
-    source: emit(program, imports[i]),
+    source: emit(program, imports[i], options),
   }));
 
   const commCheck = verifyCommunicationConsistency(
@@ -232,7 +239,7 @@ export function compileSource(
   const usesDyn = imports.some(importsDynRuntime);
   const runtimeOutputs: CompileOutput[] = config.endpoints.map((endpoint) => ({
     endpoint,
-    source: runtimeSource(endpoint, config.endpoints, usesDyn),
+    source: runtimeSource(endpoint, config.endpoints, usesDyn, options),
   }));
 
   const sourceFiles: SourceFileOutput[] = config.endpoints.flatMap((endpoint) =>

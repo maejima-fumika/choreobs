@@ -167,6 +167,7 @@ export const SPEC_SECTIONS = {
   "what-this-cleanup-pass-must-not-remove": { number: "13.15.6", title: "What This Cleanup Pass Must Not Remove" },
   "source-level-null": { number: "13.15.7", title: "Source-Level `null`" },
   "import-code-generation": { number: "13.16", title: "Import Code Generation" },
+  "profiling-build": { number: "13.17", title: "Profiling Build" },
   "runtime-support-functions": { number: "14", title: "Runtime Support Functions" },
   "nothing": { number: "14.1", title: "`nothing`" },
   "nothing-where-it-appears": { number: "14.2", title: "Where It Appears" },

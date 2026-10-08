@@ -15,22 +15,37 @@ import { RUNTIME_MODULE } from "../runtime/dyn.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "./comm.js";
 import { ARRAY_SENTINEL, PUSH_SENTINEL } from "../runtime/names.js";
 import { LOGICAL_HELPERS, nestNothing } from "../runtime/core.js";
+import { PROFILE_REPORT, profiledFunction, type BuildOptions } from "../runtime/profile.js";
 
 /**
  * The BlueScript text of one endpoint's program. `imports` are the runtime
  * names it uses (spec §runtime-import); a caller that has already collected them
  * passes them in.
+ *
+ * A profiling build calls each communication function through its wrapper and
+ * ends with `__profReport();` (spec §profiling-build).
  */
 export function emit(
   program: ProjectedProgram,
-  imports: readonly string[] = runtimeImports(program),
+  imports?: readonly string[],
+  options: BuildOptions = {},
 ): string {
-  return new BlueScriptEmitter().emitProgram(program, imports);
+  return new BlueScriptEmitter(options.profile === true).emitProgram(
+    program,
+    imports ?? runtimeImports(program, options),
+  );
 }
 
 class BlueScriptEmitter {
   private readonly lines: string[] = [];
   private indent = 0;
+
+  constructor(private readonly profile: boolean) {}
+
+  /** The function to call for the communication API function `api`. */
+  private comm(api: string): string {
+    return this.profile ? profiledFunction(api) : api;
+  }
 
   emitProgram(program: ProjectedProgram, imports: readonly string[]): string {
     this.lines.length = 0;
@@ -44,6 +59,9 @@ class BlueScriptEmitter {
     }
     for (const stmt of program.body) {
       this.emitStatement(stmt);
+    }
+    if (this.profile) {
+      this.line(`${PROFILE_REPORT}();`);
     }
     const code = this.lines.join("\n") + (this.lines.length > 0 ? "\n" : "");
     const header = runtimeImportLine(imports) + program.imports.map(importLine).join("");
@@ -79,12 +97,12 @@ class BlueScriptEmitter {
         return;
       case "SendStatement":
         this.line(
-          `${sendFunction(stmt.comm)}("${stmt.destinationEndpoint}", "${stmt.tag}", ${this.emitExpr(stmt.value)});`,
+          `${this.comm(sendFunction(stmt.comm))}("${stmt.destinationEndpoint}", "${stmt.tag}", ${this.emitExpr(stmt.value)});`,
         );
         return;
       case "BroadcastStatement":
         this.line(
-          `${broadcastFunction(stmt.comm)}("${stmt.tag}", ${this.emitExpr(stmt.value)});`,
+          `${this.comm(broadcastFunction(stmt.comm))}("${stmt.tag}", ${this.emitExpr(stmt.value)});`,
         );
         return;
       case "IfStatement":
@@ -225,7 +243,7 @@ class BlueScriptEmitter {
           ? this.emitExpr(expr.expression)
           : `(${this.emitExpr(expr.expression)})`;
       case "ReceiveExpression":
-        return `${receiveFunction(expr.comm)}("${expr.sourceEndpoint}", "${expr.tag}")`;
+        return `${this.comm(receiveFunction(expr.comm))}("${expr.sourceEndpoint}", "${expr.tag}")`;
     }
   }
 

@@ -15,8 +15,8 @@ import { buildLineStarts, formatDiagnostic } from "./format.js";
 const USAGE = `Usage:
   choreobs create <name>
   choreobs add-endpoint <name> [-b|--board <${BOARD_NAMES.join("|")}>] [-d|--device-name <device-name>]
-  choreobs compile
-  choreobs run [--stats]`;
+  choreobs compile [--profile]
+  choreobs run [--stats] [--profile]`;
 
 function usage(): void {
   console.error(USAGE);
@@ -143,11 +143,23 @@ function reportWrite(result: WriteResult): boolean {
 }
 
 function runCompile(args: readonly string[]): number {
-  const root = projectRoot("compile", args);
+  let profile = false;
+  const rest: string[] = [];
+  for (const arg of args) {
+    if (arg === "--profile") {
+      profile = true;
+    } else if (arg.startsWith("-")) {
+      console.error(`error: unknown option '${arg}'`);
+      return 1;
+    } else {
+      rest.push(arg);
+    }
+  }
+  const root = projectRoot("compile", rest);
   if (typeof root === "number") {
     return root;
   }
-  const result = writeProject(root);
+  const result = writeProject(root, { profile });
   if (!reportWrite(result)) {
     return 1;
   }
@@ -159,10 +171,13 @@ function runCompile(args: readonly string[]): number {
 
 function runRun(args: readonly string[]): number {
   let stats = false;
+  let profile = false;
   const rest: string[] = [];
   for (const arg of args) {
     if (arg === "--stats") {
       stats = true;
+    } else if (arg === "--profile") {
+      profile = true;
     } else if (arg.startsWith("-")) {
       console.error(`error: unknown option '${arg}'`);
       return 1;
@@ -175,7 +190,7 @@ function runRun(args: readonly string[]): number {
     return root;
   }
   try {
-    const result = runProject(root, systemBscript, reportWrite, { stats });
+    const result = runProject(root, systemBscript, reportWrite, { stats, profile });
     return result.errors.length === 0 ? 0 : 1;
   } catch (e) {
     return report(e);

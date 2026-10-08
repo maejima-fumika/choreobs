@@ -48,6 +48,21 @@ describe("choreobs compile — writing into the workspace (spec §output-files)"
     });
   });
 
+  it("writes a profiling build when asked, and the ordinary build again after it (spec §profiling-build)", () => {
+    withTempDir((root) => {
+      scaffold(root, ALICE_BOB, TRANSFER);
+      const alice = join(root, "workspace/alice/src/index.bs");
+      const runtime = join(root, "workspace/bob/src/__runtime.bs");
+      assert.deepEqual(writeProject(root).errors, []);
+      const plain = [readFileSync(alice, "utf8"), readFileSync(runtime, "utf8")];
+      assert.deepEqual(writeProject(root, { profile: true }).errors, []);
+      assert.match(readFileSync(alice, "utf8"), /__prof_sendInteger\("bob", "__top_0", x\);\n__profReport\(\);\n$/);
+      assert.equal(readFileSync(runtime, "utf8"), runtimeSource("bob", aliceBob.endpoints, false, { profile: true }));
+      assert.deepEqual(writeProject(root).errors, []);
+      assert.deepEqual([readFileSync(alice, "utf8"), readFileSync(runtime, "utf8")], plain);
+    });
+  });
+
   it("leaves bscript's own files as they are", () => {
     withTempDir((root) => {
       scaffold(root, ALICE_BOB, TRANSFER);

@@ -1,6 +1,7 @@
 export {
   compileProject,
   compileSource,
+  type CompileOptions,
   type CompileResult,
   type CompileOutput,
   type CompileDiagnostic,

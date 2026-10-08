@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import {
   compileProject,
   type CompileDiagnostic,
+  type CompileOptions,
   type ProjectCompileResult,
 } from "../driver/index.js";
 import { COMPILER_NAME_PREFIX } from "../runtime/names.js";
@@ -40,10 +41,12 @@ export interface WriteResult {
  * endpoint's program, runtime file and copies of the BlueScript source files
  * into its BlueScript project (spec §output-files). Nothing is written unless the program compiles and the
  * workspace agrees with `choreobs.json` throughout. `bscript` is never run.
+ *
+ * With `options.profile` it writes a profiling build (spec §profiling-build).
  */
-export function writeProject(projectRoot: string): WriteResult {
+export function writeProject(projectRoot: string, options: CompileOptions = {}): WriteResult {
   const root = resolve(projectRoot);
-  const compilation = compileProject(root);
+  const compilation = compileProject(root, options);
   const failed = (errors: readonly CompileDiagnostic[], warnings: readonly string[] = []): WriteResult =>
     ({ compilation, errors, warnings, written: [] });
   if (!compilation.success || compilation.config === undefined) {

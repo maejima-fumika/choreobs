@@ -524,3 +524,44 @@ let w: integer@bob <- a;
     );
   });
 });
+
+describe("communication consistency — profiling build (spec §profiling-build)", () => {
+  const SOURCE = `
+let x: integer@alice = 1@alice;
+let y: integer@bob <- x;
+let ok: boolean@every <- y > 0@bob;
+`;
+
+  function profiledOutputs() {
+    const cleaned = cleanupAll(finalizeAbsentAll(projectSource(SOURCE)));
+    return {
+      cleaned,
+      emitted: cleaned.map((p) => ({ endpoint: p.endpoint, source: emit(p, undefined, { profile: true }) })),
+    };
+  }
+
+  it("reads a wrapper's call as the call it wraps", () => {
+    const { cleaned, emitted } = profiledOutputs();
+    assert.match(emitted[0]!.source, /__prof_sendInteger\("bob", "__top_0", x\);/);
+    const result = verifyCommunicationConsistency(cleaned, emitted);
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  });
+
+  it("still finds a wrapped receive that is missing", () => {
+    const { cleaned, emitted } = profiledOutputs();
+    const bob = emitted[1]!.source.replace(/__prof_receiveInteger\("alice", "__top_0"\)/, "0");
+    const result = verifyCommunicationConsistency(cleaned, [emitted[0]!, { endpoint: "bob", source: bob }]);
+    assert.equal(result.ok, false);
+  });
+
+  it("does not read a longer name that ends in an API function's as a call of it", () => {
+    const result = verifyCommunicationConsistency(
+      [program([], "alice"), program([], "bob")],
+      [
+        { endpoint: "alice", source: `mysendInteger("bob", "__top_0", x);\n` },
+        { endpoint: "bob", source: "" },
+      ],
+    );
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  });
+});

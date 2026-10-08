@@ -17,6 +17,13 @@ import {
   LOGICAL_HELPERS,
   nestNothing,
 } from "./core.js";
+import { broadcastFunction, receiveFunction, sendFunction } from "../emit/comm.js";
+import {
+  PROFILE_EXPORTS,
+  PROFILE_REPORT,
+  profiledFunction,
+  type BuildOptions,
+} from "./profile.js";
 
 /**
  * Everything a generated file may import from the runtime file, in import
@@ -41,9 +48,17 @@ const DYN_EXPORTS: ReadonlySet<string> = new Set(DYN_RUNTIME_EXPORTS);
  * Empty exactly when the program uses none of them, and then nothing is
  * imported, though the runtime file is written all the same
  * (spec §runtime-files).
+ *
+ * A profiling build then adds the wrapper of each communication function the
+ * program calls and `__profReport`, which every profiled program calls, in
+ * their own order (spec §profiling-build).
  */
-export function runtimeImports(program: ProjectedProgram): readonly string[] {
+export function runtimeImports(
+  program: ProjectedProgram,
+  options: BuildOptions = {},
+): readonly string[] {
   const used = new Set<string>();
+  const profile = options.profile === true;
 
   const type = (t: ProjectedType): void => {
     if (t.kind === "PresentType" && t.base === DYN_VALUE_TYPE) {
@@ -63,6 +78,9 @@ export function runtimeImports(program: ProjectedProgram): readonly string[] {
     if (expr.kind === "IdentifierExpression" && isRuntimeConstant(expr.name)) {
       used.add(expr.name);
     }
+    if (profile && expr.kind === "ReceiveExpression") {
+      used.add(profiledFunction(receiveFunction(expr.comm)));
+    }
     if (expr.kind === "NothingExpression") {
       // The helpers the emitter will spell it as (spec §nothing-code-generation).
       nestNothing<unknown>(expr.parts, (helper) => used.add(helper));
@@ -78,6 +96,12 @@ export function runtimeImports(program: ProjectedProgram): readonly string[] {
     }
     if (stmt.kind === "ForStatement" && stmt.init?.kind === "ForLetInit") {
       type(stmt.init.type);
+    }
+    if (profile && stmt.kind === "SendStatement") {
+      used.add(profiledFunction(sendFunction(stmt.comm)));
+    }
+    if (profile && stmt.kind === "BroadcastStatement") {
+      used.add(profiledFunction(broadcastFunction(stmt.comm)));
     }
     mapStatementParts(stmt, {
       expression,
@@ -96,7 +120,14 @@ export function runtimeImports(program: ProjectedProgram): readonly string[] {
   program.body.forEach(statement);
 
   const constants = [...used].filter(isRuntimeConstant).sort();
-  return [...RUNTIME_EXPORTS.filter((name) => used.has(name)), ...constants];
+  const imports = [...RUNTIME_EXPORTS.filter((name) => used.has(name)), ...constants];
+  if (!profile) {
+    return imports;
+  }
+  // A profiling build's names follow the ordinary ones, so that the ordinary
+  // list is always where the profiled one starts (spec §profiling-build).
+  used.add(PROFILE_REPORT);
+  return [...imports, ...PROFILE_EXPORTS.filter((name) => used.has(name))];
 }
 
 /**

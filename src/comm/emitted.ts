@@ -2,6 +2,7 @@ import type { CommKind } from "../ir/projected.js";
 import type { CommConsistencyResult } from "./consistency.js";
 import { DYN_TRANSFER } from "../runtime/dyn.js";
 import { ALL_COMM_KINDS } from "../runtime/names.js";
+import { PROFILE_PREFIX } from "../runtime/profile.js";
 import { broadcastFunction, receiveFunction, sendFunction } from "../emit/comm.js";
 import { checkCommunicationConsistency } from "./consistency.js";
 import type { ProjectedProgram, ProjectedStatement } from "../ir/projected.js";
@@ -38,9 +39,18 @@ function kindOf(names: ReadonlyMap<string, CommKind>, name: string): CommKind {
   return comm;
 }
 
-const SEND_RE = new RegExp(`${anyOf(SEND)}\\("([^"]+)", "([^"]+)",`, "g");
-const RECEIVE_RE = new RegExp(`${anyOf(RECEIVE)}\\("([^"]+)", "([^"]+)"\\)`, "g");
-const BROADCAST_RE = new RegExp(`${anyOf(BROADCAST)}\\("([^"]+)",`, "g");
+/**
+ * A call of one of `names`, or of its wrapper in a profiling build, which
+ * stands for the call it wraps (spec §profiling-build). The name must start
+ * where an identifier does, so that no longer name ending in it is read as one.
+ */
+function callee(names: ReadonlyMap<string, CommKind>): string {
+  return `(?<![A-Za-z0-9_])(?:${PROFILE_PREFIX})?${anyOf(names)}`;
+}
+
+const SEND_RE = new RegExp(`${callee(SEND)}\\("([^"]+)", "([^"]+)",`, "g");
+const RECEIVE_RE = new RegExp(`${callee(RECEIVE)}\\("([^"]+)", "([^"]+)"\\)`, "g");
+const BROADCAST_RE = new RegExp(`${callee(BROADCAST)}\\("([^"]+)",`, "g");
 /**
  * `__dynTransfer("tag", __kind_k, __loc_L, …)` (spec §dynamic-transfer): the
  * kind and the destination are constants of the runtime file

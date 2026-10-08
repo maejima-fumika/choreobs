@@ -230,6 +230,9 @@ A runtime file has two parts, in this order:
 2. the **dynamic-location runtime** (spec [§14.5](#dyn-runtime)). It is there only for a program
    that uses `dyn` — whether written or produced by an omission (spec [§8.2](#omitted-locations)).
 
+A profiling build puts a third part before them, and counts events in the other
+two (spec [§13.17](#profiling-build)).
+
 * A runtime file is written for **every** endpoint on every compilation, whether
   or not the endpoint's program imports from it. BlueScript compiles only the
   files a program imports, so an unused runtime file costs nothing, and a
@@ -248,7 +251,8 @@ A runtime file has two parts, in this order:
   they agree; reordering the endpoints renumbers them all at once.
 * Every top-level declaration of the file is a function, a class, or an
   `integer` constant. None holds a value the garbage collector traces
-  (spec [§14.6](#location-and-kind-codes)).
+  (spec [§14.6](#location-and-kind-codes)). A profiling build adds its counters, `integer` and
+  `float` variables, which hold no traced value either (spec [§13.17](#profiling-build)).
 * Every function, class and constant the generated code uses is exported, and
   imported by name (spec [§13.10](#runtime-import)).
 * Every name in the file begins with `__`, the internal helpers included
@@ -314,13 +318,15 @@ device name `choreobs.json` gives, asks nothing, and leaves `choreobs.json` as
 it is. A `-b` or `-d` that disagrees with `choreobs.json` is an error. This is
 how a workspace that was never committed is made again, one endpoint at a time.
 
-#### `choreobs compile` <a id="choreobs-compile"></a>
+#### `choreobs compile [--profile]` <a id="choreobs-compile"></a>
 
 Compiles the project's `src/index.cbs` and writes the output into the
 workspace (spec [§2.3](#output-files)), printing the path of each file it writes, the copies of
 the BlueScript source files included (spec [§2.5](#bluescript-source-files)). It never runs `bscript`.
 
-#### `choreobs run [--stats]` <a id="choreobs-run-stats"></a>
+* With `--profile`, what it writes is a profiling build (spec [§13.17](#profiling-build)).
+
+#### `choreobs run [--stats] [--profile]` <a id="choreobs-run-stats"></a>
 
 Compiles and writes the project as `choreobs compile` does, without printing
 the paths, and then runs every endpoint's program together:
@@ -330,6 +336,9 @@ endpoint in `endpoints`.
 * With `--stats`, it runs `bscript workspace run --stats <endpoint>…`
   instead, which prints the execution time and the memory statistics of each
   endpoint when it finishes.
+* With `--profile`, what it writes and runs is a profiling build
+  (spec [§13.17](#profiling-build)): each endpoint prints a report when its program ends. The
+  two options may be given together, in either order.
 
 * Naming the endpoints keeps a project registered in the workspace that is no
   endpoint's from running (spec [§2.3](#output-files)).
@@ -7283,6 +7292,8 @@ import { __nothing2, __and, __copyArray, __DynVal, __dynUnbound, __inject, __cas
   appending `.bs` itself, so `"./__runtime.bs"` would look for
   `__runtime.bs.bs`.
 * A program that uses nothing from the runtime file has no runtime `import`.
+* In a profiling build, the names it adds follow the constants
+  (spec [§13.17](#profiling-build)).
 
 The examples in this specification leave the runtime `import` line out.
 
@@ -7653,6 +7664,116 @@ function ...
   declarations import from it.
 * Renaming with `as` needs a BlueScript that supports it (spec [§17.8](#unverified-bluescript-assumptions)).
 
+### 13.17 Profiling Build <a id="profiling-build"></a>
+
+A **profiling build** is the output instrumented to show where an endpoint's
+time goes: how often and for how long it communicates, and how much work the
+dynamic-location runtime does. It is made only when asked for, with
+`choreobs compile --profile` or `choreobs run --profile` (spec [§2.4](#commands)). Without it,
+every file is exactly what the rest of this specification describes.
+
+It changes the text of the output in three ways and no other. The programs are
+the same ones: a profiling build sends and prints what the ordinary build does,
+and then the report.
+
+1. Every call of a communication function (spec [§13.14](#communication-api)) calls its wrapper
+   instead, named with the prefix `__prof_`: `sendInteger(...)` becomes
+   `__prof_sendInteger(...)`. That holds in the endpoint programs and in the
+   runtime's `__sendAny`, `__receiveAny` and `__broadcastAny`
+   (spec [§14.14](#dyn-transfer-runtime)), so static and dynamic transfers are counted alike.
+2. Every endpoint's program ends with `__profReport();`, which prints the
+   report. An endpoint with no code of its own gets a program of its runtime
+   `import` and that call.
+3. The runtime file gets a third part, first in the file: the counters, the
+   wrappers and `__profReport`. The other two parts count events where they
+   happen, in statements that are whole lines, and gain no other lines but one
+   function, `__profOp`, after the location functions (spec [§14.10](#location-functions)).
+
+```ts
+export function __prof_sendInteger(to: string, tag: string, v: integer): void {
+  const t0 = performanceNow();
+  sendInteger(to, tag, v);
+  __prof_send_ms = __prof_send_ms + (performanceNow() - t0);
+  __prof_send_n = __prof_send_n + 1;
+}
+
+export function __prof_receiveInteger(from: string, tag: string): integer {
+  const t0 = performanceNow();
+  const v: integer = receiveInteger(from, tag);
+  __prof_receive_ms = __prof_receive_ms + (performanceNow() - t0);
+  __prof_receive_n = __prof_receive_n + 1;
+  return v;
+}
+```
+
+* Each kind has a send, a receive and a broadcast wrapper of this form. A
+  broadcast wrapper takes `(tag: string, v: T)` and adds to `broadcast_ms` and
+  `broadcast_n`; an array is passed as an `any[]`.
+* The program imports the wrappers it calls and `__profReport` after its other
+  runtime imports (spec [§13.10](#runtime-import)): each kind's send and receive wrappers, kind by
+  kind in the order of spec [§13.14](#communication-api), then the broadcast wrappers in the same
+  order, then `__profReport`. The ordinary build's list is therefore always
+  where the profiling build's begins.
+* The compiler's own check that every message has its partner reads a call of
+  a wrapper as the call it wraps.
+* Each counter is a module-level `let` of its type, set to `0` or `0.0` and not
+  exported. `__profOp(loc)` adds one to `op_here`, `op_every`, `op_unbound` or
+  `op_skip` by the location a dynamic operation's operands were unified to,
+  comparing the codes itself, so that the counts of `__isHere`, `__isEvery`
+  and `__holdsPayload` are those of the operation alone.
+
+`__profReport` prints with `print`, one value per line: the string
+`__choreobs_profile`, the format version `1`, the number of counters, `33`,
+and then the counters in the order of this table.
+
+| Counter | Type | What it counts |
+|---|---|---|
+| `send_n` | `integer` | calls of a send function |
+| `send_ms` | `float` | milliseconds spent in send functions |
+| `receive_n` | `integer` | calls of a receive function |
+| `receive_ms` | `float` | milliseconds spent in receive functions, waiting for the message included |
+| `broadcast_n` | `integer` | calls of a broadcast function |
+| `broadcast_ms` | `float` | milliseconds spent in broadcast functions |
+| `dynval_new` | `integer` | `__DynVal` objects made |
+| `locvar_new` | `integer` | `__LocVar` objects made |
+| `find` | `integer` | calls of `__find` |
+| `unify` | `integer` | calls of `__unify` |
+| `bind` | `integer` | calls of `__bind` |
+| `root_steps` | `integer` | parent links `__root` follows |
+| `holds` | `integer` | calls of `__holdsPayload` |
+| `is_here` | `integer` | calls of `__isHere` |
+| `is_every` | `integer` | calls of `__isEvery` |
+| `kind_dispatch` | `integer` | calls of `__sendAny`, `__receiveAny`, `__broadcastAny` and `__copyPayload`, each of which dispatches on a kind |
+| `unbound` | `integer` | calls of `__dynUnbound` |
+| `inject` | `integer` | calls of `__inject` |
+| `cast` | `integer` | calls of `__cast` |
+| `transfer` | `integer` | calls of `__dynTransfer` |
+| `transfer_broadcast` | `integer` | dynamic transfers this endpoint broadcast |
+| `transfer_send` | `integer` | dynamic transfers this endpoint sent |
+| `transfer_none` | `integer` | dynamic transfers whose result this endpoint does not hold |
+| `transfer_copy` | `integer` | dynamic transfers whose result this endpoint copied from its own payload |
+| `transfer_receive` | `integer` | dynamic transfers whose result this endpoint received |
+| `copy_array` | `integer` | calls of `__copyArray`, by a static local copy or a dynamic transfer |
+| `op_arith` | `integer` | calls of a dynamic operator or conversion |
+| `op_array` | `integer` | calls of `__dynArrayGet`, `__dynArraySet`, `__dynArrayPush` and `__dynArrayLength` |
+| `op_print` | `integer` | calls of `__dynPrint` |
+| `op_here` | `integer` | dynamic operations at this endpoint's own location |
+| `op_every` | `integer` | dynamic operations at `every` |
+| `op_unbound` | `integer` | dynamic operations at a location still unbound |
+| `op_skip` | `integer` | dynamic operations at another endpoint, whose payload this endpoint does not compute |
+
+* A time is read with BlueScript's `performanceNow()` and includes the wrapper's
+  own cost. A profiling build therefore runs more slowly than the ordinary
+  build: time the ordinary build, and use a profiling build for the counts.
+* The counts of one endpoint satisfy `op_arith + op_array + op_print =
+  op_here + op_every + op_unbound + op_skip` and `transfer = transfer_none +
+  transfer_copy + transfer_receive`. Over all the endpoints of a run,
+  `receive_n` is `send_n` plus `broadcast_n` times one less than the number of
+  endpoints, as long as every endpoint is still running when a broadcast is
+  made.
+* A program stopped by a runtime error, a location error included
+  (spec [§14.8](#location-errors)), prints no report.
+
 ***
 
 ## 14. Runtime Support Functions <a id="runtime-support-functions"></a>
@@ -7671,7 +7792,8 @@ The generated code relies on two groups of functions:
     ([§14.5](#dyn-runtime)–[§14.16](#dyn-print)).
 
 The `ts` blocks of this chapter are the runtime file itself, in the order they
-appear in it.
+appear in it — that of an ordinary build. A profiling build adds to it
+(spec [§13.17](#profiling-build)).
 
 ### 14.1 `nothing` <a id="nothing"></a>
 
@@ -10761,3 +10883,8 @@ where it does not hold.
     its compiler orders the modules' entry points. A module whose initializer
     fails stops its endpoint before the choreography begins, and the other
     endpoints wait for messages that never come.
+13. **The profiling build** (spec [§13.17](#profiling-build)): a runtime file that calls
+    `performanceNow()` and assigns its own module-level `let` variables, from
+    functions and from constructors, and the program that imports it. It works
+    on `host`; `esp32` is unconfirmed. A time is a `float` of milliseconds, so
+    a sum loses precision once it reaches hours.

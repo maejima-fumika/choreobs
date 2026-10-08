@@ -279,6 +279,21 @@ describe("choreobs run (spec §commands)", () => {
     });
   });
 
+  it("writes a profiling build with --profile, which adds nothing to bscript's arguments", () => {
+    withTempDir((root) => {
+      scaffold(root, [{ name: "alice", board: "host" }, { name: "bob", board: "host" }], TRANSFER);
+      const bscript = new FakeBscript();
+      runProject(root, bscript, undefined, { stats: true, profile: true });
+      assert.match(readFileSync(join(root, "workspace/alice/src/index.bs"), "utf8"), /__prof_sendInteger[\s\S]*__profReport\(\);\n$/);
+      runProject(root, bscript, undefined, { profile: false });
+      assert.doesNotMatch(readFileSync(join(root, "workspace/alice/src/index.bs"), "utf8"), /__prof/);
+      assert.deepEqual(bscript.commands(root), [
+        "workspace$ bscript workspace run --stats alice bob",
+        "workspace$ bscript workspace run alice bob",
+      ]);
+    });
+  });
+
   it("leaves out a registered project that is no endpoint's", () => {
     withTempDir((root) => {
       const setup = scaffold(root, [{ name: "alice", board: "host" }, { name: "bob", board: "host" }], TRANSFER);

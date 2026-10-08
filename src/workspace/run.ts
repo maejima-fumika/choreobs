@@ -8,6 +8,8 @@ import { requireBscript, type BscriptRunner } from "./runner.js";
 export interface RunOptions {
   /** Passes `--stats` to `bscript workspace run`. */
   stats?: boolean;
+  /** Writes a profiling build (spec §profiling-build) before running it. */
+  profile?: boolean;
 }
 
 /**
@@ -17,7 +19,9 @@ export interface RunOptions {
  * that is no endpoint's stays out.
  *
  * With `stats`, `bscript` is given `--stats`, and prints the execution time
- * and the memory statistics of each endpoint when it finishes.
+ * and the memory statistics of each endpoint when it finishes. With
+ * `profile`, what is written and run is a profiling build, whose endpoints
+ * each print a report as they end (spec §profiling-build).
  *
  * `written` sees the result of writing before anything runs, so that its
  * warnings come first. When writing fails nothing is run, and the result is
@@ -33,7 +37,7 @@ export function runProject(
 ): WriteResult {
   const root = resolve(projectRoot);
   requireBscript(runner);
-  const result = writeProject(root);
+  const result = writeProject(root, { profile: options.profile });
   written(result);
   if (result.errors.length > 0) {
     return result;

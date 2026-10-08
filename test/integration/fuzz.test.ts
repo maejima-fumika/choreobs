@@ -4,6 +4,7 @@ import { compileSource } from "../../src/driver/index.js";
 import { generate } from "../../scripts/fuzz/generator.js";
 import { inspectOutputs } from "../../scripts/fuzz/inspect.js";
 import { metamorphicProblem } from "../../scripts/fuzz/metamorphic.js";
+import { unprofileProgram, unprofileRuntime } from "../support/profile.js";
 
 /**
  * A small, fixed slice of the fuzz corpus (see `scripts/fuzz/run.ts`).
@@ -69,6 +70,22 @@ describe("generated programs compile (fuzz corpus)", () => {
           }),
         );
         assert.equal(problem, undefined, `seed ${seed}: ${problem}\n\n${program.source}`);
+        // The profiling build is the same output plus its own additions
+        // (spec §profiling-build).
+        const profiled = compileSource(
+          program.source,
+          "index.cbs",
+          { endpoints: config.endpoints, implicitDyn: program.implicitDyn },
+          undefined,
+          { profile: true },
+        );
+        assert.equal(inspectOutputs(profiled, config.endpoints), undefined, `seed ${seed} (profiled)`);
+        profiled.outputs.forEach((out, j) => {
+          assert.equal(unprofileProgram(out.source), result.outputs[j]!.source, `seed ${seed}: ${out.endpoint} (profiled)`);
+        });
+        profiled.runtimeOutputs.forEach((out, j) => {
+          assert.equal(unprofileRuntime(out.source), result.runtimeOutputs[j]!.source, `seed ${seed}: ${out.endpoint} runtime (profiled)`);
+        });
       }
     });
   }
