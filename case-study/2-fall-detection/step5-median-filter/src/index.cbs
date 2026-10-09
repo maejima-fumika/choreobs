@@ -1,0 +1,82 @@
+// Fall detection, step 5: a median filter drops one-sample spikes.
+//
+// Changes from step 4:
+// * the host keeps a window of magnitudes and tests their median of three
+//   instead of the latest one.
+//
+// The filter sits at the host, after the band and the phone are merged, so
+// one copy serves both. The bump and the jolt are gone; the fall is reported
+// at tick 11, one tick late.
+
+import@band { readAxis as bandAxis, worn } from "./hardware/imu@band";
+import@phone { readAxis as phoneAxis } from "./hardware/imu@phone";
+
+// A local function is at one endpoint, so the band and the phone each have
+// their own copy of the same computation.
+function bandMagnitude2@band(tick: integer): float {
+    let s: float[] = [bandAxis(tick, 0), bandAxis(tick, 1), bandAxis(tick, 2)];
+    return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+}
+
+function phoneMagnitude2@phone(tick: integer): float {
+    let s: float[] = [phoneAxis(tick, 0), phoneAxis(tick, 1), phoneAxis(tick, 2)];
+    return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+}
+
+function isFall@host(m2: float): boolean {
+    return m2 > 9.0;
+}
+
+function newWindow@host(): float[] {
+    let window: float[] = [];
+    return window;
+}
+
+// The median of the last three samples. A spike one sample long never gets
+// through; one two samples long does, a tick late.
+function median3@host(window: float[], m2: float): float {
+    window.push(m2);
+    let n = window.length;
+    if (n < 3) {
+        return m2;
+    }
+    let lo = window[n - 3];
+    let hi = window[n - 2];
+    if (lo > hi) {
+        lo = window[n - 2];
+        hi = window[n - 3];
+    }
+    let c = window[n - 1];
+    if (c < lo) {
+        return lo;
+    }
+    if (c > hi) {
+        return hi;
+    }
+    return c;
+}
+
+function report@host(tick: integer, fall: boolean): void {
+    if (fall) {
+        print(tick);
+    }
+}
+
+let window = newWindow();
+
+for (let t = 0; t < 12; t = t + 1) {
+    let tick: integer@band <- t;
+    let onWrist: boolean@every <- worn(tick);
+
+    let m2: float@dyn = 0.0@dyn;
+    if (onWrist) {
+        m2 = bandMagnitude2(tick);
+    } else {
+        let phoneTick: integer@phone <- t;
+        m2 = phoneMagnitude2(phoneTick);
+    }
+
+    let atHost: float@host <- m2;
+    let now: integer@host <- t;
+    report(now, isFall(median3(window, atHost)));
+}

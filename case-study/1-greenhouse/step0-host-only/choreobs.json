@@ -1,0 +1,6 @@
+{
+  "name": "greenhouse",
+  "endpoints": [
+    { "name": "host", "board": "host" }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "fall-detection",
+  "endpoints": [
+    { "name": "host", "board": "host" }
+  ]
+}

@@ -1,0 +1,39 @@
+// Greenhouse irrigation, step 1: the reading moves to a sensor node.
+//
+// Changes from step 0:
+// * a `soil` endpoint, and `readMoisture` is a local function there (`@soil`);
+// * the loop counter is sent to `soil` before it is passed in.
+//
+// The reading is still the mock. Nothing else is located yet, and the program
+// runs as it is, but two things are worth noticing:
+//
+// * Passing `t` straight to `readMoisture(t)` compiles, and fails at run time
+//   on the second iteration: the call binds the `dyn` counter to `soil`, and
+//   the loop condition, which must be at `every`, then is not
+//   (`location error: every and soil`). The transfer `tick <- t` copies the
+//   counter instead of binding it.
+// * `tooDry` and `setPump` are not located, so they follow their argument to
+//   `soil`: the pump prints at `[soil]`, not at the host. Step 2 fixes that.
+
+function readMoisture@soil(tick: integer): float {
+    // Mock: the soil dries out by 2.5 points per tick until tick 4, and
+    // recovers as fast once it has been watered.
+    if (tick <= 4) {
+        return 40.0 - 2.5 * (tick as float);
+    }
+    return 30.0 + 2.5 * ((tick - 4) as float);
+}
+
+function tooDry(moisture: float): boolean {
+    return moisture < 31.0;
+}
+
+function setPump(on: boolean): void {
+    print(on);
+}
+
+for (let t = 0; t < 10; t = t + 1) {
+    let tick: integer@soil <- t;
+    let m = readMoisture(tick);
+    setPump(tooDry(m));
+}

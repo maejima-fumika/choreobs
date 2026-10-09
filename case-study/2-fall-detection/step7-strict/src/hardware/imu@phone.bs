@@ -1,0 +1,18 @@
+// Stands in for the phone's accelerometer. It replays a recorded trace, one
+// sample per tick, in g. Copied to the phone endpoint's project only.
+//
+// The phone lies on a table until tick 5. At tick 6 the wearer puts it in a
+// pocket, a single jolt, and at ticks 10 and 11 it falls with them.
+let xs: float[] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.3, 0.2, 0.3, 2.5, 2.0];
+let ys: float[] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.2, 0.3, 0.2, 1.5, 2.0];
+let zs: float[] = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.8, 1.1, 1.0, 1.1, 2.0, 1.8];
+
+export function readAxis(tick: integer, axis: integer): float {
+  if (axis === 0) {
+    return xs[tick];
+  }
+  if (axis === 1) {
+    return ys[tick];
+  }
+  return zs[tick];
+}

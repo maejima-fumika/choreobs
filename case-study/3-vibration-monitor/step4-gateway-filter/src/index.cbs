@@ -1,0 +1,87 @@
+// Vibration monitoring, step 4: a gateway filters the readings.
+//
+// Changes from step 3:
+// * a `gateway` endpoint, which keeps a window per sensor, takes the median
+//   of the last three readings of each, and passes the worst on to the host;
+// * the readings go to the gateway instead of the host, and `worst` moves
+//   there with them. The sensors, the decision and the stop do not change.
+//
+// The knock is gone, and the machine stops for the worn gearbox, at tick 13:
+// a tick after its vibration went over the limit, which is what the median
+// costs.
+
+import@vib1 { readVibration as readVib1 } from "./hardware/accel@vib1";
+import@vib2 { readVibration as readVib2 } from "./hardware/accel@vib2";
+import@vib3 { readVibration as readVib3 } from "./hardware/accel@vib3";
+
+function newWindow@gateway(): float[] {
+    let window: float[] = [];
+    return window;
+}
+
+// The median of the last three readings. A spike one reading long never
+// gets through; a trend does, a tick late.
+function median3@gateway(window: float[], v: float): float {
+    window.push(v);
+    let n = window.length;
+    if (n < 3) {
+        return v;
+    }
+    let lo = window[n - 3];
+    let hi = window[n - 2];
+    if (lo > hi) {
+        lo = window[n - 2];
+        hi = window[n - 3];
+    }
+    let c = window[n - 1];
+    if (c < lo) {
+        return lo;
+    }
+    if (c > hi) {
+        return hi;
+    }
+    return c;
+}
+
+function worst@gateway(a: float, b: float, c: float): float {
+    let m = a;
+    if (b > m) {
+        m = b;
+    }
+    if (c > m) {
+        m = c;
+    }
+    return m;
+}
+
+function tooHigh@host(v: float): boolean {
+    return v > 4.5;
+}
+
+function stopMachine@host(tick: integer): void {
+    print(tick);
+}
+
+let w1 = newWindow();
+let w2 = newWindow();
+let w3 = newWindow();
+
+let running = true;
+let t = 0;
+while (running && t < 20) {
+    let tick1: integer@vib1 <- t;
+    let tick2: integer@vib2 <- t;
+    let tick3: integer@vib3 <- t;
+    let v1: float@gateway <- readVib1(tick1);
+    let v2: float@gateway <- readVib2(tick2);
+    let v3: float@gateway <- readVib3(tick3);
+    let filtered = worst(median3(w1, v1), median3(w2, v2), median3(w3, v3));
+    let v: float@host <- filtered;
+    let alarm: boolean@every <- tooHigh(v);
+    if (alarm) {
+        let when: integer@host <- t;
+        stopMachine(when);
+        running = false;
+    }
+    t = t + 1;
+}

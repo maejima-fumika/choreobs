@@ -1,0 +1,65 @@
+// Greenhouse irrigation, step 6: strict mode.
+//
+// Changes from step 5:
+// * `"implicitDyn": false` in choreobs.json (spec §strict-mode), so a location
+//   left out is an error instead of `dyn`;
+// * the only locations it reports are the loop counter's literals, which
+//   become `@every`.
+//
+// Everything else was located on the way. The one `dyn` left is `reading`,
+// which is written, and stays: which probe it comes from is a run-time
+// decision.
+
+import@soil { readMoisture } from "./hardware/soil@soil";
+import@backup { readMoisture as readBackup } from "./hardware/backup@backup";
+
+function plausible@soil(moisture: float): boolean {
+    return moisture >= 0.0 && moisture <= 100.0;
+}
+
+function newWindow@filter(): float[] {
+    let window: float[] = [];
+    return window;
+}
+
+function smooth@filter(window: float[], moisture: float): float {
+    window.push(moisture);
+    let k = 3;
+    let from = window.length - k;
+    if (from < 0) {
+        from = 0;
+    }
+    let sum = 0.0;
+    for (let i = from; i < window.length; i = i + 1) {
+        sum = sum + window[i];
+    }
+    return sum / ((window.length - from) as float);
+}
+
+function tooDry@host(moisture: float): boolean {
+    return moisture < 31.0;
+}
+
+function setPump@host(on: boolean): void {
+    print(on);
+}
+
+let window = newWindow();
+
+for (let t = 0@every; t < 10@every; t = t + 1@every) {
+    let tick: integer@soil <- t;
+    let primary = readMoisture(tick);
+    let ok: boolean@every <- plausible(primary);
+
+    let reading: float@dyn = 0.0@dyn;
+    if (ok) {
+        reading = primary;
+    } else {
+        let backupTick: integer@backup <- t;
+        reading = readBackup(backupTick);
+    }
+
+    let raw: float@filter <- reading;
+    let m: float@host <- smooth(window, raw);
+    setPump(tooDry(m));
+}

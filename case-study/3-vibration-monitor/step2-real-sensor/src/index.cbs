@@ -1,0 +1,34 @@
+// Vibration monitoring, step 2: the mock becomes the real accelerometer.
+//
+// Changes from step 1:
+// * the mock `readVibration` is deleted, and the accelerometer's driver is
+//   imported at `vib1` in its place (spec §import-declarations).
+//
+// The mock grew steadily, to exercise the stop. The real drive-end bearing is
+// healthy, and the recorded trace shows what the mock hid: a tool dropped on
+// the housing at tick 4 gives a single reading over the limit, and stops the
+// machine for nothing. Step 4 filters it out.
+
+import@vib1 { readVibration } from "./hardware/accel@vib1";
+
+function tooHigh@host(v: float): boolean {
+    return v > 4.5;
+}
+
+function stopMachine@host(tick: integer): void {
+    print(tick);
+}
+
+let running = true;
+let t = 0;
+while (running && t < 20) {
+    let tick: integer@vib1 <- t;
+    let v: float@host <- readVibration(tick);
+    let alarm: boolean@every <- tooHigh(v);
+    if (alarm) {
+        let when: integer@host <- t;
+        stopMachine(when);
+        running = false;
+    }
+    t = t + 1;
+}

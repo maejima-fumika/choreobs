@@ -1,0 +1,46 @@
+// Fall detection, step 2: the band computes the magnitude itself.
+//
+// Changes from step 1:
+// * `magnitude2` moves from `@host` to `@band`;
+// * the transfer carries its result, one float, instead of the sample, an
+//   array of three (`m2 <- magnitude2(readAccel(tick))`).
+//
+// Where a computation runs is one annotation, and the type checker points at
+// the transfer that has to change with it.
+
+function readAccel@band(tick: integer): float[] {
+    // Mock: x, y and z in g. At rest, 1 g points straight down.
+    let s: float[] = [0.0, 0.0, 1.0];
+    if (tick === 3) {
+        s = [2.2, 0.3, 2.2];
+    }
+    if (tick === 10) {
+        s = [2.5, 1.5, 2.0];
+    }
+    if (tick === 11) {
+        s = [2.0, 2.0, 1.8];
+    }
+    return s;
+}
+
+// The squared magnitude, which saves a square root.
+function magnitude2@band(s: float[]): float {
+    return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+}
+
+function isFall@host(m2: float): boolean {
+    return m2 > 9.0;
+}
+
+function report@host(tick: integer, fall: boolean): void {
+    if (fall) {
+        print(tick);
+    }
+}
+
+for (let t = 0; t < 12; t = t + 1) {
+    let tick: integer@band <- t;
+    let m2: float@host <- magnitude2(readAccel(tick));
+    let now: integer@host <- t;
+    report(now, isFall(m2));
+}

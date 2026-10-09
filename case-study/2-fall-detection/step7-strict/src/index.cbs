@@ -1,0 +1,85 @@
+// Fall detection, step 7: strict mode.
+//
+// Changes from step 6:
+// * `"implicitDyn": false` in choreobs.json (spec §strict-mode);
+// * the loop counter's literals become `@every`, the only locations still
+//   left out.
+//
+// The one `dyn` left is `m2`, which is written: whether it comes from the band
+// or the phone is a run-time decision.
+
+import@band { readAxis as bandAxis, worn } from "./hardware/imu@band";
+import@phone { readAxis as phoneAxis } from "./hardware/imu@phone";
+import@phone { vibrate } from "./hardware/vibrator@phone";
+
+// A local function is at one endpoint, so the band and the phone each have
+// their own copy of the same computation.
+function bandMagnitude2@band(tick: integer): float {
+    let s: float[] = [bandAxis(tick, 0), bandAxis(tick, 1), bandAxis(tick, 2)];
+    return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+}
+
+function phoneMagnitude2@phone(tick: integer): float {
+    let s: float[] = [phoneAxis(tick, 0), phoneAxis(tick, 1), phoneAxis(tick, 2)];
+    return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+}
+
+function isFall@host(m2: float): boolean {
+    return m2 > 9.0;
+}
+
+function newWindow@host(): float[] {
+    let window: float[] = [];
+    return window;
+}
+
+// The median of the last three samples. A spike one sample long never gets
+// through; one two samples long does, a tick late.
+function median3@host(window: float[], m2: float): float {
+    window.push(m2);
+    let n = window.length;
+    if (n < 3) {
+        return m2;
+    }
+    let lo = window[n - 3];
+    let hi = window[n - 2];
+    if (lo > hi) {
+        lo = window[n - 2];
+        hi = window[n - 3];
+    }
+    let c = window[n - 1];
+    if (c < lo) {
+        return lo;
+    }
+    if (c > hi) {
+        return hi;
+    }
+    return c;
+}
+
+function notify@caregiver(tick: integer): void {
+    print(tick);
+}
+
+let window = newWindow();
+
+for (let t = 0@every; t < 12@every; t = t + 1@every) {
+    let tick: integer@band <- t;
+    let onWrist: boolean@every <- worn(tick);
+
+    let m2: float@dyn = 0.0@dyn;
+    if (onWrist) {
+        m2 = bandMagnitude2(tick);
+    } else {
+        let phoneTick: integer@phone <- t;
+        m2 = phoneMagnitude2(phoneTick);
+    }
+
+    let atHost: float@host <- m2;
+    let fall: boolean@every <- isFall(median3(window, atHost));
+    if (fall) {
+        let when: integer@caregiver <- t;
+        notify(when);
+        vibrate();
+    }
+}

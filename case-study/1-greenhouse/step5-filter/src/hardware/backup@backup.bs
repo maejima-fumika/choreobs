@@ -1,0 +1,8 @@
+// Stands in for the backup probe on the `backup` node, a cheaper resistive
+// one. It replays a recorded trace of the same soil, one reading per tick.
+// Copied to the backup endpoint's project only.
+let trace: float[] = [41.5, 38.0, 36.5, 32.0, 30.5, 33.5, 34.0, 38.5, 39.5, 43.0];
+
+export function readMoisture(tick: integer): float {
+  return trace[tick];
+}

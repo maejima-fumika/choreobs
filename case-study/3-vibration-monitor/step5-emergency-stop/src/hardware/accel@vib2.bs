@@ -1,0 +1,10 @@
+// Stands in for the accelerometer on the motor's fan-end bearing, on the
+// `vib2` node. It replays a recorded trace of vibration velocity in mm/s, one
+// reading per tick. Copied to the vib2 endpoint's project only.
+//
+// The bearing is healthy.
+let trace: float[] = [2.0, 2.1, 1.9, 2.0, 2.0, 2.1, 1.9, 2.0, 2.0, 2.1, 1.9, 2.0, 2.0, 2.1, 1.9, 2.0, 2.0, 2.1, 1.9, 2.0];
+
+export function readVibration(tick: integer): float {
+  return trace[tick];
+}

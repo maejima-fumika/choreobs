@@ -1,0 +1,43 @@
+// Greenhouse irrigation, step 4: a backup probe takes over when the main one
+// breaks.
+//
+// Changes from step 3:
+// * a `backup` endpoint with a probe of its own, imported under another name;
+// * `plausible` at `soil` checks each reading, and its verdict is sent to
+//   `every`, so that every endpoint takes the same branch (spec
+//   §if-condition-typing);
+// * `reading` is written `@dyn`: which probe it comes from is decided at run
+//   time, and the transfer to the host sends it from wherever it is
+//   (spec §dyn, §dynamic-transfer).
+
+import@soil { readMoisture } from "./hardware/soil@soil";
+import@backup { readMoisture as readBackup } from "./hardware/backup@backup";
+
+function plausible@soil(moisture: float): boolean {
+    return moisture >= 0.0 && moisture <= 100.0;
+}
+
+function tooDry@host(moisture: float): boolean {
+    return moisture < 31.0;
+}
+
+function setPump@host(on: boolean): void {
+    print(on);
+}
+
+for (let t = 0; t < 10; t = t + 1) {
+    let tick: integer@soil <- t;
+    let primary = readMoisture(tick);
+    let ok: boolean@every <- plausible(primary);
+
+    let reading: float@dyn = 0.0@dyn;
+    if (ok) {
+        reading = primary;
+    } else {
+        let backupTick: integer@backup <- t;
+        reading = readBackup(backupTick);
+    }
+
+    let m: float@host <- reading;
+    setPump(tooDry(m));
+}

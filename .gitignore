@@ -10,3 +10,5 @@ tsconfig.tsbuildinfo
 /benchmarks/results/
 /benchmarks/.work/
 /scratchpad
+/case-study/*/*/workspace/
+**.DS_Store**

@@ -1,0 +1,30 @@
+// Vibration monitoring, step 0: a plain BlueScript program.
+//
+// Everything runs on the host. The vibration of a motor bearing is a mock that
+// grows steadily, as a worn bearing's does. When it goes over 4.5 mm/s the
+// machine is stopped, which here means printing the tick, and the loop ends.
+// No location is written, so every value is `dyn` (spec §omitted-locations).
+
+function readVibration(tick: integer): float {
+    // Mock: vibration velocity in mm/s, growing by 0.4 per tick.
+    return 1.0 + 0.4 * (tick as float);
+}
+
+function tooHigh(v: float): boolean {
+    return v > 4.5;
+}
+
+function stopMachine(tick: integer): void {
+    print(tick);
+}
+
+let running = true;
+let t = 0;
+while (running && t < 20) {
+    let v = readVibration(t);
+    if (tooHigh(v)) {
+        stopMachine(t);
+        running = false;
+    }
+    t = t + 1;
+}

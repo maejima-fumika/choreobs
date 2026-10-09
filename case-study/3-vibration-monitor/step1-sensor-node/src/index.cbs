@@ -1,0 +1,40 @@
+// Vibration monitoring, step 1: the reading moves to a sensor node.
+//
+// Changes from step 0:
+// * a `vib1` endpoint, and `readVibration` is a local function there;
+// * the decision and the stop are located at the host, and the reading is
+//   sent there;
+// * the host's verdict is sent to `every` before the `if` branches on it.
+//
+// The last change is forced. With `tooHigh` at the host, `if (tooHigh(v))` is
+// a compile error: a condition in a choreography context must be at `every`
+// (spec §if-condition-typing), since every endpoint has to take the same
+// branch and leave the loop together. `running` and `t` can stay `dyn`, as
+// they are only ever assigned unbound values or copied.
+
+function readVibration@vib1(tick: integer): float {
+    // Mock: vibration velocity in mm/s, growing by 0.4 per tick.
+    return 1.0 + 0.4 * (tick as float);
+}
+
+function tooHigh@host(v: float): boolean {
+    return v > 4.5;
+}
+
+function stopMachine@host(tick: integer): void {
+    print(tick);
+}
+
+let running = true;
+let t = 0;
+while (running && t < 20) {
+    let tick: integer@vib1 <- t;
+    let v: float@host <- readVibration(tick);
+    let alarm: boolean@every <- tooHigh(v);
+    if (alarm) {
+        let when: integer@host <- t;
+        stopMachine(when);
+        running = false;
+    }
+    t = t + 1;
+}

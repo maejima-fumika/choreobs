@@ -1,0 +1,8 @@
+{
+  "name": "fall-detection",
+  "endpoints": [
+    { "name": "host", "board": "host" },
+    { "name": "band", "board": "host" },
+    { "name": "phone", "board": "host" }
+  ]
+}

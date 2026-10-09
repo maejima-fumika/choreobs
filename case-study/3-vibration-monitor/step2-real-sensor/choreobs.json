@@ -1,0 +1,7 @@
+{
+  "name": "vibration-monitor",
+  "endpoints": [
+    { "name": "host", "board": "host" },
+    { "name": "vib1", "board": "host" }
+  ]
+}

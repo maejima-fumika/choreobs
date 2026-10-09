@@ -1,0 +1,12 @@
+{
+  "name": "vibration-monitor",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "host", "board": "host" },
+    { "name": "vib1", "board": "host" },
+    { "name": "vib2", "board": "host" },
+    { "name": "vib3", "board": "host" },
+    { "name": "gateway", "board": "host" },
+    { "name": "stopper", "board": "host" }
+  ]
+}
