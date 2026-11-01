@@ -342,6 +342,99 @@ the baseline prints. Two caveats:
 The location counts are approximate: they count the written `@location`s
 outside local functions.
 
+### How the macro benchmarks were chosen
+
+The macro benchmarks are few, so they were chosen to differ from each other as
+much as possible. These are the criteria.
+
+**No two share a communication pattern.** Each has a pattern of its own (the
+table above), from request/response with agreement (A) to a destination chosen
+by run-time data (H). Together they cover the shapes distributed programs are
+usually built from: request and response, broadcast, scatter-gather,
+all-to-all, nearest-neighbour exchange with a reduction, and peers that talk to
+each other as well as to a hub.
+
+**The centre of computation spans the whole range.** Local functions are always
+static (see [Conventions](#conventions)), so the cost of `dyn` falls on
+choreography code. The suite has both ends: F spends its time in local kernels
+and is the lower bound, and A is almost all choreography code, with the most
+dyn-able locations. C is the communication-bound end. The others lie between.
+
+**The data differ.** The suite has branch-heavy integer scalars (A, H), float
+scalars (B), integer arrays (C, E), float arrays (D, F), and modular integers
+mixed with floats (G). Scalars and arrays reach different parts of the runtime:
+a `dyn` scalar is boxed by every operation on it (K1), and a dynamic transfer
+copies an array (K5). Floats also show the rounding difference described in
+[Conventions](#conventions).
+
+**Each leans on different mechanisms.** The micro benchmarks isolate the
+mechanisms K1–K6; the macro benchmarks show which of them matters in a whole
+program. C is the most exposed to communication (K5), in E the data moved are
+mostly whole arrays, B does its float arithmetic in choreography code every
+tick (K1), and A and H route values through `if` chains on an id known only at
+run time.
+
+**Each is a known workload.** Most come from established benchmarks or
+algorithms, so that the programs are not shaped to suit ChoreoBS: SmallBank (A)
+and YCSB workloads A and F (C) from databases; k-means (D), sample sort (E) and
+Jacobi iteration (F) from parallel computing; the pairwise masking of secure
+aggregation (G) from federated learning; and a Kalman filter in a PID loop (B)
+from embedded control, the domain BlueScript is made for. H is included
+because a destination chosen by run-time data is the situation that motivates
+`dyn`, so the suite has at least one program in which `dyn` is the natural
+choice. None is the original as published: [Origins](#origins) gives what each
+is adapted from and how it differs.
+
+**Each fits the measurement.**
+
+* Four to six endpoints: enough for the patterns above, and fewer than the
+  cores of the machine, since every endpoint is a process of its own (see
+  [Caveats](#caveats)).
+* At least 80 dyn-able locations (F has the fewest), so each 10% step of RQ1
+  makes at least eight more locations `dyn`.
+* A self-check (see [Conventions](#conventions)), so every configuration can be
+  confirmed against the baseline before its time is counted.
+* Workloads within BlueScript's limits: integers within 30 bits, and data that
+  fit the 32 KB heap.
+
+What the choice leaves out: every endpoint runs on the host, where a message
+costs one bscript call, so no program measures communication between devices
+(see [Not provided yet](#not-provided-yet)).
+
+### Origins
+
+Each macro benchmark is adapted from a published benchmark or algorithm, or,
+for B and H, written for this suite around a textbook technique. All of them
+are smaller than their originals (see [Conventions](#conventions) for the
+limits), and every random number comes from the suite's own generator. The
+other changes:
+
+| Benchmark | Adapted from | Main changes |
+|---|---|---|
+| A smallbank-2pc | SmallBank [1] | Without WriteCheck, and with shares of its own. Single-node in the original: here the accounts are partitioned over three shards, and every transaction but Balance runs two-phase commit, with a participant failing 2% of the time. SendPayment and Amalgamate always span two shards. Accounts are drawn uniformly. |
+| B sensor-fusion | None: a Kalman filter [2] in a PID loop | The filter tracks position only, as a scalar, and corrects the speed by a fixed gain outside its state. Noise is a sum of two uniform draws. The actuator simulates the plant. |
+| C replicated-kvs | YCSB workloads A and F [3] | One mix of the two (50% read, 35% update, 15% read-modify-write) in place of either. Keys are uniform, not Zipfian, and a record is one integer, not ten fields. The primary-backup replication and the consistency checks are this suite's: YCSB specifies only the client's load. |
+| D kmeans | Lloyd's algorithm [4] | Two-dimensional points around four true centres, split over four workers. Restarts from random centroids, not k-means++. |
+| E sample-sort | Samplesort [5], with regular sampling as in PSRS [6] | Four workers, 16 samples per worker, three splitters chosen at a coordinator. Fresh data each round. |
+| F jacobi | Jacobi iteration for the heat equation | One dimension, fixed boundary temperatures, and a convergence test every `RES_EVERY` steps. |
+| G secure-aggregation | Pairwise masking from Bonawitz et al. [7] | Only the pairwise masks: no self-masks, no secret sharing, so no recovery from clients that drop out, and no authentication. A tiny Diffie-Hellman group (p = 16381) and a non-cryptographic generator, so it is not secure. The model is a linear regression. The debugging path that sends unmasked encodings is this suite's. |
+| H job-dispatcher | None: shortest-expected-delay dispatch | Written for this suite. The dispatcher picks the worker with the least backlog divided by speed, from estimates that are refreshed only every `REPORT_EVERY` ticks. |
+
+1. M. Alomari, M. Cahill, A. Fekete, U. Röhm. The cost of serializability on
+   platforms that use snapshot isolation. ICDE 2008.
+2. R. E. Kalman. A new approach to linear filtering and prediction problems.
+   Journal of Basic Engineering, 1960.
+3. B. F. Cooper, A. Silberstein, E. Tam, R. Ramakrishnan, R. Sears.
+   Benchmarking cloud serving systems with YCSB. SoCC 2010.
+4. S. P. Lloyd. Least squares quantization in PCM. IEEE Transactions on
+   Information Theory, 1982.
+5. W. D. Frazer, A. C. McKellar. Samplesort: a sampling approach to minimal
+   storage tree sorting. Journal of the ACM, 1970.
+6. H. Shi, J. Schaeffer. Parallel sorting by regular sampling. Journal of
+   Parallel and Distributed Computing, 1992.
+7. K. Bonawitz et al. Practical secure aggregation for privacy-preserving
+   machine learning. CCS 2017.
+
 ## Micro benchmarks
 
 ### u1-arith-int, u1-arith-float
