@@ -24,6 +24,7 @@ benchmarks/
           u6-bystander-n2  u6-bystander-n4  u6-bystander-n8
   macro/  a-smallbank-2pc  b-sensor-fusion  c-replicated-kvs  d-kmeans
           e-sample-sort  f-jacobi  g-secure-aggregation  h-job-dispatcher
+  macro-esp32/  b-sensor-fusion
 ```
 
 Each directory is a ChoreoBS project shaped like those in `examples/`: a
@@ -32,8 +33,15 @@ Each directory is a ChoreoBS project shaped like those in `examples/`: a
 base type (u1) has a directory of its own, because `choreobs.json` fixes the
 endpoints.
 
+`macro-esp32/` holds macro benchmarks with every endpoint on an ESP32 board
+of its own (see [Running on ESP32 boards](#running-on-esp32-boards)). Each has
+the program of the macro benchmark of the same name, unchanged; only its
+`choreobs.json` differs.
+
 `test/integration/benchmarks.test.ts` compiles every benchmark as part of
-`npm test`, and checks that each is in strict mode.
+`npm test`, and checks that each is in strict mode. It also checks that each
+`macro-esp32/` benchmark has the same source and endpoints as its macro
+benchmark, with every endpoint on `esp32` under a device name of its own.
 
 The measuring scripts (see [Measuring](#measuring)) keep their copies of the
 benchmarks in `benchmarks/.work/` and write their results to
@@ -72,6 +80,88 @@ repository. Things to keep in mind:
   more heap than the baseline. Raising an array-heavy benchmark's sizes (u3,
   D, E, F, G) can exhaust the heap at high precision before it does at 0%.
 
+## Running on ESP32 boards
+
+`macro-esp32/b-sensor-fusion` is B with each of its six endpoints on an ESP32
+board of its own.
+
+bscript connects to every board over Bluetooth LE and relays every message
+between them: the boards never talk to each other directly. Prepare each board
+once, with the BlueScript runtime from the same BlueScript as the `bscript` on
+`PATH`, under the device name its endpoint has in `choreobs.json`:
+
+| Endpoint | Device name |
+|---|---|
+| `sensor1` | `CBS-S1` |
+| `sensor2` | `CBS-S2` |
+| `sensor3` | `CBS-S3` |
+| `fusion` | `CBS-F` |
+| `controller` | `CBS-C` |
+| `actuator` | `CBS-A` |
+
+```bash
+bscript board setup esp32
+bscript board flash-runtime esp32 -d CBS-S1
+```
+
+Then run it as any other benchmark, with every board powered and nearby:
+
+```bash
+cd benchmarks/macro-esp32/b-sensor-fusion
+choreobs add-endpoint sensor1
+choreobs add-endpoint sensor2
+choreobs add-endpoint sensor3
+choreobs add-endpoint fusion
+choreobs add-endpoint controller
+choreobs add-endpoint actuator
+choreobs run --stats
+```
+
+To measure it, name it by its directory or as the group `macro-esp32`. It is
+left out of `all`, and the name `b-sensor-fusion` alone means the host one.
+`caffeinate` keeps the Mac awake until the command ends; keep the lid open and
+the Mac on its charger, or it sleeps anyway and the boards disconnect.
+
+```bash
+caffeinate -i -s npm run bench -- macro-esp32 --fractions 0 --reps 1 --mode time --warmup 0 --set TICKS=80 --timeout 1800
+```
+
+A sweep at every 10%, with timing and profile runs in one command, takes
+about two and a half hours with three boards:
+
+```bash
+caffeinate -i -s npm run bench -- macro-esp32 --seeds 5 --steps 10 --reps 3 --end-reps 5 --set TICKS=80 --warmup 2 --timeout 300 --retry-failed 2 --out benchmarks/results/esp32x3-sweep
+```
+
+Things to keep in mind:
+
+* Every message crosses Bluetooth twice, from its sender to the Mac and from
+  the Mac to its receiver, and each send or receive waits for the Mac's
+  answer. B sends about 22 messages a tick, so start with a small `TICKS` and
+  a long `--timeout`. `benchmarks/workloads.json` has no entry for it. In a
+  trial with `sensor1` alone on a board, one send or receive there took about
+  73 ms, 0.22 s a tick.
+* `TICKS` below 71 leaves too few ticks after the setpoint changes for the
+  plant to settle, so `controller` prints `false`. At 71 the plant ends 1.7
+  from the setpoint, against a limit of 2.0; 80 leaves a margin. The script
+  does not read that line: a run is correct when it prints what its baseline
+  printed, and `macro-esp32` is its own baseline.
+* A board reports `exec_ms` alone: `cpu_*` and `gc_ms` stay empty. The
+  profiling build runs on the boards, and its `send_ms`, `receive_ms` and
+  `broadcast_ms` tell how much of `exec_ms` went to messages. A `dyn`
+  configuration exercises counters not yet tried on a board
+  (spec §unverified-bluescript-assumptions).
+* A board's float arithmetic may differ from the host's in the last digits.
+  Outputs are compared with a tolerance (see [How it measures](#how-it-measures)),
+  and the self-check allows 2.0. In the trial with `sensor1` on a board, the
+  output matched the host's exactly.
+* The terminal that runs `bscript` needs macOS's Bluetooth permission. A
+  process without it is killed with `SIGABRT` as soon as it scans.
+* Connecting to a board now and then times out, and now and then a link drops
+  and leaves the other endpoints waiting. Measure with `--retry-failed 2`,
+  which runs such a run again at the end of the sweep. Do a trial run into an
+  `--out` of its own, or the sweep counts it as its first repetition.
+
 ## Measuring
 
 `scripts/bench/` measures the benchmarks across location precision. It makes
@@ -96,7 +186,8 @@ npm run bench -- macro --workloads benchmarks/workloads.json
 ### Options of `npm run bench`
 
 Benchmarks are named by directory (`benchmarks/macro/a-smallbank-2pc`), by name
-(`a-smallbank-2pc`), or as a group: `micro`, `macro` or `all`.
+(`a-smallbank-2pc`), or as a group: `micro`, `macro` or `all`. `macro-esp32` is
+a group too, but `all` and a name alone leave it out, since it needs a board.
 
 | Option | Meaning | Default |
 |---|---|---|
@@ -105,6 +196,7 @@ Benchmarks are named by directory (`benchmarks/macro/a-smallbank-2pc`), by name
 | `--steps N` | fractions 0, 1/N, …, 1 of the locations made `dyn` | 10 |
 | `--fractions a,b` | these fractions instead; 0 is always measured | |
 | `--reps N` | timing runs of each configuration | 5 |
+| `--end-reps N` | timing runs of 0% and 100% instead, spread over the sweep | as `--reps` |
 | `--profile-reps N` | profile runs of each configuration | 1 |
 | `--mode M` | `time`, `profile` or `both` | `both` |
 | `--workloads FILE` | workload constants by benchmark, as in `benchmarks/workloads.json` | |
@@ -113,11 +205,22 @@ Benchmarks are named by directory (`benchmarks/macro/a-smallbank-2pc`), by name
 | `--timeout S` | seconds before a run is killed | 120 |
 | `--warmup N` | unrecorded baseline runs before a benchmark's first run | 1 |
 | `--config FILE` | a `choreobs.json` to use instead of the benchmark's, e.g. one that puts the endpoints on `esp32` boards; one benchmark only | |
+| `--retry-failed N` | run a run that ended `failed`, `runtime_error` or `timeout` up to N more times, at the end of the sweep | 0 |
 | `--dry-run` | list the runs, run nothing | |
 
 Each run is appended to `runs.jsonl` as soon as it ends. The same command run
 again skips every run already there, so an interrupted sweep resumes where it
 stopped, and a sweep can be extended with more seeds or repetitions.
+
+A run can fail for want of the testbed rather than the program: a board that
+does not connect or does not report in full (`failed`), a link that drops and
+leaves the other endpoints waiting (`runtime_error`), a run that hangs
+(`timeout`). `--retry-failed N` puts such a run at the end of the sweep, up to
+N more times, so that a board has time to come back. On a resumed sweep it
+also tries again each run whose last record there failed so; `--dry-run` marks
+them `(failed before)`. Every attempt stays in `runs.jsonl`, and each failed
+one leaves its output in `failures/`. A run that ends `incorrect`,
+`memory_exhausted` or `compile_error` would do so again, and is not retried.
 
 ### Sizes for timing
 
@@ -176,8 +279,14 @@ by 0.06 or less for the others. Report the sizes with the results.
   is enough.
 * **Order.** Each repetition runs the baseline first and then every other
   configuration in a shuffled order, so that a drift of the machine's speed
-  spreads over all configurations instead of falling on some. Every run
-  records when it started.
+  spreads over all configurations instead of falling on some. A
+  configuration's timing run and profile run come one after the other. Every
+  run records when it started.
+* **The ends.** 0% and 100% are measured once for every seed, and every
+  configuration is compared with 0%, so they may take more timing runs
+  (`--end-reps`). Their extra runs go into the middle of the repetitions,
+  spread evenly, so that they do not all fall at the end of the sweep.
+  `scripts/bench/plan.ts` makes the order.
 * **Correctness.** Each run is compared with what the baseline printed, as
   described in [Conventions](#conventions): only the endpoints that print in
   the baseline, integers and booleans exactly, floats within a relative 1e-3.
@@ -205,8 +314,8 @@ directory and writes three CSV files:
 
 | File | One row per | Main columns |
 |---|---|---|
-| `runs.csv` | run and endpoint | the record, flattened, with every counter |
-| `configs.csv` | configuration (benchmark, boards, workload, seed, `k`) | `exec_ms_median`, quartiles, `baseline_ms`, `slowdown` (median time over the baseline's), `cpu_ms_max_endpoint_median`, `cpu_ms_sum_median`, `busy_share_median`, `gc_ms_median`, `alloc_objects_median`, `requests` (communication calls of all endpoints), `ops_total`, `ops_replicated`, each counter summed over the endpoints, `invariants_ok`, `profile_overhead` |
+| `runs.csv` | run and endpoint, every attempt | the record, flattened, with every counter |
+| `configs.csv` | configuration (benchmark, boards, workload, seed, `k`) | `exec_ms_median`, quartiles, `baseline_ms`, `slowdown` (median time over the baseline's), `cpu_ms_max_endpoint_median`, `cpu_ms_sum_median`, `busy_share_median`, `gc_ms_median`, `alloc_objects_median`, `requests` (communication calls of all endpoints), `ops_total`, `ops_replicated`, each counter summed over the endpoints, `invariants_ok`, `profile_overhead`, `runs_failed`, `runs_retried` (earlier attempts at runs tried again; the rest of the row counts each run by its last attempt) |
 | `summary.csv` | benchmark and fraction | `slowdown_median`, quartiles, minimum and maximum over the configurations, `share_within_1_1x` and `share_within_2x`, and the median of each counter (`med_…`) |
 
 Only valid runs count towards a time: those that ended `ok`.
@@ -251,9 +360,9 @@ broadcast once per other endpoint.
   included.
 * Every endpoint runs as a process of its own. Keep the number of endpoints
   below the number of cores (u5-fanout-k8 runs nine).
-* With `--config` putting endpoints on `esp32`, `STATS` gives `exec_ms` alone,
-  and the profiling build relies on BlueScript behaviour not yet confirmed
-  there (spec §unverified-bluescript-assumptions).
+* With `--config` putting endpoints on `esp32`, `STATS` gives `exec_ms` alone
+  for them. The profiling build runs there, but only its counters outside
+  `dyn` values have been tried (spec §unverified-bluescript-assumptions).
 * For a single run by hand, `choreobs run --stats --profile` prints the same
   report.
 

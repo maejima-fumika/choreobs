@@ -1,0 +1,12 @@
+{
+  "name": "b-sensor-fusion",
+  "implicitDyn": false,
+  "endpoints": [
+    { "name": "sensor1", "board": "esp32", "deviceName": "CBS-S1" },
+    { "name": "sensor2", "board": "esp32", "deviceName": "CBS-S2" },
+    { "name": "sensor3", "board": "esp32", "deviceName": "CBS-S3" },
+    { "name": "fusion", "board": "host" },
+    { "name": "controller", "board": "host" },
+    { "name": "actuator", "board": "host" }
+  ]
+}

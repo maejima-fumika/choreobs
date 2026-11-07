@@ -91,6 +91,19 @@ export function runKey(r: Pick<RunRecord, "bench" | "boards" | "workload" | "see
   return [configKey(r), r.rep, r.mode].join("|");
 }
 
+/**
+ * The statuses the testbed can cause as well as the program: a board that did
+ * not connect or report in full (`failed`), a link that dropped and left the
+ * other endpoints waiting (`runtime_error`), a run that hung (`timeout`).
+ * `--retry-failed` runs them again.
+ */
+export const RETRYABLE_STATUSES: ReadonlySet<RunStatus> = new Set(["failed", "runtime_error", "timeout"]);
+
+/** The last record of each run (by {@link runKey}): a retried run is what its last attempt says. */
+export function latestRecords(records: readonly RunRecord[]): RunRecord[] {
+  return [...new Map(records.map((r) => [runKey(r), r])).values()];
+}
+
 /** The records of a `runs.jsonl`. A line cut short by an interrupted run is skipped. */
 export function parseRecords(text: string): RunRecord[] {
   const records: RunRecord[] = [];

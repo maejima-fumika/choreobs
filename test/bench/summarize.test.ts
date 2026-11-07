@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PROFILE_COUNTERS, type CounterKey } from "../../src/runtime/profile.js";
 import type { EndpointRecord, RunRecord } from "../../scripts/bench/records.js";
-import { parseRecords, runKey } from "../../scripts/bench/records.js";
+import { latestRecords, parseRecords, RETRYABLE_STATUSES, runKey } from "../../scripts/bench/records.js";
 import {
   busyShare,
   configRows,
@@ -89,6 +89,37 @@ describe("summarizing runs (scripts/bench/summarize.ts)", () => {
     assert.equal(s.share_within_1_1x, 0);
     assert.equal(s.share_within_2x, 1);
     assert.equal(summary.find((r) => r.k === 10)!.configs_incorrect, 1);
+  });
+
+  it("counts a run tried again (--retry-failed) by its last attempt", () => {
+    const records = [
+      record({ k: 0, rep: 0 }),
+      record({ k: 5, rep: 0, status: "failed", endpoints: {} }),
+      record({ k: 5, rep: 1, endpoints: { alice: endpoint(300), bob: endpoint(1) } }),
+      record({ k: 5, rep: 0, status: "runtime_error", endpoints: {} }),
+      record({ k: 5, rep: 0, endpoints: { alice: endpoint(200), bob: endpoint(1) } }),
+    ];
+    const half = configRows(records).find((c) => c.k === 5)!;
+    assert.equal(half.runs, 2);
+    assert.equal(half.time_runs, 2);
+    assert.equal(half.runs_failed, 0);
+    assert.equal(half.runs_retried, 2);
+    assert.equal(half.exec_ms_median, 250);
+    assert.equal(configRows(records).find((c) => c.k === 0)!.runs_retried, 0);
+  });
+
+  it("keeps the last record of each run, failed or not", () => {
+    const ok = record({ k: 5, rep: 0 });
+    const failed = record({ k: 5, rep: 0, status: "timeout" });
+    const other = record({ k: 5, rep: 0, mode: "profile" });
+    assert.deepEqual(latestRecords([ok, other, failed]), [failed, other]);
+    assert.equal(RETRYABLE_STATUSES.has("failed"), true);
+    assert.equal(RETRYABLE_STATUSES.has("runtime_error"), true);
+    assert.equal(RETRYABLE_STATUSES.has("timeout"), true);
+    // A program that is wrong or too big stays so when run again.
+    assert.equal(RETRYABLE_STATUSES.has("incorrect"), false);
+    assert.equal(RETRYABLE_STATUSES.has("memory_exhausted"), false);
+    assert.equal(RETRYABLE_STATUSES.has("compile_error"), false);
   });
 
   it("sums the counters of a profile run over its endpoints, and checks they agree", () => {

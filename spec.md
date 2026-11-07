@@ -10886,5 +10886,8 @@ where it does not hold.
 13. **The profiling build** (spec [§13.17](#profiling-build)): a runtime file that calls
     `performanceNow()` and assigns its own module-level `let` variables, from
     functions and from constructors, and the program that imports it. It works
-    on `host`; `esp32` is unconfirmed. A time is a `float` of milliseconds, so
-    a sum loses precision once it reaches hours.
+    on `host`. On `esp32` it works from functions: a program with no `dyn` ran
+    there and printed its report (2026-11-06). The assignments from
+    constructors, which only `dyn` values reach, are unconfirmed there. A time
+    is a `float` of milliseconds, so a sum loses precision once it reaches
+    hours.

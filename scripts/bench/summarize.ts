@@ -7,15 +7,16 @@
  * It reads `runs.jsonl` from each directory and writes, to `--out` (the first
  * directory by default):
  *
- *   runs.csv     one row per run and endpoint, as recorded
+ *   runs.csv     one row per run and endpoint, as recorded, every attempt
  *   configs.csv  one row per configuration: its time against the baseline's,
- *                and its counters summed over the endpoints
+ *                and its counters summed over the endpoints. A run tried more
+ *                than once (`--retry-failed`) counts by its last attempt.
  *   summary.csv  one row per benchmark and fraction, over its configurations
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PROFILE_COUNTERS, type CounterKey } from "../../src/runtime/profile.js";
-import { configKey, parseRecords, workloadKey, type RunRecord } from "./records.js";
+import { configKey, latestRecords, parseRecords, workloadKey, type RunRecord } from "./records.js";
 
 type Cell = string | number | boolean | null;
 type Row = Record<string, Cell>;
@@ -140,7 +141,12 @@ export function runRows(records: readonly RunRecord[]): Row[] {
 }
 
 /** One row per configuration. */
-export function configRows(records: readonly RunRecord[]): Row[] {
+export function configRows(attempts: readonly RunRecord[]): Row[] {
+  // Earlier attempts at a run that was tried again, by configuration.
+  const superseded = new Map<string, number>();
+  const records = latestRecords(attempts);
+  for (const r of attempts) superseded.set(configKey(r), (superseded.get(configKey(r)) ?? 0) + 1);
+  for (const r of records) superseded.set(configKey(r), superseded.get(configKey(r))! - 1);
   // The baseline of each benchmark, workload and set of boards: its median time.
   const baselines = new Map<string, number | null>();
   for (const [key, runs] of groupBy(records.filter((r) => r.k === 0 && r.mode === "time" && valid(r)), benchKey)) {
@@ -178,6 +184,7 @@ export function configRows(records: readonly RunRecord[]): Row[] {
       profile_runs: profiles.length,
       runs_incorrect: runs.filter((r) => r.status === "incorrect").length,
       runs_failed: runs.filter((r) => r.status !== "ok" && r.status !== "incorrect").length,
+      runs_retried: superseded.get(configKey(first)) ?? 0,
       exec_ms_median: execMedian,
       exec_ms_q1: quantile(times, 0.25),
       exec_ms_q3: quantile(times, 0.75),
@@ -309,9 +316,12 @@ function main(): void {
   writeFileSync(join(target, "runs.csv"), toCsv(runRows(records)));
   writeFileSync(join(target, "configs.csv"), toCsv(configs));
   writeFileSync(join(target, "summary.csv"), toCsv(summary));
-  const bad = records.filter((r) => r.status !== "ok").length;
+  const latest = latestRecords(records);
+  const bad = latest.filter((r) => r.status !== "ok").length;
+  const retried = records.length - latest.length;
   console.log(
-    `${records.length} runs, ${configs.length} configurations, ${summary.length} summary rows` +
+    `${latest.length} runs${retried > 0 ? ` (and ${retried} earlier attempts)` : ""}, ` +
+      `${configs.length} configurations, ${summary.length} summary rows` +
       (bad > 0 ? `; ${bad} runs did not end ok (see failures/)` : ""),
   );
   console.log(`wrote runs.csv, configs.csv and summary.csv to ${target}`);

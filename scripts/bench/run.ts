@@ -5,12 +5,15 @@
  *
  * A benchmark is named by its directory (`benchmarks/macro/a-smallbank-2pc`),
  * by its name (`a-smallbank-2pc`), or as a group: `micro`, `macro` or `all`.
+ * `macro-esp32` needs an ESP32 board, so it is named only as a group or by its
+ * directory: `all` and a name alone leave it out.
  *
  *   --seeds N           seeds 1…N, each a random order of the dyn-able locations (5)
  *   --seed-list a,b     these seeds instead
  *   --steps N           fractions 0, 1/N, …, 1 of the locations made dyn (10)
  *   --fractions a,b     these fractions instead; 0 is always measured
  *   --reps N            timing runs of each configuration (5)
+ *   --end-reps N        timing runs of 0% and 100% instead, spread over the sweep (as --reps)
  *   --profile-reps N    profile runs of each configuration (1)
  *   --mode M            time, profile or both (both)
  *   --workloads FILE    workload constants by benchmark, as in benchmarks/workloads.json
@@ -20,10 +23,14 @@
  *   --timeout S         seconds before a run is killed (120)
  *   --warmup N          unrecorded baseline runs before a benchmark's first (1)
  *   --config FILE       a choreobs.json to use instead of the benchmark's (one benchmark only)
+ *   --retry-failed N    run a run that ended failed, runtime_error or timeout up to N more
+ *                       times, at the end of the sweep (0)
  *   --dry-run           list the runs, run nothing
  *
  * Each run appends one line to `<out>/runs.jsonl` (scripts/bench/records.ts).
- * Runs already there are skipped, so the same command resumes a sweep.
+ * Runs already there are skipped, so the same command resumes a sweep. With
+ * --retry-failed, a run whose last record there failed is not skipped but tried
+ * again, up to N more times.
  */
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -53,10 +60,13 @@ import {
   type Configuration,
 } from "./config.js";
 import { compare, parseRun } from "./output.js";
+import { planRuns, type PlannedRun } from "./plan.js";
 import {
   configKey,
+  latestRecords,
   parseRecords,
   RECORD_VERSION,
+  RETRYABLE_STATUSES,
   runKey,
   type RunMode,
   type RunRecord,
@@ -66,12 +76,16 @@ import {
 const REPO_ROOT = resolve(import.meta.dirname, "..", "..");
 const BENCHMARKS = join(REPO_ROOT, "benchmarks");
 const GROUPS = ["micro", "macro"] as const;
+/** Groups that run on boards, named on their own and never part of `all`. */
+const BOARD_GROUPS = ["macro-esp32"] as const;
 
 interface Options {
   readonly benches: readonly Bench[];
   readonly seeds: readonly number[];
   readonly fractions: readonly number[];
   readonly reps: number;
+  /** From `--end-reps`: timing runs of 0% and 100%; null to take `reps`. */
+  readonly endReps: number | null;
   readonly profileReps: number;
   readonly mode: "time" | "profile" | "both";
   readonly sets: readonly { bench: string | null; name: string; value: number }[];
@@ -81,6 +95,8 @@ interface Options {
   readonly timeout: number;
   readonly warmup: number;
   readonly config: string | null;
+  /** From `--retry-failed`: further attempts at a run that ended with a status in RETRYABLE_STATUSES. */
+  readonly retries: number;
   readonly dryRun: boolean;
 }
 
@@ -105,7 +121,9 @@ function listGroup(group: string): Bench[] {
 
 function resolveBench(arg: string): Bench[] {
   if (arg === "all") return GROUPS.flatMap(listGroup);
-  if ((GROUPS as readonly string[]).includes(arg)) return listGroup(arg);
+  if ((GROUPS as readonly string[]).includes(arg) || (BOARD_GROUPS as readonly string[]).includes(arg)) {
+    return listGroup(arg);
+  }
   const path = resolve(arg);
   if (existsSync(join(path, "choreobs.json"))) {
     const rel = relative(BENCHMARKS, path);
@@ -124,6 +142,7 @@ function parseOptions(argv: readonly string[]): Options {
   let steps = 10;
   let fractions: number[] | null = null;
   let reps = 5;
+  let endReps: number | null = null;
   let profileReps = 1;
   let mode: Options["mode"] = "both";
   let out: string | null = null;
@@ -131,6 +150,7 @@ function parseOptions(argv: readonly string[]): Options {
   let warmup = 1;
   let config: string | null = null;
   let workloads: Options["workloads"] = {};
+  let retries = 0;
   let dryRun = false;
   const value = (i: number, flag: string): string => {
     const v = argv[i + 1];
@@ -166,6 +186,9 @@ function parseOptions(argv: readonly string[]): Options {
         break;
       case "--reps":
         reps = count(value(i++, arg), arg);
+        break;
+      case "--end-reps":
+        endReps = count(value(i++, arg), arg);
         break;
       case "--profile-reps":
         profileReps = count(value(i++, arg), arg);
@@ -206,6 +229,9 @@ function parseOptions(argv: readonly string[]): Options {
         config = resolve(value(i++, arg));
         if (!existsSync(config)) fail(`no file ${config}`);
         break;
+      case "--retry-failed":
+        retries = count(value(i++, arg), arg);
+        break;
       case "--dry-run":
         dryRun = true;
         break;
@@ -223,6 +249,7 @@ function parseOptions(argv: readonly string[]): Options {
     seeds,
     fractions: fractions ?? Array.from({ length: steps + 1 }, (_, j) => j / steps),
     reps,
+    endReps,
     profileReps,
     mode,
     sets,
@@ -231,6 +258,7 @@ function parseOptions(argv: readonly string[]): Options {
     timeout,
     warmup,
     config,
+    retries,
     dryRun,
   };
 }
@@ -359,20 +387,6 @@ function workloadFor(bench: Bench, source: string, options: Options): Record<str
   return workload;
 }
 
-/** The order each repetition runs the configurations in: the baseline first, the rest shuffled. */
-function schedule(configs: readonly Configuration[], rep: number): Configuration[] {
-  const baseline = configs.filter((c) => c.k === 0);
-  const rest = configs.filter((c) => c.k !== 0);
-  return [...baseline, ...permutation(rest.length, 1000 + rep).map((i) => rest[i]!)];
-}
-
-function modesFor(rep: number, options: Options): RunMode[] {
-  const modes: RunMode[] = [];
-  if (options.mode !== "profile" && rep < options.reps) modes.push("time");
-  if (options.mode !== "time" && rep < options.profileReps) modes.push("profile");
-  return modes;
-}
-
 function statusOf(
   outcome: RunOutcome,
   record: Pick<RunRecord, "endpoints">,
@@ -429,23 +443,24 @@ async function measure(prepared: Prepared, options: Options, done: Set<string>, 
     return true;
   };
 
-  const plan: { config: Configuration; rep: number; mode: RunMode }[] = [];
-  const reps = Math.max(options.mode === "profile" ? 0 : options.reps, options.mode === "time" ? 0 : options.profileReps);
-  for (let rep = 0; rep < reps; rep += 1) {
-    for (const config of schedule(configs, rep)) {
-      for (const mode of modesFor(rep, options)) {
-        const key = runKey({ bench: bench.id, boards, workload, seed: config.seed, k: config.k, rep, mode });
-        if (!done.has(key)) plan.push({ config, rep, mode });
-      }
-    }
-  }
+  const keyOf = (config: Configuration, rep: number, mode: RunMode): string =>
+    runKey({ bench: bench.id, boards, workload, seed: config.seed, k: config.k, rep, mode });
+  // A run with a record that is not done failed before, and is tried again.
+  const tried = new Set(records.map(runKey));
+  const timing = options.mode !== "profile";
+  const plan: PlannedRun[] = planRuns(configs, {
+    reps: timing ? options.reps : 0,
+    endReps: timing ? (options.endReps ?? options.reps) : 0,
+    profileReps: options.mode !== "time" ? options.profileReps : 0,
+  }).filter(({ config, rep, mode }) => !done.has(keyOf(config, rep, mode)));
   console.log(
     `${bench.id}: ${n} dyn-able locations, ${configs.length} configurations, ${plan.length} runs to do` +
       (Object.keys(workload).length > 0 ? `, ${Object.entries(workload).map(([k, v]) => `${k}=${v}`).join(" ")}` : ""),
   );
   if (options.dryRun) {
     for (const { config, rep, mode } of plan) {
-      console.log(`  p=${config.p.toFixed(2)} k=${config.k} seed=${config.seed ?? "-"} rep=${rep} ${mode}`);
+      const again = tried.has(keyOf(config, rep, mode)) ? " (failed before)" : "";
+      console.log(`  p=${config.p.toFixed(2)} k=${config.k} seed=${config.seed ?? "-"} rep=${rep} ${mode}${again}`);
     }
     return plan.length;
   }
@@ -455,9 +470,15 @@ async function measure(prepared: Prepared, options: Options, done: Set<string>, 
     await runBscript(workspaceDir(work), endpoints, options.timeout);
   }
 
-  let index = 0;
-  for (const { config, rep, mode } of plan) {
-    index += 1;
+  // Attempts at each run in this session. A run that fails for a reason in
+  // RETRYABLE_STATUSES goes to the end of the plan, so that a board has time to
+  // come back before the next attempt.
+  const attempts = new Map<string, number>();
+  for (let index = 1; index <= plan.length; index += 1) {
+    const { config, rep, mode } = plan[index - 1]!;
+    const key = keyOf(config, rep, mode);
+    const attempt = (attempts.get(key) ?? 0) + 1;
+    attempts.set(key, attempt);
     const startedAt = new Date().toISOString();
     const base = {
       version: RECORD_VERSION,
@@ -520,19 +541,32 @@ async function measure(prepared: Prepared, options: Options, done: Set<string>, 
     done.add(runKey(record));
     if (record.status !== "ok") {
       mkdirSync(join(options.out, "failures"), { recursive: true });
-      const name = `${bench.id.replace("/", "-")}_seed${config.seed ?? "-"}_k${config.k}_rep${rep}_${mode}.log`;
-      writeFileSync(join(options.out, "failures", name), rawOutput);
+      writeFileSync(failureLog(options.out, bench, config, rep, mode), rawOutput);
     }
+    const retry = RETRYABLE_STATUSES.has(record.status) && attempt <= options.retries;
+    if (retry) plan.push({ config, rep, mode });
     const exec = Math.max(...Object.values(record.endpoints).map((e) => e.exec_ms ?? 0));
     console.log(
       `  [${index}/${plan.length}] p=${config.p.toFixed(2)} k=${config.k} seed=${config.seed ?? "-"} ` +
-        `rep=${rep} ${mode.padEnd(7)} ${record.status}${record.status === "ok" ? ` ${exec.toFixed(1)} ms` : ""}`,
+        `rep=${rep} ${mode.padEnd(7)} ${record.status}${record.status === "ok" ? ` ${exec.toFixed(1)} ms` : ""}` +
+        (attempt > 1 ? ` (attempt ${attempt})` : "") +
+        (retry ? ", will retry" : ""),
     );
   }
   return plan.length;
 }
 
 class CompileFailure extends Error {}
+
+/** Where the output of a failed run goes. Each attempt at a run keeps a file of its own. */
+function failureLog(out: string, bench: Bench, config: Configuration, rep: number, mode: RunMode): string {
+  const stem = `${bench.id.replace("/", "-")}_seed${config.seed ?? "-"}_k${config.k}_rep${rep}_${mode}`;
+  let path = join(out, "failures", `${stem}.log`);
+  for (let n = 2; existsSync(path); n += 1) {
+    path = join(out, "failures", `${stem}_${n}.log`);
+  }
+  return path;
+}
 
 // --- the session -------------------------------------------------------------
 
@@ -573,7 +607,8 @@ async function main(): Promise<void> {
   }
   const runsPath = join(options.out, "runs.jsonl");
   const records = existsSync(runsPath) ? parseRecords(readFileSync(runsPath, "utf8")) : [];
-  const done = new Set(records.map(runKey));
+  const retried = (r: RunRecord) => options.retries > 0 && RETRYABLE_STATUSES.has(r.status);
+  const done = new Set(latestRecords(records).filter((r) => !retried(r)).map(runKey));
   let total = 0;
   for (const bench of options.benches) {
     let prepared: Prepared;
