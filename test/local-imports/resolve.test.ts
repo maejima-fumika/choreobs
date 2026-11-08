@@ -11,6 +11,7 @@ const FILES = sourceFiles({
   "lib/math.bs": `export function add(a: integer, b: integer): integer { return a + b; }\n`,
   "broken.bs": `export function f(: integer {}\n`,
   "chatty.bs": `export function report(x: integer): void {\n  sendInteger("bob", "t", x);\n}\n`,
+  "thermo@alice.bs": `import { Thermometer } from 'thermo';\nimport { now } from "./clock";\nconst t = new Thermometer(4);\nexport function readCelsius(): float {\n  return t.read(now());\n}\n`,
 });
 
 /** `source` must fail with one error containing `message`, citing `spec`; the error's span covers `at` when given. */
@@ -58,6 +59,14 @@ let s: integer@bob = add(1@bob, 2@bob);
       rejected(`import@alice { now } from "./clock.bs";`, "without '.bs'", "invalid-module-path");
     });
 
+    it("says that a package is imported by a source file, for a name BlueScript would read as one (spec §bluescript-packages)", () => {
+      const hint = "a BlueScript package is imported by a source file under 'src/', which the program imports instead";
+      rejected(`import@alice { Thermometer } from "thermo";`, hint, "bluescript-packages", `"thermo"`);
+      rejected(`import@alice { Thermometer } from "thermo/sub";`, hint, "invalid-module-path");
+      const result = compile(`import@alice { now } from "../clock";`, aliceBob, "index.cbs", FILES);
+      assert.ok(!result.errors[0]!.message.includes("package"), describeDiags(result.errors));
+    });
+
     it("must name a source file, in its own case", () => {
       rejected(`import@alice { now } from "./timer";`, "there is no source file 'src/timer.bs'", "imported-file-not-found", `"./timer"`);
       rejected(`import@alice { now } from "./Clock";`, `did you mean "./clock"?`, "imported-file-not-found");
@@ -91,6 +100,10 @@ let s: integer@bob = add(1@bob, 2@bob);
         "unsupported-export",
         "sum",
       );
+    });
+
+    it("imports from a file that imports values, without following its imports (spec §imported-file-restrictions)", () => {
+      expectSuccess(compile(`import@alice { readCelsius } from "./thermo@alice";\nlet t: float@alice = readCelsius();\n`, aliceBob, "index.cbs", FILES));
     });
 
     it("does not look at a declaration nothing imports", () => {

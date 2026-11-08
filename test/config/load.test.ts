@@ -281,6 +281,44 @@ describe("config — loadConfig (spec §choreobs-json)", () => {
     );
   });
 
+  it("reads an endpoint's dependencies, and leaves them out when absent (spec §bluescript-packages)", () => {
+    const dependencies = {
+      thermo: "https://example.com/bs-thermo.git#v1.0.0",
+      "units_2.x-beta": "https://example.com/units.git",
+      ["__proto__"]: "https://example.com/proto.git",
+    };
+    const loaded = withConfig(
+      config([{ name: "alice", board: "esp32", deviceName: "A", dependencies }, { name: "bob", board: "host", dependencies: {} }, "carol"]),
+      loadConfig,
+    );
+    assert.deepEqual(loaded.endpoints, [
+      { name: "alice", board: "esp32", deviceName: "A", dependencies },
+      { name: "bob", board: "host", dependencies: {} },
+      { name: "carol", board: "host" },
+    ]);
+    assert.ok(Object.hasOwn(loaded.endpoints[0]!.dependencies!, "__proto__"));
+    assert.deepEqual(compilerConfig(loaded), { endpoints: ["alice", "bob", "carol"] });
+  });
+
+  it("rejects dependencies that are not an object of package names to git URLs", () => {
+    const deps = (dependencies: unknown) => config([{ name: "alice", board: "host", dependencies }]);
+    rejects(deps(["thermo"]), `endpoint "alice": "dependencies" must be an object from package names to git URLs`);
+    rejects(deps("thermo"), `endpoint "alice": "dependencies" must be an object from package names to git URLs`);
+    for (const name of ["", ".thermo", "a/b", "a b", "-x", "a#b"]) {
+      rejects(
+        deps({ [name]: "u" }),
+        `endpoint "alice": package name ${JSON.stringify(name)} must begin with a letter, a digit or '_' and go on with letters, digits, '_', '.' and '-'`,
+      );
+    }
+    rejects(deps({ Thermo: "u", thermo: "v" }), `endpoint "alice": packages 'Thermo' and 'thermo' differ only in case`);
+    for (const source of ["", 3, null]) {
+      rejects(deps({ thermo: source }), `endpoint "alice": package 'thermo' must be a non-empty string, "<git-url>" or "<git-url>#<tag>"`);
+    }
+    for (const source of ["u#a#b", "#v1", "u#"]) {
+      rejects(deps({ thermo: source }), /with one '#' at most and something on each side of it/);
+    }
+  });
+
   it("lets host endpoints share the absence of a device name", () => {
     assert.equal(
       validateDeviceNames([

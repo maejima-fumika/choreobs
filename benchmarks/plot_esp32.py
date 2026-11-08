@@ -3,9 +3,10 @@
     python benchmarks/plot_esp32.py [--esp32 RUNS_JSONL] [--host RUNS_JSONL] [--out DIR] [--png]
 
 --esp32 is the runs.jsonl of the sweep with the sensors on ESP32 boards
-(benchmarks/results/esp32x3-B/runs.jsonl by default), --host that of a host
-sweep (benchmarks/results/pilot-20261008-3/runs.jsonl by default). The figures
-are written to DIR (figs-paper/ next to the ESP32 runs by default):
+(benchmarks/results/esp32x3-20261107-1/runs.jsonl by default), --host that of a
+host sweep (benchmarks/results/pilot-20261008-3/runs.jsonl by default). Both
+must have every 10% of locations made dyn. The figures are written to DIR
+(figs-paper/ next to the ESP32 runs by default):
 
   exec-time.pdf      execution time relative to 0%, split into the time outside
                      and inside the communication API: B on the host, and B
@@ -14,8 +15,6 @@ are written to DIR (figs-paper/ next to the ESP32 runs by default):
                      the ESP32 boards: over all endpoints, and at the busiest
                      sensor, whose calls each cross Bluetooth
 
-The ESP32 sweep has 0%, 50% and 100% only; the host sweep every 10%. There is
-no memory figure: the boards do not report what they allocate.
 Uses the style and helpers of plot.py.
 """
 
@@ -36,18 +35,22 @@ KINDS = ("send", "broadcast", "receive")
 COLORS = {"send": plot.BLUE, "broadcast": plot.ORANGE, "receive": plot.AQUA}
 
 
-def fractions_of(runs):
-    return sorted({k[2] for k in runs if k[0] == BENCH})
+def missing_fractions(runs):
+    """The fractions of plot.FRACTIONS a sweep has no run of B at."""
+    have = {k[2] for k in runs if k[0] == BENCH}
+    return [p for p in plot.FRACTIONS if round(p, 2) not in have]
 
 
 def exec_series(time_runs, profile_runs, fractions):
-    """As plot.exec_series, at the fractions the sweep has."""
+    """As plot.exec_series, where a configuration may have no profile run."""
     base = statistics.median(plot.exec_ms(r) for r in time_runs[(BENCH, None, 0.0)])
     total, q1, q3, lower = [], [], [], []
     for p in fractions:
         keys = plot.configs(time_runs, BENCH, p)
         t = [statistics.median(plot.exec_ms(r) for r in time_runs[k]) / base for k in keys]
-        o = [ti * statistics.median(plot.outside_share(r) for r in profile_runs[k]) for ti, k in zip(t, keys)]
+        # A configuration whose profile runs all failed has a time but no split.
+        o = [ti * statistics.median(plot.outside_share(r) for r in profile_runs[k])
+             for ti, k in zip(t, keys) if profile_runs.get(k)]
         total.append(statistics.median(t))
         lo, hi = plot.quartiles(t)
         q1.append(lo)
@@ -107,9 +110,8 @@ def grid(titles, ylabel):
 def plot_exec(sweeps, out, png):
     fig, axes = grid([title for title, _, _ in sweeps], r"Time relative to 0\%")
     for ax, (_, time_runs, profile_runs) in zip(axes, sweeps):
-        fractions = fractions_of(time_runs)
-        x = np.array(fractions) * 100
-        total, q1, q3, lower = exec_series(time_runs, profile_runs, fractions)
+        x = np.array(plot.FRACTIONS) * 100
+        total, q1, q3, lower = exec_series(time_runs, profile_runs, plot.FRACTIONS)
         ax.fill_between(x, lower, total, color=plot.BLUE_LIGHT, linewidth=0, zorder=2)
         ax.fill_between(x, 0, lower, color=plot.BLUE_DARK, linewidth=0, zorder=2)
         ax.plot(x, lower, color="white", linewidth=0.4, zorder=2.5)  # gap between the layers
@@ -132,10 +134,9 @@ def plot_comm(named_runs, out, png):
         ("Busiest sensor (on an ESP32)", lambda eps: [busiest_sensor(eps)]),
     ]
     fig, axes = grid([title for title, _ in panels], r"Calls relative to 0\%")
-    fractions = fractions_of(named_runs)
-    x = np.array(fractions) * 100
+    x = np.array(plot.FRACTIONS) * 100
     for ax, (_, pick) in zip(axes, panels):
-        layers, q1, q3 = comm_series(named_runs, fractions, pick)
+        layers, q1, q3 = comm_series(named_runs, plot.FRACTIONS, pick)
         bottom = np.zeros_like(x)
         for kind, color in COLORS.items():
             top = bottom + layers[kind]
@@ -159,7 +160,7 @@ def plot_comm(named_runs, out, png):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--esp32", type=Path, default=plot.HERE / "results" / "esp32x3-B" / "runs.jsonl")
+    parser.add_argument("--esp32", type=Path, default=plot.HERE / "results" / "esp32x3-20261107-1" / "runs.jsonl")
     parser.add_argument("--host", type=Path, default=plot.DEFAULT_RUNS)
     parser.add_argument("--out", type=Path, help="default: figs-paper/ next to the ESP32 runs")
     parser.add_argument("--png", action="store_true", help="also write 300 dpi PNG previews")
@@ -168,8 +169,12 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     host = plot.load(args.host)
     esp32 = plot.load(args.esp32)
+    for path, (time_runs, _) in [(args.host, host), (args.esp32, esp32)]:
+        missing = missing_fractions(time_runs)
+        if missing:
+            parser.error(f"{path} has no run at {', '.join(f'{p:.0%}' for p in missing)}: it needs every 10%")
     plot_exec([
-        (r"Host (\textsc{ticks} = 800)", *host),
+        (r"Laptop (\textsc{ticks} = 800)", *host),
         (r"Sensors on ESP32 boards (\textsc{ticks} = 80)", *esp32),
     ], args.out, args.png)
     plot_comm(load_named(args.esp32), args.out, args.png)

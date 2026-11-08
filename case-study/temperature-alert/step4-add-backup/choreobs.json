@@ -1,0 +1,8 @@
+{
+  "name": "temperature-alert",
+  "endpoints": [
+    { "name": "display", "board": "host"},
+    { "name": "sensor", "board": "esp32", "deviceName": "SENSOR" },
+    { "name": "backup", "board": "esp32", "deviceName": "BACKUP" }
+  ]
+}

@@ -1,0 +1,11 @@
+import@display { showTemp, showAlert } from "./drivers/show@display";
+import@sensor { readTemperature } from "./drivers/thermometer@sensor";
+
+let raw: float@sensor = readTemperature();
+let temp: float@sensor = raw + 1.5@sensor;
+let tooHot: boolean@every <- temp > 31.0@sensor;
+let shown: float@display <- temp;
+showTemp(shown);
+if (tooHot) {
+    showAlert("Too Hot!"@display);
+}

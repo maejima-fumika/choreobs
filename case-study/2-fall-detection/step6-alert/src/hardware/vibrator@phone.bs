@@ -1,5 +1,0 @@
-// Stands in for the phone's vibration motor. Copied to the phone endpoint's
-// project only.
-export function vibrate(): void {
-  print("vibrate");
-}

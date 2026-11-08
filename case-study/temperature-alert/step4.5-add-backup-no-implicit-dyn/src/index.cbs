@@ -1,0 +1,20 @@
+import@display { showTemp, showAlert } from "./drivers/show@display";
+import@sensor { readTemperature } from "./drivers/thermometer@sensor";
+import@backup { readTemperature as readBackup } from "./drivers/thermometer@backup";
+
+function plausible@sensor(temp: float@sensor): boolean@sensor {
+    return temp > -50.0 && temp < 50.0;
+}
+
+let raw: float@dyn = readTemperature();
+let ok: boolean@every <- plausible(raw);
+if (!ok) {
+    raw = readBackup();
+}
+let temp: float@dyn = raw + 1.5@dyn;
+let tooHot: boolean@every <- temp > 31.0@dyn;
+let shown: float@display <- temp;
+showTemp(shown);
+if (tooHot) {
+    showAlert("Too Hot!"@display);
+}

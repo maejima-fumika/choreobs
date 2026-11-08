@@ -1,0 +1,8 @@
+let raw: float = 15.4;
+let temp: float = raw + 1.5;
+let tooHot: boolean = temp > 31.0;
+let shown: float = temp;
+print(shown);
+if (tooHot) {
+    print("Too Hot!");
+}

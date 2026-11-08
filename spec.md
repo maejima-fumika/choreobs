@@ -93,15 +93,20 @@ projects (spec [§2.5](#bluescript-source-files)).
 ### 2.2 `choreobs.json` <a id="choreobs-json"></a>
 
 `choreobs.json` names the project, lists its endpoints with the BlueScript board
-each one runs on, and optionally says whether an omitted location is `dyn`
-(spec [§8.3](#strict-mode)).
+each one runs on and the BlueScript packages each one uses, and optionally says
+whether an omitted location is `dyn` (spec [§8.3](#strict-mode)).
 
 ```json
 {
   "name": "greeting",
   "endpoints": [
     { "name": "alice", "board": "host" },
-    { "name": "bob", "board": "esp32", "deviceName": "BOB" }
+    {
+      "name": "bob",
+      "board": "esp32",
+      "deviceName": "BOB",
+      "dependencies": { "thermo": "https://github.com/example/bs-thermo.git#v1.0.0" }
+    }
   ]
 }
 ```
@@ -133,6 +138,11 @@ each one runs on, and optionally says whether an omitted location is `dyn`
 * Each entry's `board` must be `"esp32"` or `"host"`: the BlueScript board the endpoint's program runs on.
 * Each entry may have a `deviceName`, and only an `"esp32"` entry may. It must be a non-empty string: the name the board goes by over Bluetooth, which `bscript` connects to. An `"esp32"` entry without one has BlueScript's default, `BLUESCRIPT`.
 * No two `"esp32"` entries may have the same device name, counting a missing one as `BLUESCRIPT`: nothing would decide which board runs which endpoint's program.
+* Each entry may have `dependencies`: the BlueScript packages the endpoint uses (spec [§2.6](#bluescript-packages)). It is an object from each package's name to where the package comes from, in the form of the `dependencies` of a `bsconfig.json`, and may be empty.
+  * A package's name begins with a letter, a digit or `_`, and goes on with letters, digits, `_`, `.` and `-`. It is written at the start of a BlueScript import, where a leading `.` would make it a relative path and a `/` would end it, and it names the package's directory in `packages/`.
+  * The name must be the package's own `projectName`: `bscript` installs a package under that name, whatever the key says (spec [§2.4](#commands)).
+  * Two names must not differ only in case: a file system that ignores case would give them one directory.
+  * A package comes from a git URL, optionally followed by `#` and the tag or branch to check out, as in `"https://github.com/example/bs-thermo.git#v1.0.0"`. The string has at most one `#`, with something on each side of it.
 * `implicitDyn` is optional. When present it must be a boolean (spec [§16.51](#invalid-implicit-dyn)). It defaults to `true`, under which an omitted location that nothing infers is `dyn`; `false` selects strict mode, under which that omission is an error (spec [§8.3](#strict-mode)).
 * The compiler generates a program for each endpoint listed in `endpoints`, even if that endpoint is not used in the source.
 
@@ -156,6 +166,8 @@ project/
         __runtime.bs
     bob/
       bsconfig.json
+      packages/
+        thermo/
       src/
         index.bs
         __runtime.bs
@@ -164,8 +176,9 @@ project/
 The workspace and its projects are made by BlueScript's own command-line tool,
 `bscript`, which `choreobs create` and `choreobs add-endpoint` run
 (spec [§2.4](#commands)). The compiler reads `bsworkspace.json` and each `bsconfig.json`, and
-never writes them, so whatever `bscript` keeps there — such as the packages a
-project installs — survives compilation.
+never writes them, so whatever `bscript` keeps there survives compilation. Nor
+does it write into a project's `packages/`, where `bscript` installs the
+packages the endpoint uses (spec [§2.6](#bluescript-packages)).
 
 For each endpoint, the compiler writes these files into its project:
 
@@ -194,6 +207,8 @@ Before it writes anything, the compiler checks the workspace against
 * Each endpoint's project must be registered in `bsworkspace.json`, and for an
   `"esp32"` endpoint with the endpoint's device name, counting a missing one on
   either side as `BLUESCRIPT`.
+* Each endpoint's project must have the packages `choreobs.json` lists for the
+  endpoint, and no others, each for the endpoint's board (spec [§2.6](#bluescript-packages)).
 * No other project registered in the workspace may have an endpoint's name as
   its `projectName`, where a message for that endpoint could reach it instead,
   nor, for an `"esp32"` endpoint, its device name, where `bscript` could connect
@@ -212,8 +227,8 @@ a warning: `choreobs run` leaves it out, but `bscript workspace run` on its own
 still runs it.
 
 Compilation never runs `bscript`. A missing project or registration is made
-with `choreobs add-endpoint` (spec [§2.4](#commands)), and the programs are run with
-`choreobs run`.
+with `choreobs add-endpoint` (spec [§2.4](#commands)), the packages are put in step with
+`choreobs install`, and the programs are run with `choreobs run`.
 
 #### Runtime Files <a id="runtime-files"></a>
 
@@ -266,7 +281,7 @@ two (spec [§13.17](#profiling-build)).
 
 ### 2.4 Commands <a id="commands"></a>
 
-The compiler's command-line tool is `choreobs`. It has four commands. Each one
+The compiler's command-line tool is `choreobs`. It has five commands. Each one
 that works on an existing project finds it as compilation does: it looks for
 `choreobs.json` in the directory it is run in, and then in each parent
 directory (spec [§2.1](#input-files)).
@@ -298,7 +313,10 @@ Adds an endpoint, and makes its BlueScript project:
    * `bscript project create <name> -b <board>`, in `workspace/`, when there is
      no `workspace/<name>/`;
    * `bscript workspace add <name>`, in `workspace/`, with `-d <device-name>`
-     when a device name is given, when the project is not registered.
+     when a device name is given, when the project is not registered;
+   * `bscript project install`, in `workspace/<name>/`, for each package
+     `choreobs.json` lists for the endpoint that the project does not have as
+     listed, as `choreobs install` runs it.
 3. The endpoint is added to the end of `endpoints` in `choreobs.json`. The
    file's other keys are kept, in their order.
 
@@ -310,13 +328,40 @@ and anything that disagrees stops the command: a project of another name or
 board, a registration with another device name, a `workspace/` without
 `bsworkspace.json`, a `workspace/<name>/` without `bsconfig.json`, another
 registered project with the endpoint's name as its `projectName`, or another
-registered `esp32` project with the endpoint's device name.
+registered `esp32` project with the endpoint's device name, or a package
+installed as `choreobs.json` lists it but for another board. A package the
+project has that `choreobs.json` does not list is left where it is:
+`choreobs install` removes it.
 
 For an endpoint that `choreobs.json` already lists, `add-endpoint` repairs its
 project instead: it runs the steps of 2 that are missing, with the board and
 device name `choreobs.json` gives, asks nothing, and leaves `choreobs.json` as
 it is. A `-b` or `-d` that disagrees with `choreobs.json` is an error. This is
 how a workspace that was never committed is made again, one endpoint at a time.
+
+#### `choreobs install` <a id="choreobs-install"></a>
+
+Gives each endpoint's project the packages `choreobs.json` lists for the
+endpoint, and no others (spec [§2.6](#bluescript-packages)). For each endpoint, in the order `endpoints`
+lists them, it runs in `workspace/<endpoint>/`:
+
+1. `bscript project uninstall <name>` for each package the project's
+   `bsconfig.json` lists and `choreobs.json` does not;
+2. `bscript project install <url>`, with `-t <tag>` when the package's string
+   ends in `#<tag>`, for each package `choreobs.json` lists that the project
+   does not have as listed: one its `bsconfig.json` does not list, lists with
+   another string, or that is not in `packages/<name>/`.
+
+* Every endpoint must have its project, agreeing with `choreobs.json` as
+  `choreobs add-endpoint` requires; a missing one is made with
+  `choreobs add-endpoint`. Everything is checked before `bscript` runs at all,
+  and a package installed as listed but for another board stops the command:
+  installing it again cannot help.
+* `bscript` installs a package under its own `projectName`. When that is not
+  the name `choreobs.json` gives it, the command stops and says which name to
+  write; the next `choreobs install` removes the package it installed under the
+  other name.
+* With nothing to do, it runs no `bscript` at all.
 
 #### `choreobs compile [--profile]` <a id="choreobs-compile"></a>
 
@@ -430,7 +475,83 @@ An import names a file relative to `src/index.cbs` (spec [§5.19](#import-declar
 resolves the same name relative to the program, so the name finds the copy.
 A copy holds the source file's text unchanged. The compiler checks only the
 source files the program imports, and only as spec [§7.21](#imported-signatures) says; the rest are
-copied without being looked into.
+copied without being looked into. A source file may itself import from other
+source files and from packages (spec [§2.6](#bluescript-packages)), which BlueScript resolves from its copy.
+
+### 2.6 BlueScript Packages <a id="bluescript-packages"></a>
+
+An endpoint can use BlueScript packages: BlueScript projects kept in git
+repositories, which `bscript project install` downloads into a project's
+`packages/` directory. The packages each endpoint uses are listed under its
+`dependencies` in `choreobs.json` (spec [§2.2](#choreobs-json)):
+
+```json
+{
+  "name": "greenhouse",
+  "endpoints": [
+    {
+      "name": "sensor",
+      "board": "esp32",
+      "dependencies": { "thermo": "https://github.com/example/bs-thermo.git#v1.0.0" }
+    },
+    { "name": "host", "board": "host" }
+  ]
+}
+```
+
+`choreobs.json` is the record of them. The workspace is not kept with the
+project, and is made again from `choreobs.json` by `choreobs add-endpoint` and
+`choreobs install` (spec [§2.4](#commands)). Each endpoint's project holds the packages its
+entry lists, and no others:
+
+* Its `bsconfig.json` lists the same packages under `dependencies`, each with
+  the same string, as `bscript project install` writes it there.
+* Each package is installed in `workspace/<endpoint>/packages/<name>/`, as a
+  package whose `projectName` is `<name>`. A package that a listed package
+  depends on is installed beside it, and is not listed.
+* Each package is one for the endpoint's board: `bscript` builds an `"esp32"`
+  project only with `"esp32"` packages, and a `"host"` project only with
+  `"host"` ones.
+
+`choreobs compile` checks all three before it writes anything (spec [§2.3](#output-files)).
+`choreobs install` puts the first two right; for the third, `choreobs.json` must
+list another package.
+
+#### Importing a Package <a id="importing-a-package"></a>
+
+A package is imported by a BlueScript source file (spec [§2.5](#bluescript-source-files)), as BlueScript
+imports one: with the package's name, which names its entry file, or with the
+name followed by a path below the package's `srcDir`. The program imports what
+the source file exports:
+
+```ts
+// src/hardware/thermo@sensor.bs
+import { Thermometer } from 'thermo';
+
+const thermometer = new Thermometer(4);
+
+export function readCelsius(): float {
+  return thermometer.read();
+}
+```
+
+```ts
+// src/index.cbs
+import@sensor { readCelsius } from "./hardware/thermo@sensor";
+
+let t: float@sensor = readCelsius();
+```
+
+* The program does not import a package itself (spec [§16.61](#invalid-module-path)). A package
+  mostly exports classes and enums, which the program cannot import
+  (spec [§7.21](#imported-signatures)); a source file turns them into the functions and constants it can.
+* The compiler does not look into a package, nor into any file a source file
+  imports (spec [§7.21](#imported-signatures)). BlueScript resolves the import when the endpoint's
+  program is built, and reports a package the endpoint's project does not have.
+* A source file that imports a package is best made specific to an endpoint
+  that lists the package, as `thermo@sensor.bs` is. A shared one is copied to
+  every endpoint (spec [§2.5](#bluescript-source-files)), but BlueScript builds only the files a program
+  imports, so the copy does no harm at an endpoint that does not import it.
 
 ***
 
@@ -1517,6 +1638,8 @@ import@bob { now as nowAtBob } from "./clock";
   (spec [§16.61](#invalid-module-path)). BlueScript adds `.bs` to a module name itself, so `"./clock.bs"`
   would name `clock.bs.bs`. A name may not be empty, `.` or `..`: `src/index.cbs`
   is at the top of `src/`, so a path through `..` would leave it.
+* A BlueScript package is not named here: a source file imports it, and the
+  program imports from that source file (spec [§2.6](#bluescript-packages)).
 * The file must exist, with every name in the case the string writes it
   (spec [§16.62](#imported-file-not-found)).
 * An endpoint-specific file is named with its endpoint, `"./sensor@alice"` for
@@ -4015,17 +4138,22 @@ Any other initializer needs the type written.
 Each of these is an error (spec [§16.65](#unsupported-imported-file)), whatever the file's import names:
 
 * A syntax error.
-* An `import` of a value, or an `export ... from`. A source file is a leaf: the
-  compiler follows no import out of it. `import type`, which BlueScript
-  ignores, is allowed.
+* An `export ... from`. BlueScript exports nothing through
+  `export { a } from "./m"`, and does not accept `export * from "./m"`, so a
+  name the file seems to export this way is not exported. Nor does BlueScript
+  accept `import ... =`.
 * A use of the name of a communication API function, such as `sendInteger`,
   `receiveFloat` or `broadcastArray` (spec [§13.14](#communication-api)). A program's communications
   are the transfers of its choreography (spec [§11](#transfer-semantics)), each projected to a send at
   one endpoint and a receive at another. A message sent from inside an imported
   function would have no receive in any endpoint's program.
 
-The compiler does not look into C code that a file writes in a `code` template:
-a communication made there is just as unpaired, and the compiler cannot see it.
+A file may import from other source files and from packages (spec [§2.6](#bluescript-packages)). The
+compiler does not follow those imports: it neither reads the files they name
+nor checks that they exist, which BlueScript does when the endpoint's program
+is built. Nor does it look into C code that a file writes in a `code` template.
+A communication made in either place is just as unpaired, and the compiler
+cannot see it.
 
 ***
 
@@ -10585,6 +10713,7 @@ import@alice { now } from "clock";          // no `./`
 import@alice { now } from "./clock.bs";     // BlueScript adds `.bs` itself
 import@alice { now } from "../lib/clock";   // leaves `src/`
 import@alice { now } from "./lib//clock";   // an empty name
+import@alice { now } from "thermo";         // a package: a source file imports it (§bluescript-packages)
 ```
 
 ### 16.62 Imported File Not Found <a id="imported-file-not-found"></a>
@@ -10632,13 +10761,8 @@ src/clock.bs
 ### 16.65 Unsupported Imported File <a id="unsupported-imported-file"></a>
 
 A source file that an import declaration names must be valid BlueScript syntax,
-import nothing but types, and use no communication API function
+re-export nothing, and use no communication API function
 (spec [§7.21](#imported-signatures)). Each of these files is rejected when it is imported:
-
-```ts
-import { now } from "./clock";      // imports a value
-export function tick(): integer { return now(); }
-```
 
 ```ts
 export { now } from "./clock";      // re-exports
@@ -10649,6 +10773,9 @@ export function report(x: integer): void {
     sendInteger("bob", "report", x);   // a communication outside the choreography
 }
 ```
+
+A file that imports values, from other source files or from packages, is not
+rejected: the compiler does not follow its imports (spec [§2.6](#bluescript-packages)).
 
 ### 16.66 Name Not Exported <a id="name-not-exported"></a>
 
@@ -10891,3 +11018,8 @@ where it does not hold.
     constructors, which only `dyn` values reach, are unconfirmed there. A time
     is a `float` of milliseconds, so a sum loses precision once it reaches
     hours.
+14. **Packages** (spec [§2.6](#bluescript-packages)): a source file copied into an endpoint's project
+    imports a package that `bscript project install` put in the project's
+    `packages/`, and that package imports a package it depends on and a file of
+    its own. It works on `host` (2026-11-08); `esp32` is unconfirmed. Uninstalling
+    a package leaves the packages it depends on in `packages/`, unused.

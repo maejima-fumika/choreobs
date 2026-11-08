@@ -36,6 +36,33 @@ export interface EndpointConfig {
   readonly board: BoardName;
   /** Only ever set for an `esp32` endpoint. */
   readonly deviceName?: string;
+  /**
+   * The BlueScript packages the endpoint's project depends on: each package's
+   * name to where it comes from, `<git-url>` or `<git-url>#<tag>`, as
+   * `bsconfig.json` writes them (spec §choreobs-json, §bluescript-packages).
+   * Absent when the endpoint lists none.
+   */
+  readonly dependencies?: Readonly<Record<string, string>>;
+}
+
+/** The endpoint's dependencies, empty when it lists none (spec §bluescript-packages). */
+export function endpointDependencies(endpoint: EndpointConfig): Readonly<Record<string, string>> {
+  return endpoint.dependencies ?? {};
+}
+
+/** Where a package comes from: a git URL, and the tag or branch to check out. */
+export interface PackageSource {
+  readonly url: string;
+  readonly tag?: string;
+}
+
+/**
+ * A dependency's value split as `bscript` splits it: the URL, and what follows
+ * `#` as the tag (spec §choreobs-json).
+ */
+export function splitPackageSource(source: string): PackageSource {
+  const hash = source.indexOf("#");
+  return hash < 0 ? { url: source } : { url: source.slice(0, hash), tag: source.slice(hash + 1) };
 }
 
 /** `choreobs.json` (spec §choreobs-json). */

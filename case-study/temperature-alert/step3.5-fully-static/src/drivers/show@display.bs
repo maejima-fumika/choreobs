@@ -1,0 +1,7 @@
+export function showTemp(temp: float): void {
+    console.log(temp);
+}
+
+export function showAlert(message: string): void {
+    console.log(message);
+}

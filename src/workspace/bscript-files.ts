@@ -17,12 +17,14 @@ export interface WorkspaceFile {
   readonly projects: readonly WorkspaceEntry[];
 }
 
-/** `bsconfig.json`. */
+/** `bsconfig.json`, a project's or an installed package's. */
 export interface BlueScriptProjectConfig {
   readonly projectName: string;
   readonly boardName: string;
   readonly srcDir?: string;
   readonly entryFile?: string;
+  /** Each package's name to its `<git-url>` or `<git-url>#<tag>`; `{}` when the file has none, as `bscript` reads it. */
+  readonly dependencies: Readonly<Record<string, string>>;
 }
 
 /**
@@ -70,11 +72,16 @@ export function readProjectConfigFile(path: string): BlueScriptProjectConfig {
       throw new BscriptFileError(`${path}: "${key}" must be a string`);
     }
   }
+  const dependencies = data.dependencies ?? {};
+  if (!isObject(dependencies) || Object.values(dependencies).some((source) => typeof source !== "string")) {
+    throw new BscriptFileError(`${path}: "dependencies" must be an object from package names to strings`);
+  }
   return {
     projectName,
     boardName,
     ...(srcDir === undefined ? {} : { srcDir: srcDir as string }),
     ...(entryFile === undefined ? {} : { entryFile: entryFile as string }),
+    dependencies: dependencies as Record<string, string>,
   };
 }
 

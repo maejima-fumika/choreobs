@@ -87,24 +87,18 @@ function positionOf(node: B.Node): FilePosition {
 // ---------------------------------------------------------------------------
 
 function fileProblem(program: B.Program): BsModuleError | undefined {
+  // An `import` declaration is left to BlueScript, which resolves it when the
+  // endpoint's program is built: the compiler follows no import out of the
+  // file (spec §imported-file-restrictions).
   for (const stmt of program.body) {
     switch (stmt.type) {
-      case "ImportDeclaration":
-        // BlueScript ignores `import type`, and imports anything else.
-        if (stmt.importKind !== "type") {
-          return {
-            message: `it imports from '${stmt.source.value}'; an imported file may import types only`,
-            at: positionOf(stmt),
-          };
-        }
-        break;
       case "TSImportEqualsDeclaration":
-        return { message: "it imports with 'import ... ='; an imported file may import types only", at: positionOf(stmt) };
+        return { message: "it imports with 'import ... =', which BlueScript does not support", at: positionOf(stmt) };
       case "ExportAllDeclaration":
-        return { message: `it re-exports from '${stmt.source.value}'; an imported file may import types only`, at: positionOf(stmt) };
+        return { message: reExport(stmt.source.value), at: positionOf(stmt) };
       case "ExportNamedDeclaration":
         if (stmt.source !== null && stmt.source !== undefined) {
-          return { message: `it re-exports from '${stmt.source.value}'; an imported file may import types only`, at: positionOf(stmt) };
+          return { message: reExport(stmt.source.value), at: positionOf(stmt) };
         }
         break;
       default:
@@ -119,6 +113,14 @@ function fileProblem(program: B.Program): BsModuleError | undefined {
     };
   }
   return undefined;
+}
+
+/**
+ * BlueScript exports nothing through `export { a } from "./m"` and rejects
+ * `export * from "./m"`, so a name that seems to be exported this way is not.
+ */
+function reExport(source: string): string {
+  return `it re-exports from '${source}', which exports nothing in BlueScript; export a name on its declaration instead`;
 }
 
 /** Keys of a Babel node that hold no child node. */

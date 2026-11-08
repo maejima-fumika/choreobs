@@ -1,14 +1,16 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   ConfigError,
   effectiveDeviceName,
+  endpointDependencies,
   loadConfig,
   parseConfig,
   validateEndpoints,
   type BoardName,
   type EndpointConfig,
 } from "../config/index.js";
+import { BscriptFileError, readProjectConfigFile, type BlueScriptProjectConfig } from "./bscript-files.js";
 import { formatConfig } from "./create.js";
 import { CommandError } from "./errors.js";
 import {
@@ -18,7 +20,9 @@ import {
   otherProjects,
   show,
 } from "./inspect.js";
-import { configPath, workspaceDir, WORKSPACE_DIR } from "./layout.js";
+import { syncPackages } from "./install.js";
+import { configPath, PROJECT_CONFIG_FILE, workspaceDir, WORKSPACE_DIR } from "./layout.js";
+import { inspectDependencies } from "./packages.js";
 import { requireBscript, type BscriptRunner } from "./runner.js";
 
 export interface AddEndpointOptions {
@@ -43,8 +47,10 @@ export interface AddEndpointResult {
 /**
  * `choreobs add-endpoint` (spec §commands): adds an endpoint to the project at
  * `projectRoot` and makes whatever of its BlueScript project is missing — the
- * workspace, the project, its registration. For an endpoint `choreobs.json`
- * already lists, it only makes what is missing.
+ * workspace, the project, its registration, the packages `choreobs.json` lists
+ * for it (spec §bluescript-packages). For an endpoint `choreobs.json` already
+ * lists, it only makes what is missing. A package the project has that
+ * `choreobs.json` does not list is left for `choreobs install`.
  *
  * Everything is checked before `bscript` runs, and `choreobs.json` is written
  * last, once every step has succeeded.
@@ -87,6 +93,10 @@ export async function addEndpoint(
   const workspace = inspectWorkspace(root);
   const project = inspectEndpointProject(root, workspace, endpoint);
   const problems = [...project.problems];
+  // A project still to be made has none of the packages yet.
+  const dependencies =
+    project.config === undefined ? undefined : inspectDependencies(root, endpoint, project.dir, project.config);
+  problems.push(...(dependencies?.problems ?? []));
   const others = otherProjects(root, workspace, [endpoint]);
   for (const other of others) {
     problems.push(...clashes(root, endpoint, other));
@@ -94,6 +104,10 @@ export async function addEndpoint(
   const needsWorkspace = workspace.kind === "missing";
   const needsProject = project.config === undefined;
   const needsRegistration = !project.registered;
+  const needsPackages =
+    dependencies === undefined
+      ? Object.keys(endpointDependencies(endpoint)).length > 0
+      : dependencies.missing.length > 0;
   if (needsRegistration) {
     // `bscript workspace add` checks every registered project before it saves.
     for (const other of others) {
@@ -107,7 +121,7 @@ export async function addEndpoint(
   }
 
   const done: string[] = [];
-  if (needsWorkspace || needsProject || needsRegistration) {
+  if (needsWorkspace || needsProject || needsRegistration || needsPackages) {
     requireBscript(runner);
   }
   const shown = show(root, project.dir);
@@ -132,11 +146,29 @@ export async function addEndpoint(
       `registered ${shown} in the workspace${deviceName === undefined ? "" : ` with device name '${deviceName}'`}`,
     );
   }
+  if (needsPackages) {
+    // Read again: the project may have been made just now.
+    const config = readCreatedProject(root, project.dir);
+    const state = inspectDependencies(root, endpoint, project.dir, config);
+    if (state.problems.length > 0) {
+      throw new CommandError(state.problems.join("\n"), ["commands", "bluescript-packages"]);
+    }
+    done.push(...syncPackages(root, endpoint, project.dir, state, runner, { uninstall: false }));
+  }
   if (rawConfig !== undefined) {
     writeFileSync(path, formatConfig(rawConfig), "utf8");
     done.push(`added endpoint '${endpoint.name}' to choreobs.json`);
   }
   return { endpoint, added: listed === undefined, done };
+}
+
+function readCreatedProject(root: string, dir: string): BlueScriptProjectConfig {
+  try {
+    return readProjectConfigFile(join(dir, PROJECT_CONFIG_FILE));
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new CommandError(e instanceof BscriptFileError ? message.replace(`${root}/`, "") : message, ["commands"]);
+  }
 }
 
 /** For a listed endpoint, a `-b` or `-d` must say what `choreobs.json` says. */

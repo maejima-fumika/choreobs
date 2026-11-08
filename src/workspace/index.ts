@@ -7,5 +7,6 @@ export {
   type AddEndpointResult,
   type BoardPrompt,
 } from "./add-endpoint.js";
+export { installPackages, type InstallResult } from "./install.js";
 export { writeProject, type WriteResult } from "./compile.js";
 export { runProject, type RunOptions } from "./run.js";

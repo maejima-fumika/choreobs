@@ -1,8 +1,0 @@
-// Stands in for the relay that cuts the motor's power, on the `stopper` node.
-// Copied to the stopper endpoint's project only.
-let powered: boolean = true;
-
-export function cutPower(): void {
-  powered = false;
-  print("power cut");
-}

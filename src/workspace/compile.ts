@@ -18,6 +18,7 @@ import {
   type WorkspaceState,
 } from "./inspect.js";
 import { PROJECT_CONFIG_FILE, RUNTIME_FILE, WORKSPACE_CONFIG_FILE, WORKSPACE_DIR } from "./layout.js";
+import { describeDependencies, inspectDependencies } from "./packages.js";
 
 /** BlueScript's own defaults, for a `bsconfig.json` that leaves them out. */
 const DEFAULT_ENTRY_FILE = "./index.bs";
@@ -103,6 +104,18 @@ export function writeProject(projectRoot: string, options: CompileOptions = {}):
           `endpoint '${endpoint.name}'s project ${show(root, project.dir)} is not registered in ` +
           `${WORKSPACE_DIR}/${WORKSPACE_CONFIG_FILE}; run \`choreobs add-endpoint ${endpoint.name}\``,
         spec: ["output-files", "commands"],
+      });
+    }
+    const dependencies = inspectDependencies(root, endpoint, project.dir, project.config);
+    for (const problem of dependencies.problems) {
+      errors.push({ message: problem, spec: ["output-files", "bluescript-packages"] });
+    }
+    if (dependencies.missing.length > 0 || dependencies.extra.length > 0) {
+      errors.push({
+        message:
+          `endpoint '${endpoint.name}'s packages are not the ones choreobs.json lists: ` +
+          `${describeDependencies(dependencies)}; run \`choreobs install\``,
+        spec: ["output-files", "bluescript-packages", "commands"],
       });
     }
     const entry = entryFile(root, project.dir, project.config);

@@ -60,9 +60,19 @@ export function projectConfig(endpoints: readonly (string | object)[], extra: ob
   };
 }
 
+/** A package {@link FakeBscript} can install, as its repository holds it. */
+export interface FakePackage {
+  readonly projectName: string;
+  readonly boardName: string;
+  /** Its files besides `bsconfig.json`, by path below its root. */
+  readonly files?: Readonly<Record<string, string>>;
+  /** The packages it depends on: name to URL, each one {@link FakeBscript.packages} has. */
+  readonly dependencies?: Readonly<Record<string, string>>;
+}
+
 /**
- * Stands in for `bscript`: makes the files the three commands the compiler
- * runs would make, as `~/…/bluescript/cli` writes them, and records each call.
+ * Stands in for `bscript`: makes the files the commands the compiler runs
+ * would make, as `~/…/bluescript/cli` writes them, and records each call.
  * Like `bscript`, it fails on a directory that already exists and on a project
  * already registered.
  */
@@ -71,6 +81,8 @@ export class FakeBscript implements BscriptRunner {
   installed = true;
   /** Makes the next call with this first argument pair fail, as `bscript` would by exiting 1. */
   failOn: string | undefined;
+  /** The packages `project install` can download, by URL; any tag fetches the same one. */
+  readonly packages = new Map<string, FakePackage>();
 
   available(): boolean {
     return this.installed;
@@ -127,7 +139,60 @@ export class FakeBscript implements BscriptRunner {
       // Running is recorded and nothing more.
       return;
     }
+    if (group === "project" && command === "install") {
+      // As `bscript`: the package and what it depends on go into `packages/`,
+      // named after their projectName, and only the package into bsconfig.json.
+      const url = name!;
+      const t = args.indexOf("-t");
+      const tag = t >= 0 ? args[t + 1]! : undefined;
+      const pkg = this.download(cwd, url);
+      const queue = Object.values(pkg.dependencies ?? {});
+      const seen = new Set<string>();
+      while (queue.length > 0) {
+        const dep = queue.shift()!;
+        if (seen.has(dep)) continue;
+        seen.add(dep);
+        queue.push(...Object.values(this.download(cwd, dep).dependencies ?? {}));
+      }
+      const file = join(cwd, "bsconfig.json");
+      const config = readJson(file);
+      config.dependencies = { ...config.dependencies, [pkg.projectName]: tag === undefined ? url : `${url}#${tag}` };
+      writeFileSync(file, JSON.stringify(config, null, 2));
+      return;
+    }
+    if (group === "project" && command === "uninstall") {
+      const file = join(cwd, "bsconfig.json");
+      const config = readJson(file);
+      if (!Object.hasOwn(config.dependencies ?? {}, name!)) {
+        throw new CommandError(`Package ${name} is not listed in bsconfig.json dependencies.`);
+      }
+      rmSync(join(cwd, "packages", name!), { recursive: true, force: true });
+      delete config.dependencies[name!];
+      writeFileSync(file, JSON.stringify(config, null, 2));
+      return;
+    }
     throw new Error(`FakeBscript: unexpected bscript ${args.join(" ")}`);
+  }
+
+  /** Writes the package at `url` into `<project>/packages/<projectName>/`, replacing what is there. */
+  private download(project: string, url: string): FakePackage {
+    const pkg = this.packages.get(url);
+    if (pkg === undefined) {
+      throw new CommandError(`\`bscript project install ${url}\` (in ${project}) exited with 1`);
+    }
+    const dir = join(project, "packages", pkg.projectName);
+    rmSync(dir, { recursive: true, force: true });
+    writeFiles(dir, {
+      ...pkg.files,
+      "bsconfig.json": {
+        projectName: pkg.projectName,
+        version: "1.0.0",
+        vmVersion: "2.1.0",
+        dependencies: pkg.dependencies ?? {},
+        boardName: pkg.boardName,
+      },
+    });
+    return pkg;
   }
 
   /** The calls, as `bscript …` lines with the directory they ran in relative to `root`. */
@@ -139,7 +204,7 @@ export class FakeBscript implements BscriptRunner {
 /** A project at `root` with `workspace/` made by `bscript` for each endpoint, all registered. */
 export function scaffold(
   root: string,
-  endpoints: readonly { name: string; board: string; deviceName?: string }[],
+  endpoints: readonly { name: string; board: string; deviceName?: string; dependencies?: Record<string, string> }[],
   source = "",
 ): FakeBscript {
   writeFiles(root, { "choreobs.json": projectConfig(endpoints), "src/index.cbs": source });

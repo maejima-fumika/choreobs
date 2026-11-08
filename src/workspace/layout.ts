@@ -21,6 +21,9 @@ export const WORKSPACE_CONFIG_FILE = "bsworkspace.json";
 /** What `bscript` names a project's configuration file. */
 export const PROJECT_CONFIG_FILE = "bsconfig.json";
 
+/** Where `bscript project install` puts a project's packages, relative to the project (spec §bluescript-packages). */
+export const PACKAGES_DIR = "packages";
+
 /** Each endpoint's runtime file, next to its program (spec §runtime-files). */
 export const RUNTIME_FILE = `${RUNTIME_MODULE}.bs`;
 

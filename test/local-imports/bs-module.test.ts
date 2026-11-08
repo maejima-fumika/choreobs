@@ -111,11 +111,18 @@ describe("reading an imported BlueScript file (spec §imported-signatures)", () 
       fileError(`export function f(x: integer: integer {}`, "syntax error: Unexpected token", 1, 29);
     });
 
-    it("rejects importing a value or re-exporting, and allows `import type`", () => {
-      fileError(`\nimport { now } from "./clock";`, "it imports from './clock'", 2, 1);
-      fileError(`export { now } from "./clock";`, "it re-exports from './clock'", 1, 1);
-      fileError(`export * from "./clock";`, "it re-exports from './clock'", 1, 1);
-      assert.ok(readBsModule(`import type { integer, float } from "./types";\nexport const n: integer = 1;`).ok);
+    it("rejects re-exporting and `import ... =`", () => {
+      fileError(`export { now } from "./clock";`, "it re-exports from './clock', which exports nothing in BlueScript", 1, 1);
+      fileError(`\nexport * from "./clock";`, "it re-exports from './clock'", 2, 1);
+      fileError(`import clock = require("./clock");`, "it imports with 'import ... ='", 1, 1);
+    });
+
+    it("allows importing values, from source files and packages, without following them (spec §bluescript-packages)", () => {
+      const module = moduleOf(
+        `import { now } from "./clock";\nimport { Thermometer } from 'thermo';\nimport type { integer } from "./types";\n` +
+          `export function readCelsius(): float { return new Thermometer(now()).read(); }`,
+      );
+      assert.deepEqual(module.exports.get("readCelsius"), { kind: "function", params: [], returnType: "float" });
     });
 
     it("rejects naming a communication function anywhere, but not a property of that name", () => {

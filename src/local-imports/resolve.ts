@@ -152,7 +152,15 @@ class ImportResolver {
     const span = decl.module.span;
     const pathSpec: SpecRefs = ["import-declarations", "invalid-module-path"];
     if (!written.startsWith("./")) {
-      fail(`the file to import from is written from 'src/index.cbs', beginning with './': write "./${written}"`, span, pathSpec);
+      // A name that does not begin with `.` or `/` is how BlueScript names a
+      // package, which only a source file imports (spec §bluescript-packages).
+      const bare = !written.startsWith(".") && !written.startsWith("/");
+      fail(
+        `the file to import from is written from 'src/index.cbs', beginning with './': write "./${written}"` +
+          (bare ? "; a BlueScript package is imported by a source file under 'src/', which the program imports instead" : ""),
+        span,
+        bare ? [...pathSpec, "bluescript-packages"] : pathSpec,
+      );
     }
     const names = written.slice(2).split("/");
     if (names.some((name) => name === "" || name === "." || name === "..")) {

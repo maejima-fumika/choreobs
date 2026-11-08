@@ -19,6 +19,7 @@ export const SPEC_SECTIONS = {
   "output-files": { number: "2.3", title: "Output Files" },
   "commands": { number: "2.4", title: "Commands" },
   "bluescript-source-files": { number: "2.5", title: "BlueScript Source Files" },
+  "bluescript-packages": { number: "2.6", title: "BlueScript Packages" },
   "endpoints-and-locations": { number: "3", title: "Endpoints and Locations" },
   "endpoints": { number: "3.1", title: "Endpoints" },
   "locations": { number: "3.2", title: "Locations" },

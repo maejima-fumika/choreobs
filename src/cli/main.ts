@@ -5,6 +5,7 @@ import {
   addEndpoint,
   CommandError,
   createProject,
+  installPackages,
   runProject,
   systemBscript,
   writeProject,
@@ -15,6 +16,7 @@ import { buildLineStarts, formatDiagnostic } from "./format.js";
 const USAGE = `Usage:
   choreobs create <name>
   choreobs add-endpoint <name> [-b|--board <${BOARD_NAMES.join("|")}>] [-d|--device-name <device-name>]
+  choreobs install
   choreobs compile [--profile]
   choreobs run [--stats] [--profile]`;
 
@@ -129,6 +131,25 @@ function projectRoot(command: string, args: readonly string[]): string | number 
   }
 }
 
+function runInstall(args: readonly string[]): number {
+  const root = projectRoot("install", args);
+  if (typeof root === "number") {
+    return root;
+  }
+  try {
+    const result = installPackages(root, systemBscript);
+    if (result.done.length === 0) {
+      console.log("every endpoint has the packages choreobs.json lists; nothing to do");
+    }
+    for (const line of result.done) {
+      console.log(line);
+    }
+    return 0;
+  } catch (e) {
+    return report(e);
+  }
+}
+
 /** Prints the warnings and errors of writing the project; true when it was written. */
 function reportWrite(result: WriteResult): boolean {
   for (const warning of result.warnings) {
@@ -209,6 +230,8 @@ async function main(): Promise<number> {
       return runCreate(rest);
     case "add-endpoint":
       return runAddEndpoint(rest);
+    case "install":
+      return runInstall(rest);
     case "compile":
       return runCompile(rest);
     case "run":

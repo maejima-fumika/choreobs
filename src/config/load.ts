@@ -97,16 +97,66 @@ function parseEndpoint(
     );
   }
   const deviceName = entry.deviceName;
-  if (deviceName === undefined) {
-    return { name, board };
+  let endpoint: EndpointConfig = { name, board };
+  if (deviceName !== undefined) {
+    if (board !== "esp32") {
+      return fail(`endpoint ${JSON.stringify(name)}: "deviceName" is only for an "esp32" endpoint`);
+    }
+    if (typeof deviceName !== "string" || deviceName === "") {
+      return fail(`endpoint ${JSON.stringify(name)}: "deviceName" must be a non-empty string`);
+    }
+    endpoint = { ...endpoint, deviceName };
   }
-  if (board !== "esp32") {
-    return fail(`endpoint ${JSON.stringify(name)}: "deviceName" is only for an "esp32" endpoint`);
+  if (entry.dependencies === undefined) {
+    return endpoint;
   }
-  if (typeof deviceName !== "string" || deviceName === "") {
-    return fail(`endpoint ${JSON.stringify(name)}: "deviceName" must be a non-empty string`);
+  const dependencies = parseDependencies(entry.dependencies, (message) =>
+    fail(`endpoint ${JSON.stringify(name)}: ${message}`),
+  );
+  return { ...endpoint, dependencies };
+}
+
+/**
+ * A package's name: it is written as the start of a BlueScript import, where
+ * a leading `.` would make it a relative path and `/` ends it, and it names
+ * the package's directory in `packages/` (spec §choreobs-json).
+ */
+const PACKAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+
+function parseDependencies(
+  data: unknown,
+  fail: (message: string) => never,
+): Readonly<Record<string, string>> {
+  if (!isObject(data)) {
+    return fail(`"dependencies" must be an object from package names to git URLs`);
   }
-  return { name, board, deviceName };
+  const byFolded = new Map<string, string>();
+  const entries: [string, string][] = [];
+  for (const [name, source] of Object.entries(data)) {
+    if (!PACKAGE_NAME.test(name)) {
+      return fail(
+        `package name ${JSON.stringify(name)} must begin with a letter, a digit or '_' and go on with letters, digits, '_', '.' and '-'`,
+      );
+    }
+    // A file system that ignores case would give the two one directory.
+    const other = byFolded.get(name.toLowerCase());
+    if (other !== undefined) {
+      return fail(`packages '${other}' and '${name}' differ only in case`);
+    }
+    byFolded.set(name.toLowerCase(), name);
+    if (typeof source !== "string" || source === "") {
+      return fail(`package '${name}' must be a non-empty string, "<git-url>" or "<git-url>#<tag>"`);
+    }
+    const parts = source.split("#");
+    if (parts.length > 2 || parts.some((part) => part === "")) {
+      return fail(
+        `package '${name}': ${JSON.stringify(source)} must be "<git-url>" or "<git-url>#<tag>", with one '#' at most and something on each side of it`,
+      );
+    }
+    entries.push([name, source]);
+  }
+  // `fromEntries` defines each key, so that even `__proto__` is a package of its own.
+  return Object.fromEntries(entries);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

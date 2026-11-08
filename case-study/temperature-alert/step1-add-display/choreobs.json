@@ -1,0 +1,6 @@
+{
+  "name": "temperature-alert",
+  "endpoints": [
+    { "name": "display", "board": "host"}
+  ]
+}
