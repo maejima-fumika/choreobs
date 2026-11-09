@@ -3,7 +3,7 @@
   "implicitDyn": false,
   "endpoints": [
     { "name": "display", "board": "host"},
-    { "name": "sensor", "board": "esp32", "deviceName": "SENSOR" },
-    { "name": "backup", "board": "esp32", "deviceName": "BACKUP" }
+    { "name": "sensor", "board": "esp32", "deviceName": "SENSOR", "dependencies": { "mpu6886": "https://github.com/bluescript-lang/pkg-mpu6886-esp32.git" } },
+    { "name": "backup", "board": "esp32", "deviceName": "BACKUP", "dependencies": { "mpu6886": "https://github.com/bluescript-lang/pkg-mpu6886-esp32.git" } }
   ]
 }

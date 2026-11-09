@@ -2,6 +2,6 @@
   "name": "temperature-alert",
   "endpoints": [
     { "name": "display", "board": "host"},
-    { "name": "sensor", "board": "esp32", "deviceName": "SENSOR" }
+    { "name": "sensor", "board": "esp32", "deviceName": "SENSOR", "dependencies": { "mpu6886": "https://github.com/bluescript-lang/pkg-mpu6886-esp32.git" } }
   ]
 }

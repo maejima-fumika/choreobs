@@ -1,3 +1,15 @@
+import { I2CMasterBus, I2CPort } from "i2c";
+import { MPU6886 } from "mpu6886";
+
+// The MPU6886 built into the M5Stack Fire, on its internal I2C bus (SDA 21, SCL 22).
+const bus = new I2CMasterBus(I2CPort.I2C0, 21, 22);
+const imu = new MPU6886(bus);
+const ready = imu.init();
+
 export function readTemperature(): float {
-    return 44.0;
+    // Out of the range plausible() accepts, so step4 falls back to backup.
+    if (!ready) {
+        return -100.0;
+    }
+    return imu.getTemperature();
 }
